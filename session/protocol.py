@@ -1,0 +1,16 @@
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
+from ..schemas import Message, Usage
+
+
+@runtime_checkable
+class Session(Protocol):
+    async def get(self, limit: int | None = None) -> list[Message]: ...
+
+    async def add(self, items: Sequence[Message], usage: Usage | None = None): ...
+
+    async def clear(self): ...
+
+    async def pop(self) -> Message | None: ...
+
+    async def close(self): ...

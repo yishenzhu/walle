@@ -1,0 +1,26 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+  prometheusremotewrite/mimir:
+    endpoint: http://mimir:9009/api/v1/push
+    headers:
+      X-Scope-OrgID: walle
+  logging:
+    loglevel: debug
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/tempo, logging]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheusremotewrite/mimir, logging]
