@@ -62,6 +62,7 @@ class ToolExecutor:
             logger.info(denied)
             return tc_id, denied
 
+        attrs = {"tool.name": name}
         try:
             tool_context.set(ctx)
             with tracer.start_as_current_span("tool.execute") as span:
@@ -70,7 +71,6 @@ class ToolExecutor:
                 result = await ft.run(args)
                 elapsed_ms = (time.monotonic() - start) * 1000
 
-            attrs = {"tool.name": name}
             TOOL_DURATION.record(elapsed_ms, attrs)
             TOOL_CALLS.add(1, attrs)
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
