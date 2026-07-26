@@ -6,9 +6,6 @@ PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OBS_DIR="$PROJ_ROOT/observability"
 OBS_COMPOSE="$OBS_DIR/docker-compose.yaml"
 
-OBS_PID=""
-OBS_STARTED=false
-
 # ── 颜色 ──────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,14 +27,16 @@ walle 启动脚本
   $(basename "$0") [选项]
 
 选项:
-  --with-obs     同步启动可观测性容器 (otel-collector / tempo / mimir / grafana)
+  --with-obs     启动可观测性容器后再启动 agent (容器不会自动关闭)
   --obs-only     仅启动可观测性容器，不启动 agent
+  --stop-obs     停止可观测性容器
   --help         显示此帮助信息
 
 示例:
   ./scripts/run.sh              # 仅启动 agent
   ./scripts/run.sh --with-obs   # agent + 可观测性
   ./scripts/run.sh --obs-only   # 仅启动可观测性
+  ./scripts/run.sh --stop-obs   # 停止可观测性
 EOF
     exit 0
 }
@@ -72,25 +71,21 @@ start_obs() {
     log_info "  Mimir:   http://localhost:9009"
 
     cd "$PROJ_ROOT"
-    OBS_STARTED=true
 }
 
 stop_obs() {
-    if [ "$OBS_STARTED" = false ]; then
-        return
+    check_docker
+
+    if [ ! -f "$OBS_COMPOSE" ]; then
+        log_error "未找到 Docker Compose 文件: $OBS_COMPOSE"
+        exit 1
     fi
+
     log_step "停止可观测性容器 ..."
     cd "$OBS_DIR"
     docker compose down
     cd "$PROJ_ROOT"
     log_info "可观测性容器已停止"
-}
-
-cleanup() {
-    echo ""
-    log_warn "正在清理 ..."
-    stop_obs
-    log_info "再见！"
 }
 
 # ── 启动 agent ────────────────────────────────────────
@@ -99,7 +94,7 @@ start_agent() {
     cd "$PROJ_ROOT"
     # 项目根目录有 __init__.py 是一个包 (walle)，
     # 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
-    exec env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
+    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
         python3 -m walle.main
 }
 
@@ -107,13 +102,15 @@ start_agent() {
 main() {
     local with_obs=false
     local obs_only=false
+    local stop_obs_flag=false
 
     # 解析参数
     while [ $# -gt 0 ]; do
         case "$1" in
-            --with-obs)   with_obs=true ;;
-            --obs-only)   obs_only=true ;;
-            --help|-h)    usage ;;
+            --with-obs)    with_obs=true ;;
+            --obs-only)    obs_only=true ;;
+            --stop-obs)    stop_obs_flag=true ;;
+            --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
                 usage
@@ -121,6 +118,12 @@ main() {
         esac
         shift
     done
+
+    # 停止可观测性
+    if [ "$stop_obs_flag" = true ]; then
+        stop_obs
+        exit 0
+    fi
 
     # 仅启动可观测性
     if [ "$obs_only" = true ]; then
@@ -130,11 +133,9 @@ main() {
         exit 0
     fi
 
-    # 同步启动可观测性
+    # 启动可观测性（容器在 agent 退出后保持不变）
     if [ "$with_obs" = true ]; then
         start_obs
-        # 注册退出钩子，agent 退出时自动停容器
-        trap cleanup EXIT
     fi
 
     # 启动 agent
