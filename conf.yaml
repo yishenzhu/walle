@@ -21,11 +21,11 @@ approval:
 
 mcp:
   rag:
-    enabled: false
+    # enabled: false
     url: http://127.0.0.1:9000/mcp
   amap:
     url: "https://mcp.amap.com/mcp?key=712d54ca842721f9b15a4211de74c5bc"
-    # enabled: false
+    enabled: false
   godot:
     enabled: false
     url: http://127.0.0.1:8000/mcp
@@ -39,4 +39,4 @@ mcp:
     url: https://mcp.tavily.com/mcp
     headers:
       Authorization: "Bearer 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"
-    # enabled: false
+    enabled: false
