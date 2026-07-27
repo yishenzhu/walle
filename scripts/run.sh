@@ -27,14 +27,14 @@ walle 启动脚本
   $(basename "$0") [选项]
 
 选项:
-  --with-obs     启动可观测性容器后再启动 agent (容器不会自动关闭)
+  --no-obs       不启动可观测性容器，仅启动 agent
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
   --help         显示此帮助信息
 
 示例:
-  ./scripts/run.sh              # 仅启动 agent
-  ./scripts/run.sh --with-obs   # agent + 可观测性
+  ./scripts/run.sh              # 启动 agent + 可观测性（默认）
+  ./scripts/run.sh --no-obs     # 仅启动 agent
   ./scripts/run.sh --obs-only   # 仅启动可观测性
   ./scripts/run.sh --stop-obs   # 停止可观测性
 EOF
@@ -100,14 +100,14 @@ start_agent() {
 
 # ── 主流程 ────────────────────────────────────────────
 main() {
-    local with_obs=false
+    local no_obs=false
     local obs_only=false
     local stop_obs_flag=false
 
     # 解析参数
     while [ $# -gt 0 ]; do
         case "$1" in
-            --with-obs)    with_obs=true ;;
+            --no-obs)      no_obs=true ;;
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
             --help|-h)     usage ;;
@@ -129,12 +129,12 @@ main() {
     if [ "$obs_only" = true ]; then
         start_obs
         log_info "可观测性容器已在后台运行。"
-        log_info "停止请运行: cd $OBS_DIR && docker compose down"
+        log_info "停止请运行: $0 --stop-obs"
         exit 0
     fi
 
-    # 启动可观测性（容器在 agent 退出后保持不变）
-    if [ "$with_obs" = true ]; then
+    # 默认启动可观测性，除非 --no-obs
+    if [ "$no_obs" = false ]; then
         start_obs
     fi
 
