@@ -30,6 +30,7 @@ walle 启动脚本
   --no-obs       不启动可观测性容器，仅启动 agent
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
+  --test         运行测试，不启动 agent
   --help         显示此帮助信息
 
 示例:
@@ -37,6 +38,7 @@ walle 启动脚本
   ./scripts/run.sh --no-obs     # 仅启动 agent
   ./scripts/run.sh --obs-only   # 仅启动可观测性
   ./scripts/run.sh --stop-obs   # 停止可观测性
+  ./scripts/run.sh --test       # 运行测试
 EOF
     exit 0
 }
@@ -98,11 +100,19 @@ start_agent() {
         python3 -m walle.main
 }
 
+# ── 运行测试 ──────────────────────────────────────────
+run_tests() {
+    log_step "运行测试 ..."
+    cd "$PROJ_ROOT"
+    python3 -m pytest tests/ -v
+}
+
 # ── 主流程 ────────────────────────────────────────────
 main() {
     local no_obs=false
     local obs_only=false
     local stop_obs_flag=false
+    local test_only=false
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -110,6 +120,7 @@ main() {
             --no-obs)      no_obs=true ;;
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
+            --test)        test_only=true ;;
             --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
@@ -118,6 +129,12 @@ main() {
         esac
         shift
     done
+
+    # 运行测试
+    if [ "$test_only" = true ]; then
+        run_tests
+        exit 0
+    fi
 
     # 停止可观测性
     if [ "$stop_obs_flag" = true ]; then
