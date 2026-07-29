@@ -16,8 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    def __init__(self, approval_config: ApprovalConfig | None = None):
+    def __init__(
+        self,
+        approval_config: ApprovalConfig | None = None,
+        timeout: float | None = 30.0,
+    ):
         self._policy = ApprovalPolicy(approval_config)
+        self._timeout = timeout
 
     async def _check_approval(
         self, name: str, args: dict[str, Any], ctx: ToolContext
@@ -68,13 +73,17 @@ class ToolExecutor:
             with tracer.start_as_current_span("tool.execute") as span:
                 span.set_attribute("tool.name", name)
                 start = time.monotonic()
-                result = await ft.run(args)
+                result = await asyncio.wait_for(ft.run(args), self._timeout)
                 elapsed_ms = (time.monotonic() - start) * 1000
 
             TOOL_DURATION.record(elapsed_ms, attrs)
             TOOL_CALLS.add(1, attrs)
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
             return tc_id, result
+        except asyncio.TimeoutError:
+            logger.warning(f"{name}: timeout after {self._timeout}s")
+            TOOL_ERRORS.add(1, attrs)
+            return tc_id, f"Error: tool '{name}' timed out after {self._timeout}s"
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)

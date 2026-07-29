@@ -72,6 +72,7 @@ class Config(BaseModel):
     mcp: dict[str, MCPConfig]
     telemetry: TelemetryConfig = TelemetryConfig()
     approval: ApprovalConfig = ApprovalConfig()
+    tool_timeout: float | None = 30.0
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):

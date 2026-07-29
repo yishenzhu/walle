@@ -19,6 +19,8 @@ approval:
     - [allow, grilling]
   default: ask
 
+tool_timeout: 30
+
 mcp:
   rag:
     # enabled: false

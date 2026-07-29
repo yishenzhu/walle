@@ -40,7 +40,7 @@ async def main():
     runner = Runner(
         channel=channel,
         session=session,
-        tool_executor=ToolExecutor(conf.approval),
+        tool_executor=ToolExecutor(conf.approval, timeout=conf.tool_timeout),
     )
 
     try:
