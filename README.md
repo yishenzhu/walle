@@ -38,6 +38,7 @@
 - **多智能体 Handoff** — Agent 可将任务移交给其他 Agent，支持链式协作
 - **MCP 协议集成** — 对接任意 MCP Server（stdio / Streamable HTTP），自动发现并注册远程工具
 - **工具审批系统** — 基于 glob 模式的三态策略（allow / deny / ask），按工具名和参数粒度控制
+- **工具超时保护** — 可配置全局超时，防止工具卡死阻塞 Agent 循环
 - **会话压缩** — 当 token 超过阈值时自动触发摘要压缩，保留关键信息，降低上下文成本
 - **可插拔架构** — Channel、Session、Compressor 均为 Protocol 接口，可按需替换实现
 - **全链路可观测** — OpenTelemetry Traces + Metrics，对接 Grafana / Tempo / Mimir 可视化栈
@@ -55,20 +56,14 @@
 ```bash
 git clone <repo-url> walle
 cd walle
-pip install -e .
+pip install -e ".[dev]"
 ```
 
-### 配置环境变量
+### 配置
 
 ```bash
-cp .env.example .env
-# 编辑 .env，填入 LLM API 配置
-```
-
-```env
-OPENAI_API_KEY=sk-xxxx
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o
+cp conf.yaml.example conf.yaml   # 编辑配置（MCP Server、审批规则等）
+cp .env.example .env             # 填入 LLM API Key
 ```
 
 ### 启动
@@ -85,6 +80,9 @@ OPENAI_MODEL=gpt-4o
 
 # 停止可观测性容器
 ./scripts/run.sh --stop-obs
+
+# 运行测试
+./scripts/run.sh --test
 ```
 
 启动后在终端输入消息即可与 Agent 对话，输入 `:q` 退出。
@@ -161,13 +159,13 @@ approval:
     - [allow, ask_user]             # 提问工具自动放行
   default: ask                       # 默认需人工审批
 
+tool_timeout: 30                     # 工具执行超时（秒），null 禁用
+
 mcp:
-  rag:
-    url: http://127.0.0.1:9000/mcp
   tavily:
     url: https://mcp.tavily.com/mcp
     headers:
-      Authorization: "Bearer ${TAVILY_KEY}"
+      Authorization: "Bearer your-key"
     enabled: false
 ```
 
@@ -266,12 +264,12 @@ writer = Agent(
 ```
 walle/
 ├── main.py                    # 入口
-├── conf.yaml                  # 主配置
+├── conf.yaml.example          # 配置模板（复制为 conf.yaml 使用）
 ├── pyproject.toml             # 依赖声明
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（审批·并发）
+│   ├── executor.py            #   工具执行器（审批·并发·超时）
 │   └── approval.py            #   审批规则引擎
 ├── channel/                   # 交互通道
 │   └── channel.py             #   Channel Protocol + CLI 实现
@@ -301,6 +299,16 @@ walle/
 │   └── provider.py            #   LLM Provider
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
+├── tests/                     # 测试
+│   ├── conftest.py            #   公共 fixture 与 mock
+│   ├── test_approval.py       #   审批规则测试
+│   ├── test_executor.py       #   工具执行器测试
+│   ├── test_runner.py         #   Agent 循环测试
+│   ├── test_tools.py          #   工具注册测试
+│   ├── test_session_memory.py #   内存会话测试
+│   ├── test_session_sqlite.py #   SQLite 持久化测试
+│   ├── test_session_compressible.py  # 压缩会话测试
+│   └── test_policies.py       #   压缩策略测试
 ├── observability/             # 可观测性栈
 │   ├── docker-compose.yaml    #   OTel + Tempo + Mimir + Grafana
 │   └── *.yaml                 #   各服务配置
