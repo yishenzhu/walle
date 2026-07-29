@@ -101,6 +101,29 @@ class TestExecute:
         tc_id, result = await executor.execute(tc, {"bash": tool}, ctx)
         assert "no channel" in result
 
+    async def test_execute_timeout(self, ctx):
+        import asyncio
+
+        async def slow_fn(args):
+            await asyncio.sleep(10)
+            return "should not reach"
+
+        tool = Tool(name="slow", description="d", parameters={"type": "object", "properties": {}}, fn=slow_fn)
+        executor = ToolExecutor(ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=0.1)
+        tc = make_tool_call(name="slow")
+        tc_id, result = await executor.execute(tc, {"slow": tool}, ctx)
+        assert "timed out" in result
+
+    async def test_execute_no_timeout_when_none(self, ctx):
+        async def fn(args):
+            return "ok"
+
+        tool = Tool(name="ok", description="d", parameters={"type": "object", "properties": {}}, fn=fn)
+        executor = ToolExecutor(ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=None)
+        tc = make_tool_call(name="ok")
+        tc_id, result = await executor.execute(tc, {"ok": tool}, ctx)
+        assert result == "ok"
+
 
 class TestExecuteBatch:
     async def test_batch_multiple(self, ctx):
