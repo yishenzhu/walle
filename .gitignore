@@ -5,4 +5,5 @@ data/
 *.venv/
 .vscode
 .env
+conf.yaml
 /tmp

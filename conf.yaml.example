@@ -1,0 +1,28 @@
+log:
+  level: "DEBUG"
+  path: "logs/agent.log"
+  backup_count: 30
+
+telemetry:
+  enabled: true
+  service_name: "agent"
+  otlp:
+    endpoint: "http://localhost:4317"
+    insecure: true
+  console_export: false
+
+approval:
+  rules:
+    - [deny, bash(cmd=rm -rf /)]
+    - [allow, bash(cmd=ls -la *)]
+    - [allow, ask_user] 
+    - [allow, grilling]
+  default: ask
+
+mcp:
+  rag:
+    # enabled: false
+    url: http://127.0.0.1:9000/mcp
+  amap:
+    url: "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY"
+    enabled: false
