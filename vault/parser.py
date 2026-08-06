@@ -23,6 +23,7 @@ class Chunk(BaseModel):
     heading: str                               # 叶子小节标题（文件开头为 ""）
     ancestors: list[str] = Field(default_factory=list)  # 祖先标题链 [H1, H2, ...]
     content: str                               # 叶子内容
+    search_text: str = ""                      # 分词后的检索文本（索引器填充）
     tags: list[str] = Field(default_factory=list)
     frontmatter: dict[str, Any] = Field(default_factory=dict)
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .parser import parse_note
 from .store import Store
+from .tokenize import tokenize
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,8 @@ class Indexer:
     async def _index_one(self, rel: str, p: Path) -> None:
         try:
             chunks = parse_note(p, rel)
+            for c in chunks:
+                c.search_text = tokenize(" ".join([*c.ancestors, c.heading, c.content]))
             await self._store.upsert_file(rel, chunks)
             await self._store.set_file_mtime(rel, p.stat().st_mtime)
         except Exception as e:

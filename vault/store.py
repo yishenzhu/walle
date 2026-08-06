@@ -41,15 +41,8 @@ class Store:
                 heading TEXT NOT NULL,
                 ancestors TEXT NOT NULL,
                 content TEXT NOT NULL,
+                search_text TEXT NOT NULL DEFAULT '',
                 tags TEXT NOT NULL DEFAULT '[]'
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-                content, heading, ancestors, path,
-                content='chunks', content_rowid='id'
             )
             """
         )
@@ -64,35 +57,46 @@ class Store:
             )
             """
         )
+        self._ensure_fts(conn)
+        conn.commit()
+        return conn
+
+    def _ensure_fts(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                search_text, path,
+                content='chunks', content_rowid='id'
+            )
+            """
+        )
         # FTS5 外部内容表不会自动同步 DML，需触发器桥接
         conn.execute(
             """
             CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-                INSERT INTO chunks_fts(rowid, content, heading, ancestors, path)
-                VALUES (new.id, new.content, new.heading, new.ancestors, new.path);
+                INSERT INTO chunks_fts(rowid, search_text, path)
+                VALUES (new.id, new.search_text, new.path);
             END
             """
         )
         conn.execute(
             """
             CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content, heading, ancestors, path)
-                VALUES ('delete', old.id, old.content, old.heading, old.ancestors, old.path);
+                INSERT INTO chunks_fts(chunks_fts, rowid, search_text, path)
+                VALUES ('delete', old.id, old.search_text, old.path);
             END
             """
         )
         conn.execute(
             """
             CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, rowid, content, heading, ancestors, path)
-                VALUES ('delete', old.id, old.content, old.heading, old.ancestors, old.path);
-                INSERT INTO chunks_fts(rowid, content, heading, ancestors, path)
-                VALUES (new.id, new.content, new.heading, new.ancestors, new.path);
+                INSERT INTO chunks_fts(chunks_fts, rowid, search_text, path)
+                VALUES ('delete', old.id, old.search_text, old.path);
+                INSERT INTO chunks_fts(rowid, search_text, path)
+                VALUES (new.id, new.search_text, new.path);
             END
             """
         )
-        conn.commit()
-        return conn
 
     async def upsert_file(self, path: str, chunks: Sequence[Chunk]) -> None:
         """替换单个文件的所有块（先删旧块，再插入新块）。"""
@@ -102,8 +106,8 @@ class Store:
             conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
             conn.executemany(
                 """
-                INSERT INTO chunks (path, heading, ancestors, content, tags)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO chunks (path, heading, ancestors, content, search_text, tags)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -111,6 +115,7 @@ class Store:
                         c.heading,
                         json.dumps(c.ancestors, ensure_ascii=False),
                         c.content,
+                        c.search_text,
                         json.dumps(c.tags, ensure_ascii=False),
                     )
                     for c in chunks
