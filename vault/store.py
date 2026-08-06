@@ -56,6 +56,14 @@ class Store:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks (path)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS files (
+                path TEXT PRIMARY KEY,
+                mtime REAL NOT NULL
+            )
+            """
+        )
         # FTS5 外部内容表不会自动同步 DML，需触发器桥接
         conn.execute(
             """
@@ -117,6 +125,29 @@ class Store:
 
         def _run():
             conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
+            conn.execute("DELETE FROM files WHERE path = ?", (path,))
+            conn.commit()
+
+        await asyncio.to_thread(_run)
+
+    async def file_mtimes(self) -> dict[str, float]:
+        """已索引文件的 path -> mtime 映射。"""
+        conn = await self._get_conn()
+
+        def _run():
+            rows = conn.execute("SELECT path, mtime FROM files").fetchall()
+            return {path: mtime for path, mtime in rows}
+
+        return await asyncio.to_thread(_run)
+
+    async def set_file_mtime(self, path: str, mtime: float) -> None:
+        conn = await self._get_conn()
+
+        def _run():
+            conn.execute(
+                "INSERT OR REPLACE INTO files (path, mtime) VALUES (?, ?)",
+                (path, mtime),
+            )
             conn.commit()
 
         await asyncio.to_thread(_run)
@@ -126,6 +157,7 @@ class Store:
 
         def _run():
             conn.execute("DELETE FROM chunks")
+            conn.execute("DELETE FROM files")
             conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
             conn.commit()
 
