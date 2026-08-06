@@ -7,6 +7,7 @@ from .config import (
     ApprovalConfig,
     ApprovalDecision,
     RawRule,
+    VaultConfig,
     PROJ_ROOT,
     DOT_AGENT,
     auto_path,

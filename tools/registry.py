@@ -2,10 +2,10 @@ import asyncio
 import logging
 from typing import Self
 
-from ..conf import MCPConfig
+from ..conf import Config, MCPConfig, VaultConfig
 from .tool import Tool
 from .mcp import MCPClient
-from .builtin import Skill, ask_user, bash
+from .builtin import Skill, ask_user, bash, make_search_notes
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +13,33 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     def __init__(self):
         self._builtin: list[Tool] = Skill.load()
-        self.add_builtin(ask_user)
-        self.add_builtin(bash)
+        self.add_builtin(ask_user, bash)
         self._mcp_clients: list[MCPClient] = []
+        self._store = None
 
-    def add_builtin(self, fn) -> None:
-        tool = Tool.from_function(fn)
-        if any(t.name == tool.name for t in self._builtin):
-            raise ValueError(f"Duplicate tool name: {tool.name}")
-        self._builtin.append(tool)
+    def add_builtin(self, *fns) -> None:
+        for fn in fns:
+            tool = Tool.from_function(fn)
+            if any(t.name == tool.name for t in self._builtin):
+                raise ValueError(f"Duplicate tool name: {tool.name}")
+            self._builtin.append(tool)
+
+    async def initialize(self, conf: Config) -> Self:
+        """初始化工具系统：知识库 + MCP server。"""
+        await self.setup_vault(conf.vault)
+        await self.load_mcp(conf.mcp)
+        return self
+
+    async def setup_vault(self, conf: VaultConfig | None) -> None:
+        """装配知识库：启用时建索引并注册笔记检索工具（闭包捕获检索器）。"""
+        if conf is None or not conf.enabled or not conf.path:
+            return
+        from ..vault import Store, Indexer, Retriever
+
+        store = Store()
+        await Indexer(conf.path, store).full_build()
+        self.add_builtin(make_search_notes(Retriever(store)))
+        self._store = store
 
     async def load_mcp(self, configs: dict[str, MCPConfig]) -> Self:
         clients = await asyncio.gather(
@@ -68,3 +86,5 @@ class ToolRegistry:
     async def close(self) -> None:
         for client in self._mcp_clients:
             await client.close()
+        if self._store is not None:
+            await self._store.close()

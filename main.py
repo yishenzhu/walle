@@ -20,7 +20,7 @@ async def main():
     setup_telemetry(conf.telemetry)
     OpenAIProvider.load_env()
 
-    registry = await ToolRegistry().load_mcp(conf.mcp)
+    registry = await ToolRegistry().initialize(conf)
 
     all_tools = registry.builtin_tools()
     all_tools.extend(registry.mcp_tools())
