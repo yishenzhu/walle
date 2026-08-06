@@ -5,6 +5,7 @@ from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor
 from .channel import CLIChannel
 from .tools import ToolRegistry
+from .tools.usage import ToolUsage
 from .session import (
     InMemorySession,
     CompressibleSession,
@@ -37,10 +38,11 @@ async def main():
     )
 
     channel = CLIChannel()
+    tool_usage = ToolUsage()
     runner = Runner(
         channel=channel,
         session=session,
-        tool_executor=ToolExecutor(conf.approval, timeout=conf.tool_timeout),
+        tool_executor=ToolExecutor(conf.approval, timeout=conf.tool_timeout, usage=tool_usage),
     )
 
     try:
@@ -52,6 +54,7 @@ async def main():
     finally:
         await session.close()
         await registry.close()
+        await tool_usage.close()
 
 
 asyncio.run(main())

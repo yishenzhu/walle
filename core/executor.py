@@ -20,9 +20,11 @@ class ToolExecutor:
         self,
         approval_config: ApprovalConfig | None = None,
         timeout: float | None = 30.0,
+        usage=None,
     ):
         self._policy = ApprovalPolicy(approval_config)
         self._timeout = timeout
+        self._usage = usage
 
     async def _check_approval(
         self, name: str, args: dict[str, Any], ctx: ToolContext
@@ -78,6 +80,8 @@ class ToolExecutor:
 
             TOOL_DURATION.record(elapsed_ms, attrs)
             TOOL_CALLS.add(1, attrs)
+            if self._usage is not None:
+                await self._usage.record(name, ft.description)
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
             return tc_id, result
         except asyncio.TimeoutError:
