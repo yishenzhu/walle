@@ -5,7 +5,7 @@ from typing import Self
 from ..conf import Config, MCPConfig, VaultConfig
 from .tool import Tool
 from .mcp import MCPClient
-from .builtin import Skill, ask_user, bash, make_search_notes, make_write_note
+from .builtin import Skill, ask_user, bash, make_search_notes
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +31,15 @@ class ToolRegistry:
         return self
 
     async def setup_vault(self, conf: VaultConfig | None) -> None:
-        """装配知识库：启用时建索引并注册笔记检索/写入工具（闭包捕获）。"""
+        """装配知识库：建索引并注册笔记检索/读取工具（闭包捕获）。"""
         if conf is None or not conf.enabled or not conf.path:
             return
         from ..vault import Store, Indexer, Retriever
-        from ..vault.writer import NoteWriter
 
         store = Store()
         indexer = Indexer(conf.path, store)
         await indexer.full_build()
-        self.add_builtin(
-            make_search_notes(Retriever(store)),
-            make_write_note(NoteWriter(conf.path, indexer)),
-        )
+        self.add_builtin(make_search_notes(Retriever(store, indexer)))
         self._store = store
 
     async def load_mcp(self, configs: dict[str, MCPConfig]) -> Self:

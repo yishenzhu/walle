@@ -2,6 +2,5 @@
 
 from .parser import Chunk, parse_note
 from .retriever import Retriever
-from .writer import NoteWriter
 
-__all__ = ["Chunk", "parse_note", "Retriever", "NoteWriter"]
+__all__ = ["Chunk", "parse_note", "Retriever"]

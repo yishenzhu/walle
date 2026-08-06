@@ -13,6 +13,7 @@ import sqlite3
 
 from pydantic import BaseModel
 
+from .indexer import Indexer
 from .store import Store
 from .tokenize import tokenize
 
@@ -29,10 +30,14 @@ class Retrieval(BaseModel):
 
 
 class Retriever:
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, indexer: Indexer | None = None):
         self._store = store
+        self._indexer = indexer
 
     async def retrieve(self, query: str, k: int = 3) -> list[Retrieval]:
+        # 懒刷新：检索前同步索引（mtime 增量），捕捉任何来源的新写入
+        if self._indexer is not None:
+            await self._indexer.refresh()
         match = _escape_match(query)
         if not match:
             return []
