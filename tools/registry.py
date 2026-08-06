@@ -38,7 +38,7 @@ class ToolRegistry:
 
         store = Store()
         indexer = Indexer(conf.path, store)
-        await indexer.full_build()
+        await indexer.ensure_indexed()
         self.add_builtin(make_semantic_search(Retriever(store, indexer)))
         self._store = store
 

@@ -145,6 +145,16 @@ class Store:
 
         return await asyncio.to_thread(_run)
 
+    async def is_indexed(self) -> bool:
+        """索引是否已构建（files 表非空）。"""
+        conn = await self._get_conn()
+
+        def _run():
+            row = conn.execute("SELECT COUNT(*) FROM files").fetchone()
+            return row is not None and row[0] > 0
+
+        return await asyncio.to_thread(_run)
+
     async def set_file_mtime(self, path: str, mtime: float) -> None:
         conn = await self._get_conn()
 

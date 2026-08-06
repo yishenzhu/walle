@@ -47,6 +47,20 @@ class Indexer:
         for p in files:
             await self._index_one(p.relative_to(self._root).as_posix(), p)
 
+    async def ensure_indexed(self) -> None:
+        """确保索引可用：已索引则增量刷新，否则全量重建。
+
+        增量刷新失败（索引损坏/schema 变更）时降级全量重建。
+        """
+        if not await self._store.is_indexed():
+            await self.full_build()
+            return
+        try:
+            await self.refresh()
+        except Exception as e:
+            logger.warning(f"vault refresh failed, rebuild: {e}")
+            await self.full_build()
+
     async def refresh(self) -> None:
         """增量刷新：重建 mtime 变化的文件，移除已删除的文件。"""
         files = {p.relative_to(self._root).as_posix(): p for p in self._md_files()}

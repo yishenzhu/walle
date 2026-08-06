@@ -51,3 +51,50 @@ def test_lazy_refresh_e2e():
             await store.close()
 
     asyncio.run(main())
+
+
+def test_ensure_indexed_incremental():
+    """ensure_indexed：首次全量，二次增量（不重建未变文件）。"""
+    async def main():
+        with tempfile.TemporaryDirectory() as d:
+            vault = Path(d) / "vault"
+            (vault / "proj").mkdir(parents=True)
+            (vault / "proj" / "a.md").write_text("# A\n\n内容 alpha\n", encoding="utf-8")
+            store = Store(os.path.join(d, "v.db"))
+            indexer = Indexer(str(vault), store)
+
+            await indexer.ensure_indexed()   # 首次 → 全量
+            assert await store.is_indexed()
+
+            # 二次 → 增量：新增文件应被索引
+            (vault / "proj" / "b.md").write_text("# B\n\n内容 beta\n", encoding="utf-8")
+            await indexer.ensure_indexed()
+            mtimes = await store.file_mtimes()
+            assert "proj/a.md" in mtimes and "proj/b.md" in mtimes
+            await store.close()
+
+    asyncio.run(main())
+
+
+def test_ensure_indexed_rebuild_on_corrupt():
+    """ensure_indexed：索引损坏（files 表空）时降级全量重建。"""
+    async def main():
+        with tempfile.TemporaryDirectory() as d:
+            vault = Path(d) / "vault"
+            (vault / "proj").mkdir(parents=True)
+            (vault / "proj" / "a.md").write_text("# A\n\n内容 gamma\n", encoding="utf-8")
+            store = Store(os.path.join(d, "v.db"))
+            indexer = Indexer(str(vault), store)
+            await indexer.full_build()
+
+            # 模拟索引损坏：清空 files 表（索引"不可信"）
+            await store.clear()
+            assert not await store.is_indexed()
+
+            # ensure_indexed 应全量重建
+            await indexer.ensure_indexed()
+            mtimes = await store.file_mtimes()
+            assert "proj/a.md" in mtimes
+            await store.close()
+
+    asyncio.run(main())
