@@ -67,11 +67,17 @@ class ApprovalConfig(BaseModel):
     default: ApprovalDecision = ApprovalDecision.ASK
 
 
+class VaultConfig(BaseModel):
+    enabled: bool = False
+    path: str | None = None               # Obsidian 库绝对路径
+
+
 class Config(BaseModel):
     log: LogConfig
     mcp: dict[str, MCPConfig]
     telemetry: TelemetryConfig = TelemetryConfig()
     approval: ApprovalConfig = ApprovalConfig()
+    vault: VaultConfig = VaultConfig()
     tool_timeout: float | None = 30.0
 
     @classmethod

@@ -21,6 +21,10 @@ approval:
 
 tool_timeout: 30
 
+vault:
+  enabled: false
+  path: "/path/to/your/ObsidianVault"   # Obsidian 库绝对路径
+
 mcp:
   rag:
     # enabled: false
