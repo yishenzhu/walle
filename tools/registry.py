@@ -5,7 +5,7 @@ from typing import Self
 from ..conf import Config, MCPConfig, VaultConfig
 from .tool import Tool
 from .mcp import MCPClient
-from .builtin import Skill, ask_user, bash, make_search_notes
+from .builtin import Skill, ask_user, bash, create_skill, make_search_notes
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     def __init__(self):
         self._builtin: list[Tool] = Skill.load()
-        self.add_builtin(ask_user, bash)
+        self.add_builtin(ask_user, bash, create_skill)
         self._mcp_clients: list[MCPClient] = []
         self._store = None
 

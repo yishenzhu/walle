@@ -8,7 +8,7 @@ from ...vault import Retriever
 
 
 def make_search_notes(retriever: Retriever) -> Callable[[str], Awaitable[str]]:
-    """构建笔记检索工具（闭包捕获检索器，由 ToolRegistry 装配时调用）。"""
+    """构建笔记检索工具（闭包捕获检索器）"""
 
     async def search_notes(query: str) -> str:
         """搜索笔记库，返回相关笔记片段及来源。优先使用此工具查找笔记内容。"""
