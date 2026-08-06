@@ -2,5 +2,7 @@
 
 from .parser import Chunk, parse_note
 from .retriever import Retriever
+from .store import Store
+from .indexer import Indexer
 
-__all__ = ["Chunk", "parse_note", "Retriever"]
+__all__ = ["Chunk", "parse_note", "Retriever", "Store", "Indexer"]
