@@ -72,13 +72,17 @@ class VaultConfig(BaseModel):
     path: str | None = None               # Obsidian 库绝对路径
 
 
+class ToolConfig(BaseModel):
+    approval: ApprovalConfig = ApprovalConfig()
+    timeout: float | None = 30.0
+
+
 class Config(BaseModel):
     log: LogConfig
     mcp: dict[str, MCPConfig]
     telemetry: TelemetryConfig = TelemetryConfig()
-    approval: ApprovalConfig = ApprovalConfig()
     vault: VaultConfig = VaultConfig()
-    tool_timeout: float | None = 30.0
+    tool: ToolConfig = ToolConfig()
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):

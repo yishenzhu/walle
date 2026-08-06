@@ -11,15 +11,15 @@ telemetry:
     insecure: true
   console_export: false
 
-approval:
-  rules:
-    - [deny, bash(cmd=rm -rf /)]
-    - [allow, bash(cmd=ls -la *)]
-    - [allow, ask_user] 
-    - [allow, grilling]
-  default: ask
-
-tool_timeout: 30
+tool:
+  timeout: 30
+  approval:
+    rules:
+      - [deny, bash(cmd=rm -rf /)]
+      - [allow, bash(cmd=ls -la *)]
+      - [allow, ask_user] 
+      - [allow, grilling]
+    default: ask
 
 vault:
   enabled: false

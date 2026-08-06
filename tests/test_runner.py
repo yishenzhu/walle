@@ -1,7 +1,7 @@
 """Runner Agent 循环测试（mock LLM，不依赖真实 API）。"""
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision
+from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Handoff, Runner, RunConfig, ToolExecutor
 from ..schemas import UserMessage
 from ..session.memory import InMemorySession
@@ -32,7 +32,7 @@ def channel():
 
 @pytest.fixture
 def allow_executor():
-    return ToolExecutor(ApprovalConfig(default=ApprovalDecision.ALLOW))
+    return ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW)))
 
 
 def make_echo_tool(result="echoed"):

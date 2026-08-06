@@ -1,25 +1,17 @@
 import asyncio
 import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
-from ..conf import auto_path
+from ..infra.sqlite_store import SQLiteStore
 from ..schemas import Message, MessageAdapter, Usage
 
 
-class SQLiteSession:
+class SQLiteSession(SQLiteStore):
     def __init__(self, db_path: str = "data/session.db", session_id: str = "default"):
-        self._db_path = auto_path(db_path)
+        super().__init__(db_path)
         self._session_id = session_id
-        self._conn: sqlite3.Connection | None = None
-
-    async def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = await asyncio.to_thread(self._connect)
-        return self._conn
 
     def _connect(self) -> sqlite3.Connection:
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn = super()._connect()
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -82,18 +74,7 @@ class SQLiteSession:
         return await asyncio.to_thread(_pop)
 
     async def clear(self):
-        conn = await self._get_conn()
-
-        def _clear():
-            conn.execute(
-                "DELETE FROM messages WHERE session_id = ?",
-                (self._session_id,),
-            )
-            conn.commit()
-
-        await asyncio.to_thread(_clear)
-
-    async def close(self):
-        if self._conn is not None:
-            await asyncio.to_thread(self._conn.close)
-            self._conn = None
+        await self.execute(
+            "DELETE FROM messages WHERE session_id = ?",
+            (self._session_id,),
+        )

@@ -1,18 +1,17 @@
 import asyncio
 
-from ..tools.usage import ToolUsage
+from ..tools.stats import ToolStats
 
 
 def test_record_and_get(tmp_path):
     async def main():
-        u = ToolUsage(str(tmp_path / "u.db"))
-        await u.record("bash", "执行命令")
-        await u.record("bash", "执行命令")
-        await u.record("search_notes", "搜索笔记")
+        u = ToolStats(str(tmp_path / "u.db"))
+        await u.record("bash")
+        await u.record("bash")
+        await u.record("search_notes")
 
         bash = await u.get("bash")
         assert bash["usage_count"] == 2
-        assert bash["description"] == "执行命令"
         assert bash["status"] == "hot"
 
         all_tools = await u.all()
@@ -25,7 +24,7 @@ def test_record_and_get(tmp_path):
 
 def test_record_unknown_returns_none(tmp_path):
     async def main():
-        u = ToolUsage(str(tmp_path / "u.db"))
+        u = ToolStats(str(tmp_path / "u.db"))
         assert await u.get("nonexistent") is None
         await u.close()
 

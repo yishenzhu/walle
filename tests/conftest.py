@@ -1,7 +1,7 @@
 """pytest 共享 fixture 与 mock 对象。"""
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, RawRule
+from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
 from ..infra.provider import OpenAIProvider
 from ..schemas import ApprovalResponse, UserInput
@@ -146,7 +146,7 @@ def allow_all_config():
 
 @pytest.fixture
 def executor(allow_all_config):
-    return ToolExecutor(allow_all_config)
+    return ToolExecutor(ToolConfig(approval=allow_all_config))
 
 
 @pytest.fixture

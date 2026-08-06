@@ -13,26 +13,19 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
 
+from ..infra.sqlite_store import SQLiteStore
 from .parser import Chunk
 
 DEFAULT_DB_PATH = "data/vault.db"
 
 
-class Store:
+class Store(SQLiteStore):
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
-        self._db_path = db_path
-        self._conn: sqlite3.Connection | None = None
-
-    async def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
-            self._conn = await asyncio.to_thread(self._connect)
-        return self._conn
+        super().__init__(db_path)
 
     def _connect(self) -> sqlite3.Connection:
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn = super()._connect()
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS chunks (
@@ -100,74 +93,48 @@ class Store:
 
     async def upsert_file(self, path: str, chunks: Sequence[Chunk]) -> None:
         """替换单个文件的所有块（先删旧块，再插入新块）。"""
-        conn = await self._get_conn()
-
-        def _run():
-            conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
-            conn.executemany(
-                """
-                INSERT INTO chunks (path, heading, ancestors, content, search_text, tags)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        c.path,
-                        c.heading,
-                        json.dumps(c.ancestors, ensure_ascii=False),
-                        c.content,
-                        c.search_text,
-                        json.dumps(c.tags, ensure_ascii=False),
-                    )
-                    for c in chunks
-                ],
+        rows = [
+            (
+                c.path,
+                c.heading,
+                json.dumps(c.ancestors, ensure_ascii=False),
+                c.content,
+                c.search_text,
+                json.dumps(c.tags, ensure_ascii=False),
             )
-            conn.commit()
-
-        await asyncio.to_thread(_run)
+            for c in chunks
+        ]
+        await self.execute("DELETE FROM chunks WHERE path = ?", (path,))
+        await self.executemany(
+            """
+            INSERT INTO chunks (path, heading, ancestors, content, search_text, tags)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
 
     async def delete_file(self, path: str) -> None:
-        conn = await self._get_conn()
-
-        def _run():
-            conn.execute("DELETE FROM chunks WHERE path = ?", (path,))
-            conn.execute("DELETE FROM files WHERE path = ?", (path,))
-            conn.commit()
-
-        await asyncio.to_thread(_run)
+        await self.execute("DELETE FROM chunks WHERE path = ?", (path,))
+        await self.execute("DELETE FROM files WHERE path = ?", (path,))
 
     async def file_mtimes(self) -> dict[str, float]:
         """已索引文件的 path -> mtime 映射。"""
-        conn = await self._get_conn()
-
-        def _run():
-            rows = conn.execute("SELECT path, mtime FROM files").fetchall()
-            return {path: mtime for path, mtime in rows}
-
-        return await asyncio.to_thread(_run)
+        rows = await self.query("SELECT path, mtime FROM files")
+        return {path: mtime for path, mtime in rows}
 
     async def is_indexed(self) -> bool:
         """索引是否已构建（files 表非空）。"""
-        conn = await self._get_conn()
-
-        def _run():
-            row = conn.execute("SELECT COUNT(*) FROM files").fetchone()
-            return row is not None and row[0] > 0
-
-        return await asyncio.to_thread(_run)
+        rows = await self.query("SELECT COUNT(*) FROM files")
+        return bool(rows) and rows[0][0] > 0
 
     async def set_file_mtime(self, path: str, mtime: float) -> None:
-        conn = await self._get_conn()
-
-        def _run():
-            conn.execute(
-                "INSERT OR REPLACE INTO files (path, mtime) VALUES (?, ?)",
-                (path, mtime),
-            )
-            conn.commit()
-
-        await asyncio.to_thread(_run)
+        await self.execute(
+            "INSERT OR REPLACE INTO files (path, mtime) VALUES (?, ?)",
+            (path, mtime),
+        )
 
     async def clear(self) -> None:
+        """清空全部块与索引（含 FTS 重建）。"""
         conn = await self._get_conn()
 
         def _run():
@@ -177,8 +144,3 @@ class Store:
             conn.commit()
 
         await asyncio.to_thread(_run)
-
-    async def close(self) -> None:
-        if self._conn is not None:
-            await asyncio.to_thread(self._conn.close)
-            self._conn = None

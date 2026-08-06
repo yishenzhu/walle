@@ -7,7 +7,7 @@ from typing import Any
 
 from ..schemas import ToolResult
 from .approval import ApprovalPolicy
-from ..conf import ApprovalConfig, ApprovalDecision
+from ..conf import ApprovalDecision, ToolConfig
 from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
 from ..schemas import ToolCall
 from ..tools import Tool, ToolContext, tool_context
@@ -16,15 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    def __init__(
-        self,
-        approval_config: ApprovalConfig | None = None,
-        timeout: float | None = 30.0,
-        usage=None,
-    ):
-        self._policy = ApprovalPolicy(approval_config)
-        self._timeout = timeout
-        self._usage = usage
+    def __init__(self, config: ToolConfig | None = None):
+        self._policy = ApprovalPolicy(config.approval if config else None)
+        self._timeout = config.timeout if config else None
 
     async def _check_approval(
         self, name: str, args: dict[str, Any], ctx: ToolContext
@@ -80,8 +74,6 @@ class ToolExecutor:
 
             TOOL_DURATION.record(elapsed_ms, attrs)
             TOOL_CALLS.add(1, attrs)
-            if self._usage is not None:
-                await self._usage.record(name, ft.description)
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
             return tc_id, result
         except asyncio.TimeoutError:

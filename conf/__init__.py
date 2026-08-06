@@ -8,6 +8,7 @@ from .config import (
     ApprovalDecision,
     RawRule,
     VaultConfig,
+    ToolConfig,
     PROJ_ROOT,
     DOT_AGENT,
     auto_path,
