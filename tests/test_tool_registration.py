@@ -22,8 +22,8 @@ def test_search_notes_registered():
             reg = await ToolRegistry().initialize(conf)
             names = [t.name for t in reg.builtin_tools()]
             print("TOOLS:", names)
-            assert "semantic_search" in names, names
-            schema = next(t.formatted_schema() for t in reg.builtin_tools() if t.name == "semantic_search")
+            assert "search_notes" in names, names
+            schema = next(t.formatted_schema() for t in reg.builtin_tools() if t.name == "search_notes")
             print("SCHEMA:", schema)
             assert "query" in schema["function"]["parameters"]["properties"]
             await reg.close()

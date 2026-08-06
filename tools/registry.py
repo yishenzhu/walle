@@ -5,7 +5,7 @@ from typing import Self
 from ..conf import Config, MCPConfig, VaultConfig
 from .tool import Tool
 from .mcp import MCPClient
-from .builtin import Skill, ask_user, bash, make_semantic_search
+from .builtin import Skill, ask_user, bash, make_search_notes
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ToolRegistry:
         store = Store()
         indexer = Indexer(conf.path, store)
         await indexer.ensure_indexed()
-        self.add_builtin(make_semantic_search(Retriever(store, indexer)))
+        self.add_builtin(make_search_notes(Retriever(store, indexer)))
         self._store = store
 
     async def load_mcp(self, configs: dict[str, MCPConfig]) -> Self:
