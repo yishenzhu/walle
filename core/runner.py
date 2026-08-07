@@ -236,7 +236,10 @@ class Runner:
         return messages
 
     def _build_tools(self, agent: Agent[Any]) -> dict[str, Tool]:
-        tools: dict[str, Tool] = {t.name: t for t in agent.tools}
+        # 实时取工具（agent.tools 源反映运行时添加的工具）
+        tools: dict[str, Tool] = {}
+        if agent.tools is not None:
+            tools.update({t.name: t for t in agent.tools()})
         for h in agent.handoffs:
             t = h.as_tool()
             tools[t.name] = t

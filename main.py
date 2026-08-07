@@ -24,7 +24,7 @@ async def main():
 
     agent = Agent(
         instruction="You are a helpful assistant.",
-        tools=registry.all_tools(),
+        tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
     )
 
     session = CompressibleSession(

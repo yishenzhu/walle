@@ -1,5 +1,7 @@
 import logging
 import logging.handlers
+from pathlib import Path
+
 from ..conf import PROJ_ROOT, auto_path, LogConfig
 
 
@@ -16,18 +18,21 @@ class TraceInjectingFilter(logging.Filter):
 
 def setup_logger(conf: LogConfig):
 
+    log_path = Path(auto_path(conf.path))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
     root = logging.getLogger()
     root.setLevel(logging.ERROR)
 
     root.handlers.clear()
 
     handler = logging.handlers.TimedRotatingFileHandler(
-        filename=auto_path(conf.path),
+        filename=str(log_path),
         when="midnight",
         interval=1,
         backupCount=conf.backup_count,
         encoding="utf-8",
-        delay=False,
+        delay=True,  # 懒创建：避免首启时空文件轮转报错
     )
 
     formatter = logging.Formatter(

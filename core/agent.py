@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeVar, Generic, Any
+from typing import TypeVar, Generic, Any, Callable
 from pydantic import BaseModel, Field, model_validator
 from ..tools import Tool
 
@@ -37,10 +37,11 @@ class Agent(BaseModel, Generic[TContext]):
     description: str | None = None
     model: str | None = None
     instruction: str | None = None
-    tools: list[Tool] = Field(default_factory=list)
     handoffs: list[Handoff] = Field(default_factory=list)
     temperature: float | None = None
     output_type: type[BaseModel] | None = None
+    # 工具源：返回该 Agent 当前全部工具（运行时添加的工具由此实时反映）
+    tools: Callable[[], list[Tool]] | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 

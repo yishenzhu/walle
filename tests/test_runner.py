@@ -54,7 +54,7 @@ class TestRunnerSimple:
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="Hello!"))
         )
-        agent = Agent(instruction="You are helpful.", tools=[])
+        agent = Agent(instruction="You are helpful.")
         runner = Runner(channel=channel, provider=provider)
 
         result = await runner.run(agent, "hi")
@@ -67,7 +67,7 @@ class TestRunnerSimple:
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="ok"))
         )
-        agent = Agent(instruction="be concise", tools=[])
+        agent = Agent(instruction="be concise")
         runner = Runner(channel=channel, provider=provider)
 
         await runner.run(agent, "hello")
@@ -81,7 +81,7 @@ class TestRunnerSimple:
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content=None))
         )
-        agent = Agent(instruction="helpful", tools=[])
+        agent = Agent(instruction="helpful")
         runner = Runner(channel=channel, provider=provider)
 
         result = await runner.run(agent, "hi")
@@ -103,7 +103,7 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="I used echo")),
         )
 
-        agent = Agent(instruction="helpful", tools=[make_echo_tool("result!")])
+        agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool("result!")])
         runner = Runner(
             channel=channel,
             provider=provider,
@@ -138,7 +138,7 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="done")),
         )
 
-        agent = Agent(instruction="helpful", tools=[tool_a, tool_b])
+        agent = Agent(instruction="helpful", tools=lambda: [tool_a, tool_b])
         runner = Runner(
             channel=channel,
             provider=provider,
@@ -161,7 +161,7 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="handled")),
         )
 
-        agent = Agent(instruction="helpful", tools=[])
+        agent = Agent(instruction="helpful")
         runner = Runner(
             channel=channel,
             provider=provider,
@@ -189,7 +189,7 @@ class TestRunnerMaxTurns:
         ]
         provider.client.chat.completions.set_responses(*responses)
 
-        agent = Agent(instruction="helpful", tools=[make_echo_tool()])
+        agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool()])
         runner = Runner(
             channel=channel,
             provider=provider,
@@ -205,7 +205,7 @@ class TestRunnerMaxTurns:
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="immediate"))
         )
-        agent = Agent(instruction="helpful", tools=[])
+        agent = Agent(instruction="helpful")
         runner = Runner(
             channel=channel,
             provider=provider,
@@ -261,12 +261,12 @@ class TestRunnerModelParams:
     """model_params 方法测试。"""
 
     def test_no_params(self, provider):
-        agent = Agent(instruction="helpful", tools=[])
+        agent = Agent(instruction="helpful")
         runner = Runner(provider=provider)
         assert runner.model_params(agent) == {}
 
     def test_temperature(self, provider):
-        agent = Agent(instruction="helpful", tools=[], temperature=0.7)
+        agent = Agent(instruction="helpful", temperature=0.7)
         runner = Runner(provider=provider)
         params = runner.model_params(agent)
         assert params["temperature"] == 0.7
@@ -277,7 +277,7 @@ class TestRunnerModelParams:
         class MyOutput(BaseModel):
             answer: str
 
-        agent = Agent(instruction="helpful", tools=[], output_type=MyOutput)
+        agent = Agent(instruction="helpful", output_type=MyOutput)
         runner = Runner(provider=provider)
         params = runner.model_params(agent)
         assert "response_format" in params
@@ -289,7 +289,7 @@ class TestRunnerBuildTools:
 
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
-        agent = Agent(instruction="helpful", tools=[tool])
+        agent = Agent(instruction="helpful", tools=lambda: [tool])
         runner = Runner(provider=provider)
         tools = runner._build_tools(agent)
         assert "echo" in tools
@@ -298,12 +298,40 @@ class TestRunnerBuildTools:
         researcher = Agent(name="researcher", description="research")
         agent = Agent(
             instruction="helpful",
-            tools=[],
             handoffs=[Handoff(target=researcher)],
         )
         runner = Runner(provider=provider)
         tools = runner._build_tools(agent)
         assert "transfer_to_researcher" in tools
+
+    def test_includes_tool_source(self, provider):
+        """tools（工具源函数）返回的工具实时进入 Agent 工具列表。"""
+        dynamic = make_echo_tool("dyn")
+
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [dynamic],
+        )
+        runner = Runner(provider=provider)
+        tools = runner._build_tools(agent)
+        assert "echo" in tools
+
+    def test_agent_tools_from_source(self):
+        """agent.tools 源实时获取工具。"""
+        dynamic = make_echo_tool("dyn")
+
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [dynamic],
+        )
+        names = {t.name for t in agent.tools()}
+        assert names == {"echo"}
+
+    def test_agent_tools_none(self, provider):
+        """无 tools 源时 _build_tools 正常（空工具）。"""
+        agent = Agent(instruction="helpful")
+        runner = Runner(provider=provider)
+        assert runner._build_tools(agent) == {}
 
 
 class TestRunnerNoProvider:
