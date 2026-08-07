@@ -1,5 +1,4 @@
 import logging
-import re
 from pathlib import Path
 
 import frontmatter
@@ -9,28 +8,6 @@ from ...conf import DOT_AGENT
 from ..tool import Tool
 
 logger = logging.getLogger(__name__)
-
-_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-async def create_skill(name: str, description: str, content: str) -> str:
-    """创建技能：将可复用的做法沉淀为 Skill。在用户要求时触发。"""
-    if not _SKILL_NAME_RE.fullmatch(name):
-        return f"创建失败: 技能名仅允许字母、数字、下划线、连字符: {name!r}"
-    if not description.strip() or not content.strip():
-        return "创建失败: description 与 content 不能为空"
-
-    post = frontmatter.Post(content, name=name, description=description)
-    text = frontmatter.dumps(post)
-
-    skill_dir = Skill.ROOT_DIR / name
-    try:
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / Skill.FILENAME).write_text(text, encoding="utf-8")
-    except OSError as e:
-        return f"创建失败: {e}"
-    logger.info(f"skill created: {skill_dir / Skill.FILENAME}")
-    return f"技能已创建: {name}（下次启动生效）"
 
 
 class SkillMeta(BaseModel):

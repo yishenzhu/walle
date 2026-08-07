@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 class Indexer:
     def __init__(self, vault: str, store: Store):
+        if not vault:
+            raise ValueError("vault path 未配置")
         self._root = Path(vault)
         self._store = store
 

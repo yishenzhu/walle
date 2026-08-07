@@ -56,11 +56,11 @@ class TestTool:
 class TestToolRegistry:
     def test_builtin_tools_loaded(self):
         registry = ToolRegistry()
-        names = {t.name for t in registry.builtin_tools()}
+        names = {t.name for t in registry.all_tools()}
         assert "bash" in names
         assert "ask_user" in names
 
-    def test_add_builtin_duplicate_raises(self):
+    def test_add_function_duplicate_raises(self):
         registry = ToolRegistry()
 
         async def bash(cmd: str = "") -> str:
@@ -68,33 +68,19 @@ class TestToolRegistry:
             return ""
 
         with pytest.raises(ValueError, match="Duplicate tool name"):
-            registry.add_builtin(bash)
+            registry.add_function(bash)
 
-    def test_add_builtin_new(self):
+    def test_add_function_new(self):
         registry = ToolRegistry()
 
         async def custom_tool(x: str) -> str:
             """custom"""
             return x
 
-        registry.add_builtin(custom_tool)
-        names = {t.name for t in registry.builtin_tools()}
+        registry.add_function(custom_tool)
+        names = {t.name for t in registry.all_tools()}
         assert "custom_tool" in names
 
-    def test_builtin_tools_include(self):
+    def test_mcp_empty(self):
         registry = ToolRegistry()
-        tools = registry.builtin_tools(include={"bash"})
-        names = {t.name for t in tools}
-        assert names == {"bash"}
-
-    def test_builtin_tools_exclude(self):
-        registry = ToolRegistry()
-        all_names = {t.name for t in registry.builtin_tools()}
-        tools = registry.builtin_tools(exclude={"bash"})
-        excluded_names = {t.name for t in tools}
-        assert "bash" not in excluded_names
-        assert excluded_names == all_names - {"bash"}
-
-    def test_mcp_tools_empty(self):
-        registry = ToolRegistry()
-        assert registry.mcp_tools() == []
+        assert {"bash", "ask_user", "define_tool"} <= {t.name for t in registry.all_tools()}

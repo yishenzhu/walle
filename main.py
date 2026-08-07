@@ -22,12 +22,9 @@ async def main():
 
     registry = await ToolRegistry().initialize(conf)
 
-    all_tools = registry.builtin_tools()
-    all_tools.extend(registry.mcp_tools())
-
     agent = Agent(
         instruction="You are a helpful assistant.",
-        tools=all_tools,
+        tools=registry.all_tools(),
     )
 
     session = CompressibleSession(

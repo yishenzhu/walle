@@ -198,7 +198,7 @@ async def my_tool(query: str) -> str:
 
 ```python
 # tools/registry.py
-self.add_builtin(my_tool)
+self.add_function(my_tool)
 ```
 
 ### 添加 Skill

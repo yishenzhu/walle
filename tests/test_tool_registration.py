@@ -20,10 +20,10 @@ def test_search_notes_registered():
                 vault={"enabled": True, "path": str(vault)},
             )
             reg = await ToolRegistry().initialize(conf)
-            names = [t.name for t in reg.builtin_tools()]
+            names = [t.name for t in reg.all_tools()]
             print("TOOLS:", names)
             assert "search_notes" in names, names
-            schema = next(t.formatted_schema() for t in reg.builtin_tools() if t.name == "search_notes")
+            schema = next(t.formatted_schema() for t in reg.all_tools() if t.name == "search_notes")
             print("SCHEMA:", schema)
             assert "query" in schema["function"]["parameters"]["properties"]
             await reg.close()

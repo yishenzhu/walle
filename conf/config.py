@@ -70,6 +70,7 @@ class ApprovalConfig(BaseModel):
 class VaultConfig(BaseModel):
     enabled: bool = False
     path: str | None = None               # Obsidian 库绝对路径
+    db_path: str | None = None            # 索引数据库路径（默认 data/vault.db）
 
 
 class ToolConfig(BaseModel):
