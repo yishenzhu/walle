@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from ..conf import VaultConfig
-from ..vault import make_search_notes
+from ..vault import Vault
 from ..vault.indexer import Indexer
 from ..vault.store import Store
 
@@ -23,9 +23,13 @@ def test_search_notes_e2e():
                 encoding="utf-8",
             )
             conf = _vault_conf(vault, os.path.join(d, "v.db"))
-            async with make_search_notes(conf) as search_notes:
-                out = await search_notes("怎么连生产库")
+            v = Vault(conf)
+            await v.setup()
+            try:
+                out = await v.search_notes("怎么连生产库")
                 assert "生产库 / 连接方式" in out and "SSH" in out
+            finally:
+                await v.close()
 
     asyncio.run(main())
 
@@ -37,14 +41,18 @@ def test_lazy_refresh_e2e():
             vault = Path(d) / "vault"
             (vault / "proj").mkdir(parents=True)
             conf = _vault_conf(vault, os.path.join(d, "v.db"))
-            async with make_search_notes(conf) as search_notes:
+            v = Vault(conf)
+            await v.setup()
+            try:
                 # 外部写入（模拟 MCP 写笔记），不经过我们代码
                 (vault / "proj" / "新笔记.md").write_text(
                     "# 新笔记\n\n## 要点\n生产库密码是 secret123\n",
                     encoding="utf-8",
                 )
-                out = await search_notes("密码")
+                out = await v.search_notes("密码")
                 assert "新笔记" in out and "secret123" in out
+            finally:
+                await v.close()
 
     asyncio.run(main())
 

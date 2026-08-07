@@ -6,8 +6,10 @@ from ..tools.registry import ToolRegistry
 from ..conf import Config, LogConfig
 
 
-def test_search_notes_registered():
+def test_search_notes_registered(monkeypatch, tmp_path):
     async def main():
+        # 隔离 .agent：不读真实 mcp.yaml / skills / tools
+        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
         with tempfile.TemporaryDirectory() as d:
             vault = Path(d) / "vault"
             (vault / "proj").mkdir(parents=True)
@@ -16,7 +18,6 @@ def test_search_notes_registered():
             )
             conf = Config(
                 log=LogConfig(level="INFO", path="x.log", backup_count=1),
-                mcp={},
                 vault={"enabled": True, "path": str(vault)},
             )
             reg = await ToolRegistry().initialize(conf)

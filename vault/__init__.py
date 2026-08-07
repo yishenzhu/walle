@@ -4,7 +4,7 @@ from .parser import Chunk, parse_note
 from .retriever import Retriever
 from .store import Store, DEFAULT_DB_PATH
 from .indexer import Indexer
-from .tool import make_search_notes
+from .tool import Vault
 
 __all__ = [
     "Chunk",
@@ -12,5 +12,5 @@ __all__ = [
     "Retriever",
     "Store",
     "Indexer",
-    "make_search_notes",
+    "Vault",
 ]

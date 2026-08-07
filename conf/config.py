@@ -80,7 +80,6 @@ class ToolConfig(BaseModel):
 
 class Config(BaseModel):
     log: LogConfig
-    mcp: dict[str, MCPConfig]
     telemetry: TelemetryConfig = TelemetryConfig()
     vault: VaultConfig = VaultConfig()
     tool: ToolConfig = ToolConfig()

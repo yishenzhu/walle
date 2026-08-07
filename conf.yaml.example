@@ -25,10 +25,4 @@ vault:
   enabled: false
   path: "/path/to/your/ObsidianVault"   # Obsidian 库绝对路径
 
-mcp:
-  rag:
-    # enabled: false
-    url: http://127.0.0.1:9000/mcp
-  amap:
-    url: "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY"
-    enabled: false
+# MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）

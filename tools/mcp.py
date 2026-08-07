@@ -1,16 +1,105 @@
 import asyncio
+import logging
+from pathlib import Path
 from typing import Any
 from contextlib import AsyncExitStack
+
 import httpx
+import yaml
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
-import logging
+
 from ..conf import MCPConfig
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
+
+_MCP_FILENAME = "mcp.yaml"
+
+
+class MCP:
+    """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端管理。"""
+
+    def __init__(self, root: Path | None = None):
+        if root is None:
+            from ..conf import DOT_AGENT
+
+            root = DOT_AGENT
+        self._root = root
+        self._clients: list[MCPClient] = []
+
+    @property
+    def path(self) -> Path:
+        return self._root / _MCP_FILENAME
+
+    @property
+    def clients(self) -> list["MCPClient"]:
+        """已连接的客户端列表。"""
+        return self._clients
+
+    def save(self, name: str, conf: MCPConfig) -> Path:
+        configs = self.load_all()
+        configs[name] = conf
+
+        self._root.mkdir(parents=True, exist_ok=True)
+        p = self.path
+        p.write_text(
+            yaml.safe_dump(
+                {k: v.model_dump(exclude_none=True) for k, v in configs.items()},
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        return p
+
+    def load_all(self) -> dict[str, MCPConfig]:
+        if not self.path.exists():
+            return {}
+        try:
+            data = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+            return {k: MCPConfig.model_validate(v) for k, v in data.items()}
+        except Exception as e:
+            logger.warning(f"mcp config load failed ({self.path}): {e}")
+            return {}
+
+    def has(self, name: str) -> bool:
+        return any(c.name == name for c in self._clients)
+
+    async def add(self, name: str, conf: MCPConfig) -> "MCPClient | None":
+        """添加并连接 server：查重 → 连接 → 成功才持久化，失败返回 None。"""
+        if self.has(name):
+            raise ValueError(f"MCP server 已存在: {name}")
+
+        client = await MCPClient(name, conf).connect()
+        if client is None:
+            return None
+        await client.fetch_tools()
+
+        self.save(name, conf)
+        self._clients.append(client)
+        return client
+
+    async def connect_all(self) -> list["MCPClient"]:
+        """连接全部启用的 server，返回成功的客户端列表。"""
+        clients = await asyncio.gather(
+            *[
+                MCPClient(name, c).connect()
+                for name, c in self.load_all().items()
+                if c.enabled
+            ]
+        )
+        clients = [c for c in clients if c is not None]
+        await asyncio.gather(*[c.fetch_tools() for c in clients])
+        self._clients = clients
+        return clients
+
+    async def close(self) -> None:
+        """关闭全部客户端。"""
+        for c in self._clients:
+            await c.close()
 
 
 class MCPClient:
@@ -60,6 +149,11 @@ class MCPClient:
             return self
         except (Exception, asyncio.CancelledError) as e:
             logger.error(f"mcp connect failed: {self._name}: {e}")
+            # 清理已进入的 context（anyio cancel scope 必须在同一 task 内退出）
+            try:
+                await self._exit_stack.aclose()
+            except Exception:
+                pass
             return None
 
     def _prefixed(self, tool_name: str):
@@ -109,3 +203,6 @@ class MCPClient:
             await self._exit_stack.aclose()
         except (asyncio.CancelledError, RuntimeError):
             pass
+
+    async def aclose(self):  # 兼容 contextlib.aclosing 协议
+        await self.close()

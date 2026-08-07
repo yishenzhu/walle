@@ -1,12 +1,12 @@
 import asyncio
-import contextlib
 import logging
 from typing import Self
 
 from ..conf import Config, MCPConfig, VaultConfig
-from ..vault import make_search_notes
+from ..vault import Vault
 from .tool import Tool
-from .mcp import MCPClient
+from .mcp import MCP
+from .defined import DefinedTool, ToolCodeError
 from .builtin import Skill, ask_user, bash
 
 logger = logging.getLogger(__name__)
@@ -16,36 +16,39 @@ class ToolRegistry:
     def __init__(self):
         self._builtin: list[Tool] = []
         self.add_tool(*Skill.load())
-        self._mcp_clients: list[MCPClient] = []
-        self._stack = contextlib.AsyncExitStack()  # 资源生命周期：逆序自动关闭
-        # define_tool 是元工具（操作 registry 自身），作为实例方法注册
-        self.add_function(ask_user, bash, self.define_tool)
+        self._vault: Vault | None = None
+        self._mcp = MCP()
+        self._defined = DefinedTool()
+        # define_tool / add_mcp 是元工具（操作 registry 自身），作为实例方法注册
+        self.add_function(ask_user, bash, self.define_tool, self.add_mcp)
 
     async def define_tool(self, name: str, code: str) -> str:
         """用代码定义一个可复用工具，立即生效并持久化。
 
         code 中需定义顶层 async def <name>() 并写 docstring（docstring 即工具描述）。
         """
-        from ..conf import DOT_AGENT
-        from .dynamic import DynamicToolStore, ToolCodeError, load_from_file, validate_code
-
-        store = DynamicToolStore(DOT_AGENT / "tools")
         try:
-            validate_code(code, name)
-        except ToolCodeError as e:
-            return f"定义失败: {e}"
-
-        try:
-            path = store.save(name, code)
-            fn = load_from_file(str(path), name)
-        except (ToolCodeError, OSError) as e:
-            return f"定义失败: {e}"
-
-        try:
-            self.add_function(fn)
-        except ValueError as e:
+            tool = self._defined.create(name, code)
+            self.add_tool(tool)
+        except (ToolCodeError, OSError, ValueError) as e:
             return f"定义失败: {e}"
         return f"工具已定义并生效: {name}"
+
+    async def add_mcp(self, name: str, conf: MCPConfig) -> str:
+        """添加一个 MCP server，立即连接生效并持久化（重启自动恢复）。
+
+        conf 为完整 MCP 配置：url（HTTP 流式）或 command+args（stdio 子进程）二选一。
+        先查重，再连接，连接成功才写入文件。
+        """
+        try:
+            client = await self._mcp.add(name, conf)
+        except ValueError as e:
+            return f"添加失败: {e}"
+        if client is None:
+            return "添加失败: 连接失败"
+
+        logger.info(f"mcp server added: {name} ({len(client.tools)} tools)")
+        return f"MCP server 已添加并生效: {name}，共 {len(client.tools)} 个工具"
 
     def add_function(self, *fns) -> None:
         """把任意函数注册为工具（描述取自函数 docstring）。"""
@@ -66,55 +69,39 @@ class ToolRegistry:
     async def initialize(self, conf: Config) -> Self:
         """初始化工具系统：知识库 + MCP server + 动态工具。"""
         await self.setup_vault(conf.vault)
-        await self.load_mcp(conf.mcp)
-        self.load_dynamic()
+        await self.load_mcp()
+        self.load_defined()
         return self
 
     async def setup_vault(self, conf: VaultConfig | None) -> None:
-        """装配知识库：建索引并注册笔记检索工具（生命周期由 exit stack 管理）。"""
+        """装配知识库：建索引并注册笔记检索工具。"""
         if conf is None or not conf.enabled or not conf.path:
             return
 
-        fn = await self._stack.enter_async_context(make_search_notes(conf))
-        self.add_function(fn)
+        self._vault = Vault(conf)
+        await self._vault.setup()
+        self.add_function(self._vault.search_notes)
 
-    def load_dynamic(self) -> None:
-        """启动时恢复已持久化的动态代码工具。"""
-        from ..conf import DOT_AGENT
-        from .dynamic import DynamicToolStore, load_from_file, validate_code
+    def load_defined(self) -> None:
+        """启动时恢复已持久化的模型定义工具。"""
+        tools = self._defined.load()
+        if tools:
+            self.add_tool(*tools)
+            logger.info(f"{len(tools)} defined tools restored")
 
-        store = DynamicToolStore(DOT_AGENT / "tools")
-        for name, code in store.load_all().items():
-            try:
-                validate_code(code, name)
-                path = store.dir_for(name) / "code.py"
-                fn = load_from_file(str(path), name)
-                self.add_function(fn)
-                logger.info(f"dynamic tool restored: {name}")
-            except Exception as e:
-                logger.warning(f"dynamic tool load failed ({name}): {e}")
-
-    async def load_mcp(self, configs: dict[str, MCPConfig]) -> Self:
-        clients = await asyncio.gather(
-            *[
-                MCPClient(name, conf).connect()
-                for name, conf in configs.items()
-                if conf.enabled
-            ]
-        )
-        clients = [c for c in clients if c is not None]
-        await asyncio.gather(*[c.fetch_tools() for c in clients])
-        self._mcp_clients = clients
-        for c in clients:
-            await self._stack.enter_async_context(contextlib.aclosing(c))
+    async def load_mcp(self) -> Self:
+        """加载 MCP server：读取 .agent/mcp.yaml 配置并连接。"""
+        await self._mcp.connect_all()
         return self
 
     def all_tools(self) -> list[Tool]:
         """全部工具（builtin + MCP）。工具筛选由模型自己完成。"""
         tools = list(self._builtin)
-        for c in self._mcp_clients:
+        for c in self._mcp.clients:
             tools.extend(c.tools)
         return tools
 
     async def close(self) -> None:
-        await self._stack.aclose()
+        if self._vault is not None:
+            await self._vault.close()   # 关闭知识库
+        await self._mcp.close()     # 关闭全部 MCP 客户端
