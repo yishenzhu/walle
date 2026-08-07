@@ -1,29 +1,19 @@
-# MCP server 配置（模型可通过 add_mcp 动态添加，也会写入此文件）
-# 新增/修改直接编辑本文件，重启生效
-
 obsidian:
   url: http://127.0.0.1:27123/mcp
   headers:
-    Authorization: "Bearer 04b0b2b40f25290985f6f5de7bef0957f8eb439488c15a7754b15512342cb85a"
-
+    Authorization: Bearer 04b0b2b40f25290985f6f5de7bef0957f8eb439488c15a7754b15512342cb85a
+  enabled: true
 amap:
-  url: "https://mcp.amap.com/mcp?key=712d54ca842721f9b15a4211de74c5bc"
+  url: https://mcp.amap.com/mcp?key=712d54ca842721f9b15a4211de74c5bc
   enabled: false
-
-godot:
-  enabled: false
-  url: http://127.0.0.1:8000/mcp
-
 QwenImage:
-  enabled: false
   url: https://dashscope.aliyuncs.com/api/v1/mcps/QwenImage/mcp
-  timeout: 30000
   headers:
-    Authorization: "Bearer sk-cad17ca56dd24c1e82368981b4d4afa5"
-
+    Authorization: Bearer sk-cad17ca56dd24c1e82368981b4d4afa5
+  timeout: 30000
+  enabled: false
 tavily:
   url: https://mcp.tavily.com/mcp
   headers:
-    Authorization: "Bearer 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"
-  enabled: false
-
+    Authorization: Bearer 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
+  enabled: true
