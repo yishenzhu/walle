@@ -150,9 +150,5 @@ def executor(allow_all_config):
 
 
 @pytest.fixture
-def tool_context(fake_channel, fake_provider):
-    return ToolContext(
-        channel=fake_channel,
-        session=None,
-        provider=fake_provider,
-    )
+def tool_context(fake_channel):
+    return ToolContext(channel=fake_channel)

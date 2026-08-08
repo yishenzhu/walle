@@ -35,8 +35,8 @@ def channel():
 
 
 @pytest.fixture
-def ctx(channel, provider):
-    return ToolContext(channel=channel, session=None, provider=provider)
+def ctx(channel):
+    return ToolContext(channel=channel)
 
 
 class TestExecute:
@@ -94,7 +94,7 @@ class TestExecute:
 
     async def test_execute_ask_no_channel(self):
         from ..tools import ToolContext as TC
-        ctx = TC(channel=None, session=None, provider=None)
+        ctx = TC(channel=None)
         executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)))
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")

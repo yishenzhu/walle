@@ -3,8 +3,6 @@
 封装懒连接与 asyncio.to_thread 样板。子类只需实现 _connect()（建表）与业务方法。
 """
 
-from __future__ import annotations
-
 import asyncio
 import sqlite3
 from pathlib import Path

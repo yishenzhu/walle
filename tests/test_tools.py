@@ -54,23 +54,38 @@ class TestTool:
 
 
 class TestToolRegistry:
-    def test_builtin_tools_loaded(self):
-        registry = ToolRegistry()
+    @pytest.fixture
+    async def registry(self, tmp_path, monkeypatch):
+        """已初始化（含 python kernel 预启动）的 ToolRegistry。"""
+        from ..conf import Config, LogConfig
+
+        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
+        conf = Config(
+            log=LogConfig(level="INFO", path="x.log", backup_count=1),
+        )
+        reg = ToolRegistry()
+        await reg.initialize(conf)
+        yield reg
+        await reg.close()
+
+    async def test_builtin_tools_loaded(self, registry):
         names = {t.name for t in registry.all_tools()}
         assert "bash" in names
         assert "ask_user" in names
+        assert "jupyter" in names
 
-    def test_add_function_duplicate_raises(self):
+    async def test_add_function_duplicate_raises(self):
         registry = ToolRegistry()
 
         async def bash(cmd: str = "") -> str:
             """bash"""
             return ""
 
+        registry.add_function(bash)
         with pytest.raises(ValueError, match="Duplicate tool name"):
             registry.add_function(bash)
 
-    def test_add_function_new(self):
+    async def test_add_function_new(self):
         registry = ToolRegistry()
 
         async def custom_tool(x: str) -> str:
@@ -81,6 +96,13 @@ class TestToolRegistry:
         names = {t.name for t in registry.all_tools()}
         assert "custom_tool" in names
 
-    def test_mcp_empty(self):
-        registry = ToolRegistry()
-        assert {"bash", "ask_user", "define_tool"} <= {t.name for t in registry.all_tools()}
+    async def test_mcp_empty(self, registry):
+        assert {"bash", "ask_user", "define_tool", "jupyter"} <= {
+            t.name for t in registry.all_tools()
+        }
+
+    async def test_initialize_registers_python_tool(self, registry):
+        """initialize 后 jupyter 工具已注册（纯函数，kernel 由 Runner 经 ToolContext 提供）。"""
+        py_tool = next(t for t in registry.all_tools() if t.name == "jupyter")
+        assert py_tool is not None
+        assert "code" in py_tool.parameters["properties"]

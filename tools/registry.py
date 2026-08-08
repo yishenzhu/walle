@@ -6,7 +6,7 @@ from ..conf import Config, MCPConfig
 from .tool import Tool
 from .mcp import MCP
 from .defined import DefinedTool, ToolCodeError
-from .builtin import Skill, ask_user, bash
+from .builtin import Skill, ask_user, bash, jupyter
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +14,8 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     def __init__(self):
         self._builtin: list[Tool] = []
-        self.add_tool(*Skill.load())
         self._mcp = MCP()
         self._defined = DefinedTool()
-        # define_tool / add_mcp 是元工具（操作 registry 自身），作为实例方法注册
-        self.add_function(ask_user, bash, self.define_tool, self.add_mcp)
 
     async def define_tool(self, name: str, code: str) -> str:
         """用代码定义一个可复用工具，立即生效并持久化。
@@ -51,8 +48,7 @@ class ToolRegistry:
     def add_function(self, *fns) -> None:
         """把任意函数注册为工具（描述取自函数 docstring）。"""
         for fn in fns:
-            tool = Tool.from_function(fn)
-            self.add_tool(tool)
+            self.add_tool(Tool.from_function(fn))
 
     def add_tool(self, *tools: Tool) -> None:
         """注册一个或多个已构造好的工具（先统一查重，保证原子性）。"""
@@ -65,7 +61,10 @@ class ToolRegistry:
             logger.info(f"tool registered: {tool.name}")
 
     async def initialize(self, conf: Config) -> Self:
-        """初始化工具系统：MCP server + 动态工具。"""
+        """初始化工具系统：注册内置工具 + MCP server + 动态工具。"""
+        self.add_tool(*Skill.load())
+        # define_tool / add_mcp 是元工具（操作 registry 自身），作为实例方法注册
+        self.add_function(ask_user, bash, jupyter, self.define_tool, self.add_mcp)
         await self.load_mcp()
         self.load_defined()
         return self
@@ -79,7 +78,7 @@ class ToolRegistry:
 
     async def load_mcp(self) -> Self:
         """加载 MCP server：读取 .agent/mcp.yaml 配置并连接。"""
-        await self._mcp.connect_all()
+        await self._mcp.connect()
         return self
 
     def all_tools(self) -> list[Tool]:

@@ -55,12 +55,9 @@ class Agent(BaseModel, Generic[TContext]):
 
         async def fn(input: str):
             from .runner import Runner
-            from ..tools import tool_context
 
-            ctx = tool_context.get()
-            runner = Runner(
-                provider=ctx.provider if ctx else None,
-            )
+            # 嵌套 Runner 拥有自己的 kernel：与父执行实体隔离，互不污染
+            runner = Runner()
             result = await runner.run(agent, input)
             return result.output
 

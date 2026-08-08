@@ -7,15 +7,14 @@ from mcp.server.fastmcp.tools import Tool as MCPTool
 from pydantic import BaseModel
 
 from ..channel import Channel
-from ..session import Session
-from ..infra import OpenAIProvider
+from ..infra import PyKernel
 
 
 @dataclass
 class ToolContext:
     channel: Channel | None = None
-    session: Session | None = None
-    provider: OpenAIProvider | None = None
+    # 会话级计算资源：python 工具的持久解释器（按会话隔离，由 Runner 管理）
+    kernel: PyKernel | None = None
 
 
 tool_context: ContextVar[ToolContext | None] = ContextVar("tool_context", default=None)

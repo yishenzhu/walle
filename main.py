@@ -47,8 +47,8 @@ async def main():
                 break
             await runner.run(agent, user_input.content, streamed=True)
     finally:
-        await session.close()
-        await registry.close()
+        await runner.close()        # 关闭会话级资源（kernel + session）
+        await registry.close()      # 关闭进程级资源（MCP 客户端）
 
 
 asyncio.run(main())

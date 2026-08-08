@@ -19,6 +19,7 @@ from ..schemas import (
 )
 from ..channel import Channel
 from ..tools import ToolContext, Tool
+from ..infra import PyKernel
 
 
 logger = logging.getLogger(__name__)
@@ -58,13 +59,17 @@ class Runner:
         self._provider = provider
         self._session = session or InMemorySession()
         self._executor = tool_executor or ToolExecutor()
+        # 会话级计算资源：每个 Runner 拥有自己的 kernel
+        self._kernel = PyKernel()
 
-    def _tool_context(self):
-        return ToolContext(
-            channel=self._channel,
-            session=self._session,
-            provider=self._provider,
-        )
+    def tool_context(self):
+        """构造执行上下文：kernel 等会话级状态跨工具调用保留。"""
+        return ToolContext(channel=self._channel, kernel=self._kernel)
+
+    async def close(self) -> None:
+        """关闭会话级资源：kernel + session。"""
+        await self._kernel.close()
+        await self._session.close()
 
     async def run(
         self,
@@ -154,7 +159,7 @@ class Runner:
             message = completion.choices[0].message
             if message.tool_calls:
                 async for tc_id, r in self._executor.execute_iter(
-                    message.tool_calls, tools, self._tool_context()
+                    message.tool_calls, tools, self.tool_context()
                 ):
                     tool_results.append((tc_id, r))
             elif self._channel:
@@ -175,7 +180,7 @@ class Runner:
         message = completion.choices[0].message
         if message.tool_calls:
             tool_results = await self._executor.execute_batch(
-                message.tool_calls, tools, self._tool_context()
+                message.tool_calls, tools, self.tool_context()
             )
         return completion, message, tool_results
 

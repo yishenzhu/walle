@@ -347,3 +347,30 @@ class TestRunnerNoProvider:
                 Runner()
         finally:
             OpenAIProvider._default = OpenAIProvider_backup
+
+
+class TestRunnerKernel:
+    """Runner 持有会话级 kernel：经 ToolContext 供 python 工具使用，close 回收。"""
+
+    async def test_runner_owns_kernel_in_context(self, provider):
+        """kernel 挂到 ToolContext，且同一 Runner 的 kernel 实例稳定（跨 run 保留状态）。"""
+        runner = Runner(provider=provider)
+        ctx = runner.tool_context()
+        assert ctx.kernel is not None
+        assert runner.tool_context().kernel is ctx.kernel   # 同一 kernel
+        await runner.close()
+
+    async def test_runner_kernel_executes_code(self, provider):
+        """经 ToolContext 的 kernel 可直接执行代码。"""
+        runner = Runner(provider=provider)
+        ctx = runner.tool_context()
+        assert await ctx.kernel.run("40 + 2") == "42"
+        await runner.close()
+
+    async def test_runner_kernel_state_persists_across_turns(self, provider):
+        """同一 Runner 多次 run：kernel 状态跨 run 保留（会话级）。"""
+        runner = Runner(provider=provider)
+        ctx = runner.tool_context()
+        assert await ctx.kernel.run("x = 10") == "(no output)"
+        assert await ctx.kernel.run("x * 2") == "20"
+        await runner.close()

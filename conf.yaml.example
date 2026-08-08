@@ -15,9 +15,10 @@ tool:
   timeout: 30
   approval:
     rules:
-      - [deny, bash(cmd=rm -rf /)]
-      - [allow, bash(cmd=ls -la *)]
-      - [allow, ask_user] 
+      - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
+      - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
+      - [ask, jupyter]                 # 代码执行默认需人工确认
+      - [allow, ask_user]             # 提问工具自动放行
       - [allow, grilling]
     default: ask
 

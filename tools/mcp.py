@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
@@ -35,7 +37,7 @@ class MCP:
         return self._root / _MCP_FILENAME
 
     @property
-    def clients(self) -> list["MCPClient"]:
+    def clients(self) -> list[MCPClient]:
         """已连接的客户端列表。"""
         return self._clients
 
@@ -68,7 +70,7 @@ class MCP:
     def has(self, name: str) -> bool:
         return any(c.name == name for c in self._clients)
 
-    async def add(self, name: str, conf: MCPConfig) -> "MCPClient | None":
+    async def add(self, name: str, conf: MCPConfig) -> MCPClient | None:
         """添加并连接 server：查重 → 连接 → 成功才持久化，失败返回 None。"""
         if self.has(name):
             raise ValueError(f"MCP server 已存在: {name}")
@@ -82,7 +84,7 @@ class MCP:
         self._clients.append(client)
         return client
 
-    async def connect_all(self) -> list["MCPClient"]:
+    async def connect(self) -> list[MCPClient]:
         """连接全部启用的 server，返回成功的客户端列表。"""
         clients = await asyncio.gather(
             *[

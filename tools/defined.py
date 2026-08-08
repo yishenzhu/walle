@@ -9,8 +9,6 @@
 安全模型：不限制 import（执行风险交给 ApprovalPolicy 审批）。
 """
 
-from __future__ import annotations
-
 import ast
 import importlib.util
 import logging
@@ -18,6 +16,8 @@ from pathlib import Path
 
 from pyflakes.api import check
 from pyflakes.reporter import Reporter
+
+from .tool import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,8 @@ class DefinedTool:
     def dir_for(self, name: str) -> Path:
         return self._root / name
 
-    def create(self, name: str, code: str) -> "Tool":
+    def create(self, name: str, code: str) -> Tool:
         """校验 + 保存 + 加载 + 构造 Tool，一步完成。失败抛 ToolCodeError/OSError。"""
-        from ..tools.tool import Tool  # 延迟导入避免循环
-
         self._validate_code(code, name)
         path = self.dir_for(name) / "code.py"
         self.dir_for(name).mkdir(parents=True, exist_ok=True)
@@ -115,10 +113,8 @@ class DefinedTool:
                     logger.warning(f"defined tool load failed ({d.name}): {e}")
         return result
 
-    def load(self) -> list["Tool"]:
+    def load(self) -> list[Tool]:
         """加载全部已持久化工具为可注册的 Tool（单个失败跳过）。"""
-        from ..tools.tool import Tool  # 延迟导入避免循环
-
         tools: list[Tool] = []
         for name, code in self._codes().items():
             try:

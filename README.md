@@ -196,7 +196,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 channel / session / provider
+    ctx = tool_context.get()   # 访问 channel（用户交互通道）
     return f"result: {query}"
 ```
 
