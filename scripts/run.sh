@@ -6,6 +6,15 @@ PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OBS_DIR="$PROJ_ROOT/observability"
 OBS_COMPOSE="$OBS_DIR/docker-compose.yaml"
 
+# ── venv 自动选择 ────────────────────────────────────
+# 优先使用项目 .venv，未激活 venv 时也能正常运行
+VENV_PYTHON="$PROJ_ROOT/.venv/bin/python3"
+if [ -x "$VENV_PYTHON" ]; then
+    PY="$VENV_PYTHON"
+else
+    PY="python3"
+fi
+
 # ── 颜色 ──────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -94,17 +103,18 @@ stop_obs() {
 start_agent() {
     log_step "启动 walle agent ..."
     cd "$PROJ_ROOT"
+    log_info "使用 Python: $PY"
     # 项目根目录有 __init__.py 是一个包 (walle)，
     # 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
     env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        python3 -m walle.main
+        "$PY" -m walle.main
 }
 
 # ── 运行测试 ──────────────────────────────────────────
 run_tests() {
     log_step "运行测试 ..."
     cd "$PROJ_ROOT"
-    python3 -m pytest tests/ -v
+    "$PY" -m pytest tests/ -v
 }
 
 # ── 主流程 ────────────────────────────────────────────
