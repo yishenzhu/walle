@@ -23,7 +23,6 @@
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 📚 **Skill 系统** | `.agent/skills/` 加载 Markdown 技能，动态注入为工具 |
 | 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、自主沉淀技能，持久化 `.agent/` 重启恢复 |
-| 📖 **本地知识库** | Obsidian Vault 全文检索（FTS5 + 中文分词），`search_notes` 开箱即用 |
 
 ---
 
@@ -53,7 +52,6 @@
             └──────────────┘         │
                                ┌─────┴──────────────┐
                                │  ToolRegistry       │
-                               │  ├ Vault (知识库)    │
                                │  ├ MCP (远程工具)    │
                                │  └ DefinedTool (定义)│
                                └────────────────────┘
@@ -84,7 +82,6 @@
 | 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
 | 交互通道 | `channel/` | 用户 I/O 抽象，CLI 实现 |
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
-| 知识库 | `vault/` | Obsidian 笔记解析、索引（FTS5）、检索工具 |
 | 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
 | 数据模型 | `schemas/` | 消息、事件、Token 用量的 Pydantic 模型 |
 | 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider |
@@ -111,7 +108,7 @@ pip install -e ".[dev]"
 ### 配置
 
 ```bash
-cp conf.yaml.example conf.yaml   # 主配置（日志 / 审批 / vault）
+cp conf.yaml.example conf.yaml   # 主配置（日志 / 审批）
 cp .env.example .env             # LLM API Key
 ```
 
@@ -163,10 +160,6 @@ tool:
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [allow, ask_user]             # 提问工具自动放行
     default: ask                      # 默认需人工审批
-
-vault:
-  enabled: false
-  path: "/path/to/ObsidianVault"    # Obsidian 库绝对路径（可选）
 ```
 
 #### 审批规则
@@ -307,12 +300,7 @@ walle/
 │       ├── bash.py            #     Bash 执行
 │       ├── ask_user.py        #     向用户提问
 │       └── skill.py           #     Skill 加载器
-├── vault/                     # 知识库
-│   ├── parser.py              #   Markdown 解析
-│   ├── store.py               #   SQLite + FTS5 索引
-│   ├── indexer.py             #   全量/增量索引
-│   ├── retriever.py           #   BM25 检索
-│   └── tool.py                #   Vault 类（装配/检索/关闭）
+
 ├── session/                   # 会话管理
 │   ├── protocol.py            #   Session Protocol
 │   ├── memory.py              #   内存实现
@@ -352,7 +340,6 @@ walle/
 | LLM SDK | OpenAI Python SDK（兼容任意 OpenAI API 格式模型） |
 | 数据模型 | Pydantic v2 |
 | 工具协议 | MCP (Model Context Protocol) |
-| 全文检索 | SQLite FTS5 + jieba 中文分词 |
 | 可观测性 | OpenTelemetry + Grafana + Tempo + Mimir |
 | 持久化 | SQLite |
 | 配置 | YAML + Pydantic |

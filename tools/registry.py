@@ -2,8 +2,7 @@ import asyncio
 import logging
 from typing import Self
 
-from ..conf import Config, MCPConfig, VaultConfig
-from ..vault import Vault
+from ..conf import Config, MCPConfig
 from .tool import Tool
 from .mcp import MCP
 from .defined import DefinedTool, ToolCodeError
@@ -16,7 +15,6 @@ class ToolRegistry:
     def __init__(self):
         self._builtin: list[Tool] = []
         self.add_tool(*Skill.load())
-        self._vault: Vault | None = None
         self._mcp = MCP()
         self._defined = DefinedTool()
         # define_tool / add_mcp 是元工具（操作 registry 自身），作为实例方法注册
@@ -67,20 +65,10 @@ class ToolRegistry:
             logger.info(f"tool registered: {tool.name}")
 
     async def initialize(self, conf: Config) -> Self:
-        """初始化工具系统：知识库 + MCP server + 动态工具。"""
-        await self.setup_vault(conf.vault)
+        """初始化工具系统：MCP server + 动态工具。"""
         await self.load_mcp()
         self.load_defined()
         return self
-
-    async def setup_vault(self, conf: VaultConfig | None) -> None:
-        """装配知识库：建索引并注册笔记检索工具。"""
-        if conf is None or not conf.enabled or not conf.path:
-            return
-
-        self._vault = Vault(conf)
-        await self._vault.setup()
-        self.add_function(self._vault.search_notes)
 
     def load_defined(self) -> None:
         """启动时恢复已持久化的模型定义工具。"""
@@ -102,6 +90,4 @@ class ToolRegistry:
         return tools
 
     async def close(self) -> None:
-        if self._vault is not None:
-            await self._vault.close()   # 关闭知识库
         await self._mcp.close()     # 关闭全部 MCP 客户端

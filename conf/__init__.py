@@ -7,7 +7,6 @@ from .config import (
     ApprovalConfig,
     ApprovalDecision,
     RawRule,
-    VaultConfig,
     ToolConfig,
     PROJ_ROOT,
     DOT_AGENT,
