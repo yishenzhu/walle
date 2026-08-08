@@ -17,6 +17,7 @@
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
 | 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
 | 🛡️ **工具审批系统** | glob 三态策略（allow / deny / ask），按工具名 + 参数粒度控制 |
+| 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
 | ⏱️ **超时保护** | 全局工具超时，防止卡死阻塞循环 |
 | 🧠 **会话压缩** | token 超阈值自动摘要压缩，保留关键信息降成本 |
 | 🧩 **可插拔架构** | Channel / Session / Compressor 均为 Protocol，可替换实现 |
@@ -84,7 +85,7 @@
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
 | 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
 | 数据模型 | `schemas/` | 消息、事件、Token 用量的 Pydantic 模型 |
-| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider |
+| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider、Jupyter kernel |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -158,6 +159,7 @@ tool:
     rules:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
+      - [ask, jupyter]                # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
     default: ask                      # 默认需人工审批
 ```
@@ -316,7 +318,8 @@ walle/
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化
 │   ├── metrics.py             #   指标定义
-│   └── provider.py            #   LLM Provider
+│   ├── provider.py            #   LLM Provider
+│   └── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
 ├── observability/             # 可观测性栈
