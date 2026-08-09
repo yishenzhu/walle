@@ -117,7 +117,6 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅 agent
 ./scripts/run.sh --feishu        # 飞书交互 + 可观测性
-./scripts/run.sh --cli           # CLI 交互（默认）
 ./scripts/run.sh --obs-only      # 仅可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试

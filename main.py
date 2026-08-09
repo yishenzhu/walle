@@ -14,7 +14,7 @@ from .session import (
 )
 
 
-async def main(channel_mode: str = "cli"):
+async def main(channel: str = "cli"):
 
     conf = Config.load()
     setup_logger(conf.log)
@@ -36,27 +36,27 @@ async def main(channel_mode: str = "cli"):
 
     # 交互主通道：--channel feishu 用飞书（长连接收发），否则 CLI
     cli = CLIChannel()
-    if channel_mode == "feishu":
+    if channel == "feishu":
         if not conf.feishu.app_id:
             raise ValueError("feishu 模式需要 conf.yaml 配置 feishu.app_id / app_secret")
-        primary = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
-        await primary.start()
+        target = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
+        await target.start()
         # 通知多路消费：飞书主渲染 + CLI 只读观察（本地看进度）
         observers: list = [LogObserver(), ConsoleObserver()]
     else:
-        primary = cli
+        target = cli
         observers = [LogObserver()]
-    channel = FanoutChannel(target=primary, observers=observers)
+    fanout = FanoutChannel(target=target, observers=observers)
     runner = Runner(
-        channel=channel,
+        channel=fanout,
         session=session,
-        tool_executor=ToolExecutor(conf.tool, channel=channel, approver=ChannelApprover(channel)),
+        tool_executor=ToolExecutor(conf.tool, channel=fanout, approver=ChannelApprover(fanout)),
     )
 
     # 终止模型：run 期间装 SIGINT handler（Ctrl+C 取消 run）；空闲时默认（Ctrl+C 退出）
     try:
         while True:
-            user_input = await channel.call(Receive())
+            user_input = await fanout.call(Receive())
             if not user_input.content:
                 break            # 空输入（直接回车）/ EOF / 空闲 Ctrl+C → 退出（统一出口）
             await cli.run_interruptible(runner.run(agent, user_input.content, streamed=True))

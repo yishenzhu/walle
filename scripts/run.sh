@@ -41,7 +41,6 @@ walle 启动脚本
   --stop-obs     停止可观测性容器
   --test         运行测试，不启动 agent
   --feishu       以飞书应用机器人为交互通道（需 conf.yaml 配置）
-  --cli          以 CLI 为交互通道（默认）
   --help         显示此帮助信息
 
 示例:
@@ -137,7 +136,6 @@ main() {
             --stop-obs)    stop_obs_flag=true ;;
             --test)        test_only=true ;;
             --feishu)      CHANNEL_MODE="feishu" ;;
-            --cli)         CHANNEL_MODE="cli" ;;
             --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
