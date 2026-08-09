@@ -72,10 +72,18 @@ class ToolConfig(BaseModel):
     timeout: float | None = 30.0
 
 
+class FeishuConfig(BaseModel):
+    """飞书推送配置（自定义机器人 webhook）。webhook 为空则不启用。"""
+
+    webhook: str | None = None
+    secret: str | None = None  # 可选：签名校验密钥
+
+
 class Config(BaseModel):
     log: LogConfig
     telemetry: TelemetryConfig = TelemetryConfig()
     tool: ToolConfig = ToolConfig()
+    feishu: FeishuConfig = FeishuConfig()
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):

@@ -22,4 +22,8 @@ tool:
       - [allow, grilling]
     default: ask
 
+feishu:
+  webhook: ""          # 自定义机器人 webhook（飞书群 → 设置 → 群机器人 → 添加），留空则不推送
+  secret: ""           # 可选：签名校验密钥
+
 # MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）

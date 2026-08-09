@@ -3,6 +3,7 @@ from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor, ChannelApprover
 from .channel import CLIChannel, FanoutChannel, LogObserver
+from .channel.feishu import FeishuObserver
 from .schemas import Receive
 from .tools import ToolRegistry
 from .session import (
@@ -33,9 +34,12 @@ async def main():
         compressor=SummaryCompressor(),
     )
 
-    # 交互消费者 + 主渲染（CLI），附加审计观察者（LogObserver）
+    # 交互消费者 + 主渲染（CLI），附加审计观察者（LogObserver）与飞书推送
     cli = CLIChannel()
-    channel = FanoutChannel(target=cli, observers=[LogObserver()])
+    observers: list = [LogObserver()]
+    if conf.feishu.webhook:
+        observers.append(FeishuObserver(conf.feishu.webhook, conf.feishu.secret))
+    channel = FanoutChannel(target=cli, observers=observers)
     runner = Runner(
         channel=channel,
         session=session,

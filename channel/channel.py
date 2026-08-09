@@ -9,18 +9,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..schemas import (
     ApprovalRsp,
-    Delta,
-    DeltaEnd,
-    Error,
     NotificationUnion,
     Receive,
     Inquiry,
     Approval,
     ServiceUnion,
-    ToolResult,
-    ToolStart,
     UserInput,
 )
+from .render import render_notification
 
 
 @runtime_checkable
@@ -65,19 +61,11 @@ class CLIChannel:
 
     # ── 通知：广播渲染（无返回）──
     async def notify(self, n: NotificationUnion) -> None:
-        match n:
-            case Delta(delta=delta):
-                print(delta, end="", flush=True)
-            case DeltaEnd():
-                print()
-            case ToolStart(tool_name=name, arguments=args):
-                print(f"  [调用工具 {name}({args})]", flush=True)
-            case ToolResult(tool_call_id=tc_id, result=result, error=None):
-                print(f"  [工具结果 {tc_id}] {truncate(result, 512)}", flush=True)
-            case ToolResult(tool_call_id=tc_id, error=err):
-                print(f"  [工具错误 {tc_id}] {err}", flush=True)
-            case Error(message=msg):
-                print(f"  [错误] {msg}", flush=True)
+        text = render_notification(n)
+        if text:
+            print(text, end="" if isinstance(n, Delta) else "\n", flush=True)
+        elif isinstance(n, DeltaEnd):
+            print()
 
     # ── 服务：终端交互（有返回）──
     async def call(self, s: ServiceUnion) -> Any:
@@ -119,8 +107,3 @@ class CLIChannel:
                 reason = await asyncio.to_thread(input, "  拒绝原因(可选): ")
                 return ApprovalRsp(approved=False, reason=reason.strip() or None)
             print("  请输入 y/n")
-
-
-def truncate(value: Any, limit: int) -> str:
-    s = str(value)
-    return s if len(s) <= limit else s[:limit] + "..."
