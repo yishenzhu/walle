@@ -2,8 +2,9 @@ import asyncio
 import readline
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
-from .core import Agent, Runner, ToolExecutor
-from .channel import CLIChannel
+from .core import Agent, Runner, ToolExecutor, ChannelApprover
+from .channel import CLIChannel, FanoutChannel, LogObserver
+from .schemas import Receive
 from .tools import ToolRegistry
 from .session import (
     InMemorySession,
@@ -33,19 +34,25 @@ async def main():
         compressor=SummaryCompressor(),
     )
 
-    channel = CLIChannel()
+    # 交互消费者 + 主渲染（CLI），附加审计观察者（LogObserver）
+    cli = CLIChannel()
+    await cli.start()   # 安装 Ctrl+C 信号 handler
+    channel = FanoutChannel(target=cli, observers=[LogObserver()])
     runner = Runner(
         channel=channel,
         session=session,
-        tool_executor=ToolExecutor(conf.tool),
+        tool_executor=ToolExecutor(conf.tool, channel=channel, approver=ChannelApprover(channel)),
     )
 
+    # 终止模型：run 为后台 task；Ctrl+C 终止当前 run，空闲时 Ctrl+C 退出
     try:
         while True:
-            user_input = await channel.receive()
-            if user_input.content.strip() == ":q":
-                break
-            await runner.run(agent, user_input.content, streamed=True)
+            user_input = await channel.call(Receive())
+            if not user_input.content.strip():
+                break            # EOF / 空闲 Ctrl+C → 退出（统一出口）
+            await cli.run_with_terminate(
+                asyncio.create_task(runner.run(agent, user_input.content, streamed=True))
+            )
     finally:
         await runner.close()        # 关闭会话级资源（kernel + session）
         await registry.close()      # 关闭进程级资源（MCP 客户端）

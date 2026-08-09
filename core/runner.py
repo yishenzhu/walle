@@ -3,8 +3,6 @@ import logging
 from pydantic import BaseModel
 from typing import Any
 
-from ..schemas.channel import TextDeltaEnd
-
 from .agent import Agent, TContext, Handoff
 from .executor import ToolExecutor
 from ..session import Session, InMemorySession
@@ -15,10 +13,12 @@ from ..schemas import (
     ToolMessage,
     Usage,
     UserMessage,
-    TextDelta,
+    Delta,
+    DeltaEnd,
+    ToolResult as ToolResultEvent,
 )
 from ..channel import Channel
-from ..tools import ToolContext, Tool
+from ..tools import ToolContext, Tool, ChannelInteractor
 from ..infra import PyKernel
 
 
@@ -64,7 +64,10 @@ class Runner:
 
     def tool_context(self):
         """构造执行上下文：kernel 等会话级状态跨工具调用保留。"""
-        return ToolContext(channel=self._channel, kernel=self._kernel)
+        return ToolContext(
+            kernel=self._kernel,
+            interact=ChannelInteractor(self._channel) if self._channel else None,
+        )
 
     async def close(self) -> None:
         """关闭会话级资源：kernel + session。"""
@@ -88,7 +91,6 @@ class Runner:
                 model = self._config.model or agent.model or self._provider.model
                 span.set_attribute("agent.model", model)
 
-                await self._apply_injections()
                 messages = await self._build_messages(agent)
                 tools = self._build_tools(agent)
 
@@ -153,7 +155,7 @@ class Runner:
         ) as stream:
             async for event in stream:
                 if event.type == "content.delta" and self._channel:
-                    await self._channel.send(TextDelta(delta=event.delta))
+                    await self._channel.notify(Delta(delta=event.delta))
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message
@@ -162,8 +164,12 @@ class Runner:
                     message.tool_calls, tools, self.tool_context()
                 ):
                     tool_results.append((tc_id, r))
+                    if self._channel:
+                        await self._channel.notify(
+                            ToolResultEvent(tool_call_id=tc_id, result=r)
+                        )
             elif self._channel:
-                await self._channel.send(TextDeltaEnd())
+                await self._channel.notify(DeltaEnd())
         return completion, message, tool_results
 
     async def _run_turn(
@@ -183,14 +189,6 @@ class Runner:
                 message.tool_calls, tools, self.tool_context()
             )
         return completion, message, tool_results
-
-    async def _apply_injections(self) -> None:
-        if self._channel:
-            injections = self._channel.injections()
-            if injections:
-                await self._session.add(
-                    [UserMessage(content=inj.content) for inj in injections]
-                )
 
     def run_sync(
         self,

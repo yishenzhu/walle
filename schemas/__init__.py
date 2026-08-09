@@ -7,12 +7,21 @@ from .message import (
     MessageAdapter,
 )
 from .usage import Usage
-from .channel import (
-    TextDelta,
-    TextDeltaEnd,
-    ToolCall,
+from .events import (
+    Notification,
+    Delta,
+    DeltaEnd,
+    ToolStart,
     ToolResult,
+    Error,
+    NotificationUnion,
+    Service,
+    Receive,
+    Inquiry,
+    Approval,
+    ServiceUnion,
+)
+from .channel import (
     UserInput,
-    InjectionInput,
     ApprovalResponse,
 )

@@ -1,9 +1,12 @@
+import asyncio
 import fnmatch
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
+from ..channel import Channel
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
+from ..schemas import Approval, ApprovalResponse
 
 
 class ArgMatch(BaseModel):
@@ -79,3 +82,50 @@ class ApprovalPolicy:
             if rule.match(tool_name, args):
                 return rule.action
         return self._default
+
+
+class Approver(Protocol):
+    """审批策略：决定要不要问、怎么问（底层发起 Approval 服务）。"""
+
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse: ...
+
+
+class ChannelApprover:
+    """交互式审批：通过 Channel 发起 Approval 服务。"""
+
+    def __init__(self, channel: Channel):
+        self._channel = channel
+
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+        return await self._channel.call(
+            Approval(tool_name=tool_name, arguments=arguments)
+        )
+
+
+class AutoApproveApprover:
+    """静默放行（测试 / 无人值守）。"""
+
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+        return ApprovalResponse(approved=True)
+
+
+class DenyApprover:
+    """静默拒绝（测试拒绝路径）。"""
+
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+        return ApprovalResponse(approved=False, reason="auto denied")
+
+
+class TimeoutApprover:
+    """装饰器：超时未答复自动拒绝，防止卡死。"""
+
+    def __init__(self, inner: Approver, timeout: float):
+        self._inner, self._timeout = inner, timeout
+
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+        try:
+            return await asyncio.wait_for(
+                self._inner.ask(tool_name, arguments), self._timeout
+            )
+        except asyncio.TimeoutError:
+            return ApprovalResponse(approved=False, reason=f"审批超时({self._timeout}s)")

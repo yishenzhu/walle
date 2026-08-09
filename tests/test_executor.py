@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
+from ..core.approval import ChannelApprover
 from ..core.executor import ToolExecutor
 from ..schemas import ApprovalResponse
 from ..tools import Tool, ToolContext
@@ -35,8 +36,8 @@ def channel():
 
 
 @pytest.fixture
-def ctx(channel):
-    return ToolContext(channel=channel)
+def ctx():
+    return ToolContext()
 
 
 class TestExecute:
@@ -75,31 +76,37 @@ class TestExecute:
         tc_id, result = await executor.execute(tc, {"boom": tool}, ctx)
         assert "Error: boom" in result
 
-    async def test_execute_user_approves(self, ctx):
-        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)))
-        ctx.channel.set_approval(approved=True)
+    async def test_execute_user_approves(self, channel):
+        channel.set_approval(approved=True)
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)),
+            channel=channel,
+            approver=ChannelApprover(channel),
+        )
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute(tc, {"bash": tool}, ctx)
+        tc_id, result = await executor.execute(tc, {"bash": tool}, ToolContext())
         assert result == "done"
 
-    async def test_execute_user_denies(self, ctx):
-        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)))
-        ctx.channel.set_approval(approved=False, reason="dangerous")
+    async def test_execute_user_denies(self, channel):
+        channel.set_approval(approved=False, reason="dangerous")
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)),
+            channel=channel,
+            approver=ChannelApprover(channel),
+        )
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute(tc, {"bash": tool}, ctx)
+        tc_id, result = await executor.execute(tc, {"bash": tool}, ToolContext())
         assert "denied by user" in result
         assert "dangerous" in result
 
-    async def test_execute_ask_no_channel(self):
-        from ..tools import ToolContext as TC
-        ctx = TC(channel=None)
+    async def test_execute_ask_no_approver(self):
         executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)))
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute(tc, {"bash": tool}, ctx)
-        assert "no channel" in result
+        tc_id, result = await executor.execute(tc, {"bash": tool}, ToolContext())
+        assert "no approval channel" in result
 
     async def test_execute_timeout(self, ctx):
         import asyncio

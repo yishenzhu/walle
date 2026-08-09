@@ -34,9 +34,9 @@ async def test_error_returns_traceback(kernel):
     assert "ZeroDivisionError" in out
 
 
-async def test_python_tool_uses_context_kernel(kernel):
+async def test_jupyter_uses_context_kernel(kernel):
     """jupyter 工具从 ToolContext 获取 kernel，按会话隔离执行。"""
-    ctx = ToolContext(channel=None, kernel=kernel)
+    ctx = ToolContext(kernel=kernel)
     token = tool_context.set(ctx)
     try:
         assert await jupyter("x = 41") == "(no output)"
@@ -45,9 +45,9 @@ async def test_python_tool_uses_context_kernel(kernel):
         tool_context.reset(token)
 
 
-async def test_python_tool_no_kernel_in_context():
+async def test_jupyter_no_kernel_in_context():
     """上下文无 kernel 时返回明确错误。"""
-    ctx = ToolContext(channel=None, kernel=None)
+    ctx = ToolContext(kernel=None)
     token = tool_context.set(ctx)
     try:
         out = await jupyter("1 + 1")

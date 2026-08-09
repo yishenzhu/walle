@@ -5,32 +5,39 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..schemas import ToolResult
-from .approval import ApprovalPolicy
+from ..schemas import ToolResult as ToolResultEvent
+from .approval import ApprovalPolicy, Approver
 from ..conf import ApprovalDecision, ToolConfig
 from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
-from ..schemas import ToolCall
+from ..schemas import ToolStart
 from ..tools import Tool, ToolContext, tool_context
 
 logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    def __init__(self, config: ToolConfig | None = None):
+    def __init__(
+        self,
+        config: ToolConfig | None = None,
+        channel=None,
+        approver: Approver | None = None,
+    ):
         self._policy = ApprovalPolicy(config.approval if config else None)
         self._timeout = config.timeout if config else None
+        self._channel = channel  # 通知输出（ToolStart / ToolResult），可为 None
+        self._approver = approver  # 审批策略，None 时无审批渠道 → 拒绝
 
     async def _check_approval(
-        self, name: str, args: dict[str, Any], ctx: ToolContext
+        self, name: str, args: dict[str, Any]
     ) -> str | None:
         decision = self._policy.evaluate(name, args)
         if decision == ApprovalDecision.DENY:
             return f"Tool '{name}' denied by policy"
         if decision == ApprovalDecision.ALLOW:
             return None
-        if ctx.channel is None:
-            return f"Tool '{name}' denied: no channel for approval"
-        response = await ctx.channel.ask_approval(tool_name=name, arguments=args)
+        if self._approver is None:
+            return f"Tool '{name}' denied: no approval channel"
+        response = await self._approver.ask(tool_name=name, arguments=args)
         if response.approved:
             return None
         reason = f"Tool '{name}' denied by user"
@@ -53,14 +60,18 @@ class ToolExecutor:
 
         args = json.loads(func.arguments)
 
-        if ctx.channel:
-            await ctx.channel.send(
-                ToolCall(tool_name=name, arguments=args, tool_call_id=tc_id)
+        if self._channel is not None:
+            await self._channel.notify(
+                ToolStart(tool_name=name, arguments=args, tool_call_id=tc_id)
             )
 
-        denied = await self._check_approval(name, args, ctx)
+        denied = await self._check_approval(name, args)
         if denied:
             logger.info(denied)
+            if self._channel is not None:
+                await self._channel.notify(
+                    ToolResultEvent(tool_call_id=tc_id, error=denied)
+                )
             return tc_id, denied
 
         attrs = {"tool.name": name}
@@ -79,11 +90,17 @@ class ToolExecutor:
         except asyncio.TimeoutError:
             logger.warning(f"{name}: timeout after {self._timeout}s")
             TOOL_ERRORS.add(1, attrs)
-            return tc_id, f"Error: tool '{name}' timed out after {self._timeout}s"
+            error = f"Error: tool '{name}' timed out after {self._timeout}s"
+            if self._channel is not None:
+                await self._channel.notify(ToolResultEvent(tool_call_id=tc_id, error=error))
+            return tc_id, error
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)
-            return tc_id, f"Error: {e}"
+            error = f"Error: {e}"
+            if self._channel is not None:
+                await self._channel.notify(ToolResultEvent(tool_call_id=tc_id, error=error))
+            return tc_id, error
 
     async def execute_batch(
         self,
@@ -106,5 +123,3 @@ class ToolExecutor:
         ):
             tc_id, result = await task
             yield tc_id, result
-            if ctx.channel:
-                await ctx.channel.send(ToolResult(tool_call_id=tc_id, result=result))

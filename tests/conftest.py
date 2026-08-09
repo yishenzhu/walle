@@ -4,7 +4,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
 from ..infra.provider import OpenAIProvider
-from ..schemas import ApprovalResponse, UserInput
+from ..schemas import Approval, ApprovalResponse, Inquiry, Receive, UserInput
 from ..tools import ToolContext
 
 
@@ -92,30 +92,24 @@ class FakeProvider:
 # ── Mock Channel ───────────────────────────────────────
 
 class FakeChannel:
-    """无 I/O 的 Channel 实现，记录所有事件。"""
+    """无 I/O 的 Channel 实现，记录所有通知事件，服务返回预设响应。"""
 
     def __init__(self):
-        self.events: list = []
+        self.events: list = []  # 记录 notify 的通知
         self._approval_response = ApprovalResponse(approved=True)
         self._inquiry_response = "mock answer"
 
-    async def send(self, event):
-        self.events.append(event)
+    async def notify(self, notification):
+        self.events.append(notification)
 
-    async def receive(self) -> UserInput:
-        return UserInput(content="")
-
-    async def inquiry(self, question, options=None):
-        return self._inquiry_response
-
-    async def ask_approval(self, tool_name, arguments):
-        return self._approval_response
-
-    def injections(self):
-        return []
-
-    def inject(self, content):
-        pass
+    async def call(self, service):
+        match service:
+            case Receive():
+                return UserInput(content="")
+            case Inquiry():
+                return self._inquiry_response
+            case Approval():
+                return self._approval_response
 
     def set_approval(self, approved: bool, reason: str | None = None):
         self._approval_response = ApprovalResponse(approved=approved, reason=reason)
@@ -151,4 +145,4 @@ def executor(allow_all_config):
 
 @pytest.fixture
 def tool_context(fake_channel):
-    return ToolContext(channel=fake_channel)
+    return ToolContext()
