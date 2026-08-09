@@ -16,14 +16,10 @@
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
 | 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
-| 🛡️ **工具审批系统** | glob 三态策略（allow / deny / ask），按工具名 + 参数粒度控制 |
+| 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
 | 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
-| ⏱️ **超时保护** | 全局工具超时，防止卡死阻塞循环 |
-| 🧠 **会话压缩** | token 超阈值自动摘要压缩，保留关键信息降成本 |
-| 🧩 **可插拔架构** | Channel / Session / Compressor 均为 Protocol，可替换实现 |
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| 📚 **Skill 系统** | `.agent/skills/` 加载 Markdown 技能，动态注入为工具 |
-| 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、自主沉淀技能，持久化 `.agent/` 重启恢复 |
+| 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
 ---
 
