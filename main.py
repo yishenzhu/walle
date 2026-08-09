@@ -41,8 +41,7 @@ async def main(channel: str = "cli"):
             raise ValueError("feishu 模式需要 conf.yaml 配置 feishu.app_id / app_secret")
         target = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
         await target.start()
-        # 通知多路消费：飞书主渲染 + CLI 只读观察（本地看进度）
-        observers: list = [LogObserver(), cli.notify]
+        observers: list = [LogObserver()]  # 只保留日志，本地 CLI 不渲染
     else:
         target = cli
         observers = [LogObserver()]

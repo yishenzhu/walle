@@ -46,8 +46,9 @@ class FeishuChannel:
         self._channel = lark_channel.FeishuChannel(app_id=app_id, app_secret=app_secret)
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
         self._chat_id: str = ""          # 当前会话 chat_id
-        # 流式：官方 stream() 的 producer 通过队列消费 Delta（None = 结束信号）
-        self._stream_queue: asyncio.Queue[str | None] | None = None
+        # 流式：常驻队列，producer 读到 None 结束当前卡片流，下回合自动新开
+        self._stream_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._stream_task: asyncio.Task | None = None
         # 审批：token → 等待中的 Future（工具并发执行，需按 token 区分）
         self._pending_approvals: dict[str, asyncio.Future[ApprovalRsp]] = {}
 
@@ -87,7 +88,26 @@ class FeishuChannel:
         self._channel.on(Events.MESSAGE, on_message)
         self._channel.on(Events.CARD_ACTION, on_card_action)
         await self._channel.connect_until_ready()
+        # 常驻流任务：连接就绪后即启动，等待首个 Delta
+        self._stream_task = asyncio.create_task(self._run_stream())
         logger.info("feishu channel ready")
+
+    async def stop(self) -> None:
+        """关闭通道：取消常驻流任务并断开长连接。幂等，可再次 start()。"""
+        if self._stream_task is not None:
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except asyncio.CancelledError:
+                pass
+            self._stream_task = None
+            # 清空残留增量，避免重启后消费到上一轮的脏数据
+            while not self._stream_queue.empty():
+                self._stream_queue.get_nowait()
+        try:
+            await self._channel.disconnect()
+        except Exception as err:
+            logger.warning(f"feishu disconnect failed: {err}")
 
     # ── notify：流式 + 工具事件 ───────────────────────
     async def notify(self, n: NotificationUnion) -> None:
@@ -97,7 +117,7 @@ class FeishuChannel:
                 case Delta(delta=delta):
                     await self._stream_delta(delta)
                 case DeltaEnd():
-                    await self._stream_end()
+                    await self._stream_delta(None)  # None 结束当前卡片流
                 case _:
                     text = self._render(n)
                     if text:
@@ -105,38 +125,25 @@ class FeishuChannel:
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
 
-    async def _stream_delta(self, delta: str) -> None:
-        """流式增量：入队给官方 stream() 的 producer（首个 Delta 启动）。"""
-        if self._stream_queue is None:
-            self._stream_queue = asyncio.Queue()
-            asyncio.create_task(self._stream())
+    async def _stream_delta(self, delta: str | None) -> None:
+        """流式增量入队；None 为回合结束信号，结束当前卡片流。
+        由 start() 启动的常驻流任务消费。
+        """
         await self._stream_queue.put(delta)
 
-    async def _stream_end(self) -> None:
-        """回合结束：发送结束信号，官方 stream 自动 finish_streaming_card。"""
-        if self._stream_queue is not None:
-            await self._stream_queue.put(None)
-            self._stream_queue = None
-
-    async def _stream(self) -> None:
-        """驱动官方 stream()：producer 从队列消费 Delta，None 结束信号收尾。
-
-        官方内部处理：CardKit 预分配、发送引用消息、节流更新（100ms/50字符）、
-        正常或出错时自动 finish_streaming_card。
+    async def _run_stream(self) -> None:
+        """常驻流任务：每回合一个官方 stream() 卡片，读到 None 结束，循环新开。
+        官方 stream() 阻塞到 producer 返回（读完 None）后自动 finish_streaming_card。
         """
-        queue = self._stream_queue  # 捕获稳定引用（_stream_end 会置 None）
+        while True:
+            try:
+                async def producer(stream) -> None:
+                    while (chunk := await self._stream_queue.get()) is not None:
+                        await stream.append(chunk)
 
-        async def producer(stream) -> None:
-            while (chunk := await queue.get()) is not None:
-                await stream.append(chunk)
-
-        try:
-            await self._channel.stream(self._chat_id, {"markdown": producer})
-        except Exception as err:
-            logger.warning(f"feishu stream failed: {err}")
-        finally:
-            if self._stream_queue is queue:  # 失败时清理，防后续 Delta 入死队列
-                self._stream_queue = None
+                await self._channel.stream(self._chat_id, {"markdown": producer})
+            except Exception as err:
+                logger.warning(f"feishu stream failed: {err}")
 
     @staticmethod
     def _render(n: NotificationUnion) -> str:
