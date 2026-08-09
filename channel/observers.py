@@ -17,7 +17,7 @@ class LogObserver:
     """审计观察者：通知沉淀到结构化日志，供审计 / 回放。"""
 
     async def __call__(self, n: NotificationUnion) -> None:
-        logger.info("ui_event", extra={"event": n.model_dump(mode="json")})
+        logger.debug("ui_event", extra={"event": n.model_dump(mode="json")})
 
 
 class ConsoleObserver:
