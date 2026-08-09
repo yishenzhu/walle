@@ -67,6 +67,6 @@ class FeishuObserver:
                 if text:
                     await self._send(text)
             case _:
-                text, _ = render_notification(n)
+                text = render_notification(n)
                 if text:
                     await self._send(text)

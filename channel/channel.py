@@ -9,6 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..schemas import (
     ApprovalRsp,
+    Delta,
     NotificationUnion,
     Receive,
     Inquiry,
@@ -61,8 +62,9 @@ class CLIChannel:
 
     # ── 通知：广播渲染（无返回）──
     async def notify(self, n: NotificationUnion) -> None:
-        text, end = render_notification(n)
-        print(text, end=end, flush=True)
+        text = render_notification(n)
+        # CLI 表现层：Delta 流式增量不换行，其余换行
+        print(text, end="" if isinstance(n, Delta) else "\n", flush=True)
 
     # ── 服务：终端交互（有返回）──
     async def call(self, s: ServiceUnion) -> Any:

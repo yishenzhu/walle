@@ -11,27 +11,27 @@ from ..schemas import (
 )
 
 
-def render_notification(n: NotificationUnion) -> tuple[str, str]:
-    """渲染单条通知为 (文本, end)，end 可直接作为 print 的 end 参数。
+def render_notification(n: NotificationUnion) -> str:
+    """渲染单条通知为纯文本，跨 UI 复用（CLI / 飞书）。
 
-    - Delta：增量，不换行（end=""）
-    - DeltaEnd：回合结束，仅换行（text=""）
-    - 其余：整条消息，换行
+    - Delta：增量文本（调用方决定是否换行）
+    - DeltaEnd：回合边界，返回空串（调用方自行处理换行）
+    - 其余：整条消息文本
     """
     match n:
         case Delta(delta=delta):
-            return delta, ""
+            return delta
         case DeltaEnd():
-            return "", "\n"
+            return ""
         case ToolStart(tool_name=name, arguments=args):
-            return f"[调用工具 {name}({args})]", "\n"
+            return f"[调用工具 {name}({args})]"
         case ToolResult(tool_call_id=tc_id, result=result, error=None):
-            return f"[工具结果 {tc_id}] {truncate(result, 512)}", "\n"
+            return f"[工具结果 {tc_id}] {truncate(result, 512)}"
         case ToolResult(tool_call_id=tc_id, error=err):
-            return f"[工具错误 {tc_id}] {err}", "\n"
+            return f"[工具错误 {tc_id}] {err}"
         case Error(message=msg):
-            return f"[错误] {msg}", "\n"
-    return "", "\n"
+            return f"[错误] {msg}"
+    return ""
 
 
 def truncate(value: Any, limit: int) -> str:
