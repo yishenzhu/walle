@@ -1,79 +1,125 @@
-"""FeishuChannel：流式打字机（创建→更新）、工具事件独立发、交互。"""
+"""FeishuChannel（官方 lark-channel-sdk）：流式卡片、工具精简、卡片按钮审批。"""
+import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from walle.channel import FeishuChannel
-from walle.schemas import Delta, DeltaEnd, Error, ToolStart, Receive, UserInput
+from walle.schemas import (
+    Approval,
+    ApprovalRsp,
+    Delta,
+    DeltaEnd,
+    Error,
+    Receive,
+    ToolResult,
+    ToolStart,
+    UserInput,
+)
 
 
-class FakeResp:
-    def __init__(self, code=0, message_id="om_1"):
-        self.code = code
-        self.msg = "success"
-        self.data = type("D", (), {"message_id": message_id})()
+class FakeMsg:
+    """模拟官方 InboundMessage。"""
+
+    def __init__(self, chat_id="oc_test", text="你好"):
+        self.conversation = MagicMock()
+        self.conversation.chat_id = chat_id
+        self.body_text = text
+        self.content_text = text
+
+
+class FakeCardAction:
+    """模拟官方 CardActionEvent。"""
+
+    def __init__(self, value: dict):
+        self.action = MagicMock()
+        self.action.value = value
 
 
 @pytest.fixture
 def ch():
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
-    # mock SDK client 的 async 方法
-    c._client = AsyncMock()
-    c._client.im.v1.message.acreate.return_value = FakeResp(message_id="om_1")
-    c._client.im.v1.message.aupdate.return_value = FakeResp()
+    c._loop = MagicMock()  # 主 loop（测试中用 MagicMock 模拟 call_soon_threadsafe）
+    # mock 官方 SDK channel 的 async 方法
+    c._channel = AsyncMock()
+    c._channel.send.return_value = MagicMock(success=True)
+    c._channel.stream.return_value = MagicMock(success=True)
     return c
 
 
-async def test_stream_creates_then_updates(ch):
-    """首条 Delta 创建消息，后续 Delta 节流更新（打字机）。"""
-    times = iter([0.0, 1.5])  # 第二次 delta 距上次超过 1s，触发更新
-    with patch("walle.channel.feishu.time.monotonic", side_effect=lambda: next(times)):
-        await ch.notify(Delta(delta="你"))
-        await ch.notify(Delta(delta="好"))
-    assert ch._client.im.v1.message.acreate.await_count == 1
-    assert ch._client.im.v1.message.aupdate.await_count == 1
-    # 更新内容为累积文本
-    update_req = ch._client.im.v1.message.aupdate.await_args.args[0]
-    content = json.loads(update_req.request_body.content)["text"]
-    assert content == "你好"
-    # 更新的是创建返回的 message_id
-    assert update_req.message_id == "om_1"
+# ── notify：流式卡片 ─────────────────────────────────
+async def test_stream_delta_feeds_queue(ch):
+    """首个 Delta 启动流式队列 + 后台 stream 任务。"""
+    await ch.notify(Delta(delta="你"))
+    assert ch._stream_queue is not None
+    # 队列里有这个 delta
+    assert await ch._stream_queue.get() == "你"
+    # 后台 _run_stream 已启动并调用官方 stream
+    await asyncio.sleep(0.01)
+    ch._channel.stream.assert_awaited()
 
 
-async def test_stream_throttles_within_second(ch):
-    """同一秒内的 Delta 不重复更新（节流，避免超 20 次编辑限制）。"""
-    times = iter([0.0, 0.3])  # 间隔 < 1s，第二次不更新
-    with patch("walle.channel.feishu.time.monotonic", side_effect=lambda: next(times)):
-        await ch.notify(Delta(delta="a"))
-        await ch.notify(Delta(delta="b"))
-        await ch.notify(Delta(delta="c"))
-    assert ch._client.im.v1.message.acreate.await_count == 1
-    assert ch._client.im.v1.message.aupdate.await_count == 0  # 全部在 1s 内，无更新
+async def test_stream_delta_accumulates(ch):
+    """多个 Delta 全部入队，官方 stream 的 producer 消费累积。"""
+    await ch.notify(Delta(delta="你"))
+    await ch.notify(Delta(delta="好"))
+    q = ch._stream_queue
+    assert await q.get() == "你"
+    assert await q.get() == "好"
 
 
-async def test_delta_end_finalizes(ch):
-    """DeltaEnd 后回合定格，新回合重新创建。"""
+async def test_delta_end_sends_end_signal(ch):
+    """DeltaEnd 入队 None 结束信号，新回合重新启动流。"""
     await ch.notify(Delta(delta="a"))
     await ch.notify(DeltaEnd())
-    ch._client.im.v1.message.acreate.reset_mock()
+    assert ch._stream_queue is None  # 已重置
+    # 新回合：重新创建流
     await ch.notify(Delta(delta="b"))
-    assert ch._client.im.v1.message.acreate.await_count == 1  # 新回合重新创建
+    assert ch._stream_queue is not None
 
 
-async def test_tool_event_sent_independently(ch):
+# ── notify：工具事件精简 ─────────────────────────────
+async def test_tool_start_sent(ch):
+    """ToolStart 独立发送（markdown，参数截断）。"""
     await ch.notify(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
-    assert ch._client.im.v1.message.acreate.await_count == 1
-    create_req = ch._client.im.v1.message.acreate.await_args.args[0]
-    assert "🔧 **bash**" in json.loads(create_req.request_body.content)["text"]
+    ch._channel.send.assert_awaited_once()
+    args = ch._channel.send.await_args.args
+    assert args[0] == "oc_test"
+    assert "🔧 **bash**" in args[1]["markdown"]
+
+
+async def test_tool_result_success_silent(ch):
+    """ToolResult 成功详情静默（精简，不发）。"""
+    await ch.notify(ToolResult(tool_call_id="1", result={"status": "ok"}))
+    ch._channel.send.assert_not_awaited()
+
+
+async def test_tool_result_error_sent(ch):
+    """ToolResult 错误发送（❌）。"""
+    await ch.notify(ToolResult(tool_call_id="1", error="boom"))
+    ch._channel.send.assert_awaited_once()
+    assert "❌ 工具错误" in ch._channel.send.await_args.args[1]["markdown"]
 
 
 async def test_error_sent(ch):
     await ch.notify(Error(message="oops"))
-    assert ch._client.im.v1.message.acreate.await_count == 1
+    ch._channel.send.assert_awaited_once()
+    assert "⚠️" in ch._channel.send.await_args.args[1]["markdown"]
 
 
+async def test_notify_failure_no_raise(ch):
+    """推送失败仅告警，不抛异常（不拖垮主链路）。"""
+    c = FeishuChannel(app_id="cli_test", app_secret="secret")
+    c._chat_id = "oc_test"
+    c._channel = AsyncMock()
+    c._channel.send.side_effect = Exception("network down")
+    await c.notify(Delta(delta="x"))  # 不应抛出
+    await c.notify(ToolStart(tool_name="bash", arguments={}, tool_call_id="1"))  # 不应抛出
+
+
+# ── call：接收 / 审批 ────────────────────────────────
 async def test_call_receive_from_queue(ch):
     """call(Receive) 从事件队列取用户消息。"""
     await ch._queue.put(UserInput(content="你好"))
@@ -81,27 +127,60 @@ async def test_call_receive_from_queue(ch):
     assert rsp.content == "你好"
 
 
-async def test_notify_failure_no_raise(ch):
-    """推送失败仅告警，不抛异常（不拖垮主链路）。"""
+async def test_on_message_enqueues(ch):
+    """收到官方 InboundMessage → 入队 UserInput（跨线程桥接）。"""
+    c = FeishuChannel(app_id="cli_test", app_secret="secret")
+    c._loop = AsyncMock()
+    # 真实 queue 用于验证
+    c._queue = __import__("asyncio").Queue()
+    c._loop.call_soon_threadsafe = lambda fn, *a, **k: fn(*a, **k)
+    c._on_message(FakeMsg(chat_id="oc_x", text="  hello  "))
+    rsp = c._queue.get_nowait()
+    assert rsp.content == "hello"
+    assert c._chat_id == "oc_x"
+
+
+async def test_approval_card_button(ch):
+    """审批：卡片按钮回调 → ApprovalRsp。"""
+    # 用真实 loop 验证 Future 完成
+    import asyncio
+
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
-    c._client = AsyncMock()
-    c._client.im.v1.message.acreate.side_effect = Exception("network down")
-    await c.notify(Delta(delta="x"))  # 不应抛出
+    c._channel = ch._channel
+    c._loop = asyncio.get_running_loop()
+
+    task = asyncio.create_task(c.call(Approval(tool_name="mcp_tavily", arguments={"query": "x"})))
+
+    # 等待卡片发出并拿到 token
+    await asyncio.sleep(0.01)
+    assert c._pending_approvals
+    token = next(iter(c._pending_approvals))
+    # 模拟点击 ✅
+    c._on_card_action(FakeCardAction({"approval": token, "decision": "approve"}))
+    rsp = await task
+    assert rsp == ApprovalRsp(approved=True, reason=None)
+    # 卡片内容包含按钮（CardPayload.data 是卡片 dict）
+    send_args = c._channel.send.await_args.args
+    card_data = send_args[1]["card"]
+    if hasattr(card_data, "data"):
+        card_data = card_data.data
+    assert "🔐 工具审批" in card_data["header"]["title"]["content"]
 
 
-def test_render_format():
-    """_render 格式：工具名加粗 + 参数 JSON 代码块；结果 dict 格式化。"""
-    from walle.schemas import ToolResult
+async def test_approval_reject(ch):
+    """审批：❌ 拒绝 → ApprovalRsp(approved=False)。"""
+    import asyncio
 
-    start = FeishuChannel._render(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
-    assert "🔧 **bash**" in start
-    assert "```" in start
+    c = FeishuChannel(app_id="cli_test", app_secret="secret")
+    c._chat_id = "oc_test"
+    c._channel = ch._channel
+    c._loop = asyncio.get_running_loop()
 
-    result = FeishuChannel._render(ToolResult(tool_call_id="1", result={"status": "ok"}))
-    assert "✅ 工具结果" in result
-    assert '"status": "ok"' in result  # JSON 格式化
-
-    err = FeishuChannel._render(ToolResult(tool_call_id="1", error="boom"))
-    assert "❌ 工具错误" in err
-    assert "boom" in err
+    task = asyncio.create_task(c.call(Approval(tool_name="t", arguments={})))
+    await asyncio.sleep(0.01)
+    token = next(iter(c._pending_approvals))
+    c._on_card_action(FakeCardAction({"approval": token, "decision": "reject"}))
+    rsp = await task
+    assert rsp.approved is False
+    assert rsp.reason == "用户拒绝"

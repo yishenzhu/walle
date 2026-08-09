@@ -1,18 +1,19 @@
-"""飞书通道：应用机器人（长连接 + 真流式）。
+"""飞书通道：官方 lark-channel-sdk（应用机器人，CardKit 流式）。
 
 模式 B：FeishuChannel 实现 Channel，作为主交互通道。
-  - notify：流式回复通过「创建消息 → 更新消息」实现打字机效果
+  - notify：流式回复用官方 channel.stream()（CardKit 卡片，无 20 次编辑限制）
   - call：从长连接事件队列取用户消息（Receive / Inquiry / Approval）
-模式 A 的 FeishuObserver 已移除（webhook 无法流式，演进到应用机器人）。
+工具事件精简：只发 ToolStart（🔧）与错误，不发 ToolResult 详情。
+审批用卡片按钮（✅/❌），点击回调驱动 ApprovalRsp。
 """
 import asyncio
 import json
 import logging
-import threading
-import time
+import uuid
 from typing import Any
 
-import lark_oapi as lark  # 模块级 import：主线程无 running loop 时绑定模块级 loop，供独立线程跑 ws.start()
+import lark_channel
+from lark_channel import CardActionEvent, Events, InboundMessage, new_card
 
 from ..schemas import (
     ApprovalRsp,
@@ -34,162 +35,158 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuChannel:
-    """飞书交互通道：长连接接收用户消息，流式更新发送 AI 回复。
+    """飞书交互通道：官方 SDK 长连接接收消息，CardKit 卡片流式回复。
 
-    - notify：首条 Delta 创建消息（打字机起点），后续 Delta 更新同一消息
-    - 工具事件（ToolStart/ToolResult/Error）独立发送
+    - notify：Delta 流式写入卡片（官方 stream），工具事件精简独立发送
     - call(Receive)：从消息队列取下一条用户消息
+    - call(Approval)：卡片按钮 ✅/❌，等待点击回调
     """
 
     def __init__(self, app_id: str, app_secret: str):
-        self._app_id = app_id
-        self._app_secret = app_secret
+        self._channel = lark_channel.FeishuChannel(app_id=app_id, app_secret=app_secret)
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
         self._chat_id: str = ""          # 当前会话 chat_id
-        self._msg_id: str | None = None  # 进行中的流式消息（None = 新回合）
-        self._msg_text: str = ""      # 流式累积文本
-        self._last_update: float = 0.0  # 上次更新消息时间（节流用）
-        self._update_count: int = 0   # 本回合更新次数（飞书限制 20 次/消息）
-        self._client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._ws_thread: threading.Thread | None = None
+        # 流式：官方 stream() 的 producer 通过队列消费 Delta（None = 结束信号）
+        self._stream_queue: asyncio.Queue[str | None] | None = None
+        # 审批：token → 等待中的 Future
+        self._pending_approvals: dict[str, asyncio.Future[ApprovalRsp]] = {}
 
-    async def _send(self, chat_id: str, text: str) -> str:
-        """发送一条独立消息（SDK async）；返回 message_id（流式起点用）。"""
-        body = lark.im.v1.CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("text").content(
-            json.dumps({"text": text}, ensure_ascii=False)
-        ).build()
-        req = lark.im.v1.CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
-        resp = await self._client.im.v1.message.acreate(req)
-        if resp.code != 0:
-            raise RuntimeError(f"feishu send failed: {resp.code} {resp.msg}")
-        return resp.data.message_id
+    # ── 生命周期 ──────────────────────────────────────
+    async def start(self) -> None:
+        """注册事件监听并启动长连接（官方 SDK 后台运行，就绪后返回）。
 
-    async def _update(self, message_id: str, text: str) -> None:
-        """更新已发送消息（打字机效果，SDK async）。"""
-        body = lark.im.v1.UpdateMessageRequestBody.builder().msg_type("text").content(
-            json.dumps({"text": text}, ensure_ascii=False)
-        ).build()
-        req = lark.im.v1.UpdateMessageRequest.builder().message_id(message_id).request_body(body).build()
-        resp = await self._client.im.v1.message.aupdate(req)
-        if resp.code != 0:
-            raise RuntimeError(f"feishu update failed: {resp.code} {resp.msg}")
-
-    # ── notify：流式渲染 ──────────────────────────────
-    async def notify(self, n: NotificationUnion) -> None:
-        """流式：首条 Delta 建消息，节流更新；工具事件独立发。
-
-        飞书限制一条消息最多编辑 20 次（230072），因此流式更新需同时
-        节流（每秒最多一次）和限次（每回合最多 18 次 + 最终 1 次）。
+        事件 handler 在 SDK 后台 loop 执行；跨线程用 call_soon_threadsafe
+        把消息/审批结果调度回主 loop 的队列与 Future。
         """
+        self._loop = asyncio.get_running_loop()
+        self._channel.on(Events.MESSAGE, self._on_message)
+        self._channel.on(Events.CARD_ACTION, self._on_card_action)
+        await self._channel.connect_until_ready()
+        logger.info("feishu channel ready")
+
+    def _on_message(self, msg: InboundMessage) -> None:
+        """收到用户消息（SDK 后台 loop）。"""
+        chat_id = msg.conversation.chat_id
+        text = msg.body_text or msg.content_text or ""
+        logger.info(f"feishu receive: chat={chat_id} content={text.strip()!r}")
+        self._chat_id = chat_id
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait, UserInput(content=text.strip())
+        )
+
+    def _on_card_action(self, evt: CardActionEvent) -> None:
+        """审批卡片按钮回调（SDK 后台 loop）。"""
+        value = evt.action.value if isinstance(evt.action.value, dict) else {}
+        token = value.get("approval") or ""
+        decision = value.get("decision")
+        if token in self._pending_approvals and decision in ("approve", "reject"):
+            fut = self._pending_approvals.pop(token)
+            self._loop.call_soon_threadsafe(
+                fut.set_result,
+                ApprovalRsp(
+                    approved=decision == "approve",
+                    reason=None if decision == "approve" else "用户拒绝",
+                ),
+            )
+
+    # ── notify：流式 + 工具事件 ───────────────────────
+    async def notify(self, n: NotificationUnion) -> None:
+        """流式：Delta 写入官方 CardKit 卡片；工具事件精简独立发送。"""
         try:
             match n:
                 case Delta(delta=delta):
                     await self._stream_delta(delta)
                 case DeltaEnd():
-                    if self._msg_id is not None:
-                        await self._update(self._msg_id, self._msg_text)  # 最终内容
-                    self._msg_id = None  # 回合定格，新回合重新创建
-                    self._msg_text = ""
-                    self._last_update = 0.0
-                    self._update_count = 0
+                    await self._stream_end()
                 case _:
                     text = self._render(n)
                     if text:
-                        await self._send(self._chat_id, text)
+                        await self._channel.send(self._chat_id, {"markdown": text})
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
 
     async def _stream_delta(self, delta: str) -> None:
-        """流式增量：首条创建，后续节流+限次更新。"""
-        self._msg_text += delta
-        if self._msg_id is None:
-            self._msg_id = await self._send(self._chat_id, self._msg_text)
-            self._last_update = time.monotonic()
-            return
-        now = time.monotonic()
-        # 每秒最多一次，且每回合最多 18 次（留 1 次给 DeltaEnd 最终更新）
-        if now - self._last_update >= 1.0 and self._update_count < 18:
-            await self._update(self._msg_id, self._msg_text)
-            self._last_update = now
-            self._update_count += 1
+        """流式增量：入队给官方 stream() 的 producer（首个 Delta 启动）。"""
+        if self._stream_queue is None:
+            self._stream_queue = asyncio.Queue()
+            asyncio.create_task(self._run_stream())
+        await self._stream_queue.put(delta)
 
-    # ── call：交互 ────────────────────────────────────
+    async def _stream_end(self) -> None:
+        """回合结束：发送结束信号，官方 stream 自动 finish_streaming_card。"""
+        if self._stream_queue is not None:
+            await self._stream_queue.put(None)
+            self._stream_queue = None
+
+    async def _run_stream(self) -> None:
+        """驱动官方 stream()：producer 从队列消费 Delta，结束信号后收尾。
+
+        官方内部处理：CardKit 预分配、发送引用消息、节流更新（100ms/50字符）、
+        正常或出错时自动 finish_streaming_card。
+        """
+        async def producer(stream) -> None:
+            while True:
+                chunk = await self._stream_queue.get()
+                if chunk is None:
+                    break
+                await stream.append(chunk)
+
+        try:
+            await self._channel.stream(self._chat_id, {"markdown": producer})
+        except Exception as err:
+            logger.warning(f"feishu stream failed: {err}")
+
     @staticmethod
     def _render(n: NotificationUnion) -> str:
-        """工具事件 → 飞书文本（Delta 由 notify 处理，不走这里）。
+        """工具事件 → 飞书文本。Delta 由 _stream 处理，不走这里。
 
-        参数 / 结果用 JSON 格式化 + 代码块，飞书端展示整齐。
+        精简：只渲染 ToolStart（🔧 参数截断）与错误；ToolResult 详情静默。
         """
         match n:
             case ToolStart(tool_name=name, arguments=args):
-                params = json.dumps(args, ensure_ascii=False, indent=2)
-                return f"🔧 **{name}**\n```{params}```"
-            case ToolResult(tool_call_id=tc_id, result=result, error=None):
-                body = _to_text(result)
-                return f"✅ 工具结果\n```\n{truncate(body, 512)}\n```"
-            case ToolResult(tool_call_id=tc_id, error=err):
+                params = json.dumps(args, ensure_ascii=False)
+                return f"🔧 **{name}**\n```{truncate(params, 512)}```"
+            case ToolResult(tool_call_id=tc_id, error=err) if err is not None:
                 return f"❌ 工具错误\n```{err}```"
             case Error(message=msg):
                 return f"⚠️ 错误\n```{msg}```"
         return ""
 
+    # ── call：交互 ────────────────────────────────────
     async def call(self, s: ServiceUnion) -> Any:
         match s:
             case Receive():
                 return await self._queue.get()
             case Inquiry(question=q, options=opts):
-                await self._send(self._chat_id, f"❓ {q}")
+                await self._channel.send(self._chat_id, {"markdown": f"❓ {q}"})
                 return (await self._queue.get()).content or ""
             case Approval(tool_name=n, arguments=a):
-                await self._send(self._chat_id, f"🔐 审批: {n}({a})? 回复 y/n")
-                while True:
-                    rsp = (await self._queue.get()).content or ""
-                    if rsp.lower() in ("y", "yes"):
-                        return ApprovalRsp(approved=True)
-                    if rsp.lower() in ("n", "no"):
-                        return ApprovalRsp(approved=False, reason=rsp)
+                return await self._approval_card(n, a)
             # 其他服务不处理
 
-    # ── 生命周期 ──────────────────────────────────────
-    async def start(self) -> None:
-        """启动长连接事件订阅（独立线程跑官方 start() + 跨线程安全通信）。
-
-        lark 的 ws.Client.start() 是同步阻塞式（模块级 loop + run_until_complete），
-        必须在独立线程运行，保留其自动重连/异常处理等完整生命周期。
-        事件回调在独立线程执行，用 call_soon_threadsafe 调度回主循环的队列。
-        """
-        self._loop = asyncio.get_running_loop()
-
-        def on_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
-            event = data.event
-            chat_id = event.message.chat_id
-            content = json.loads(event.message.content).get("text", "")
-            logger.info(f"feishu receive: chat={chat_id} content={content!r}")
-            # 跨线程：把消息调度到主循环的 asyncio.Queue
-            self._loop.call_soon_threadsafe(
-                self._queue.put_nowait, UserInput(content=content.strip())
+    async def _approval_card(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+        """审批：卡片 + ✅/❌ 按钮，等待点击回调。"""
+        token = uuid.uuid4().hex
+        card = (
+            new_card()
+            .header(title="🔐 工具审批", template="blue")
+            .markdown(f"**{tool_name}**")
+            .markdown(
+                f"```json\n{truncate(json.dumps(arguments, ensure_ascii=False, indent=2), 1024)}\n```"
             )
-            self._chat_id = chat_id
-
-        event_handler = (
-            lark.EventDispatcherHandler.builder("", "")
-            .register_p2_im_message_receive_v1(on_message)
+            .buttons(
+                [
+                    {"label": "✅ 通过", "action": {"approval": token, "decision": "approve"}, "style": "primary"},
+                    {"label": "❌ 拒绝", "action": {"approval": token, "decision": "reject"}, "style": "danger"},
+                ]
+            )
             .build()
         )
-        ws = lark.ws.Client(
-            self._app_id,
-            self._app_secret,
-            event_handler=event_handler,
-            log_level=lark.LogLevel.INFO,
-        )
-        # daemon 线程：进程退出不阻塞（SDK 无公开 stop，start() 会阻塞在 _select）
-        self._ws_thread = threading.Thread(target=ws.start, daemon=True)
-        self._ws_thread.start()
-
-
-def _to_text(value: Any) -> str:
-    """工具结果 → 文本：dict/list 用 JSON 格式化，其余转字符串。"""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, indent=2)
-    return str(value)
+        await self._channel.send(self._chat_id, {"card": card})
+        fut: asyncio.Future[ApprovalRsp] = self._loop.create_future()
+        self._pending_approvals[token] = fut
+        try:
+            return await fut
+        finally:
+            self._pending_approvals.pop(token, None)
