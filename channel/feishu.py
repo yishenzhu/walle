@@ -26,6 +26,7 @@ from ..schemas import (
     ToolStart,
     UserInput,
 )
+from .channel import truncate
 
 logger = logging.getLogger(__name__)
 
@@ -46,33 +47,14 @@ class FeishuChannel:
         self._app_id = app_id
         self._app_secret = app_secret
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
-        self._messages: dict[str, str] = {}   # chat_id -> 当前流式消息 message_id
-        self._current_chat: str = ""          # 最近一次对话的 chat_id
-        self._current_text: str = ""          # 当前流式消息已累积文本
+        self._chat: str = ""          # 当前会话 chat_id
+        self._msg_id: str | None = None  # 进行中的流式消息（None = 新回合）
+        self._msg_text: str = ""      # 流式累积文本
         self._token: str | None = None
-        self._token_lock = asyncio.Lock()
         self._http = httpx.AsyncClient(timeout=10.0)
         self._ws_task: asyncio.Task | None = None
 
-    # ── token ─────────────────────────────────────────
-    async def _get_token(self) -> str:
-        async with self._token_lock:
-            if self._token:
-                return self._token
-            resp = await self._http.post(
-                f"{API_BASE}/auth/v3/tenant_access_token/internal",
-                json={"app_id": self._app_id, "app_secret": self._app_secret},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            self._token = data["tenant_access_token"]
-            return self._token
-
-    async def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {await self._get_token()}"}
-
-    # ── 发送 ──────────────────────────────────────────
-    async def _send(self, chat_id: str, text: str) -> str | None:
+    async def _send(self, chat_id: str, text: str) -> str:
         """发送一条独立消息；返回 message_id（流式起点用）。"""
         payload = {
             "receive_id": chat_id,
@@ -88,6 +70,18 @@ class FeishuChannel:
         resp.raise_for_status()
         return resp.json()["data"]["message_id"]
 
+    async def _headers(self) -> dict:
+        """取 tenant_access_token（缓存）。"""
+        if self._token is None:
+            resp = await self._http.post(
+                f"{API_BASE}/auth/v3/tenant_access_token/internal",
+                json={"app_id": self._app_id, "app_secret": self._app_secret},
+            )
+            resp.raise_for_status()
+            self._token = resp.json()["tenant_access_token"]
+        return {"Authorization": f"Bearer {self._token}"}
+
+    # ── 发送 ──────────────────────────────────────────
     async def _update(self, message_id: str, text: str) -> None:
         """更新已发送消息（打字机效果）。"""
         payload = {"msg_type": "text", "content": json.dumps({"text": text})}
@@ -104,29 +98,20 @@ class FeishuChannel:
         try:
             match n:
                 case Delta(delta=delta):
-                    await self._stream(delta)
+                    self._msg_text += delta
+                    if self._msg_id is None:
+                        self._msg_id = await self._send(self._chat, self._msg_text)
+                    else:
+                        await self._update(self._msg_id, self._msg_text)
                 case DeltaEnd():
-                    self._messages.clear()  # 回合结束，流式消息定格
-                    self._current_text = ""
+                    self._msg_id = None  # 回合定格，新回合重新创建
+                    self._msg_text = ""
                 case _:
                     text = self._render(n)
                     if text:
-                        await self._send(self._current_chat, text)
+                        await self._send(self._chat, text)
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
-
-    async def _stream(self, delta: str) -> None:
-        """流式增量：无进行中消息则创建，有则更新。"""
-        if not self._current_chat:
-            return
-        message_id = self._messages.get(self._current_chat)
-        if message_id is None:
-            message_id = await self._send(self._current_chat, delta)
-            self._messages[self._current_chat] = message_id
-            self._current_text = delta
-        else:
-            self._current_text += delta
-            await self._update(message_id, self._current_text)
 
     # ── call：交互 ────────────────────────────────────
     @staticmethod
@@ -148,10 +133,10 @@ class FeishuChannel:
             case Receive():
                 return await self._queue.get()
             case Inquiry(question=q, options=opts):
-                await self._send(self._current_chat, f"❓ {q}")
+                await self._send(self._chat, f"❓ {q}")
                 return (await self._queue.get()).content or ""
             case Approval(tool_name=n, arguments=a):
-                await self._send(self._current_chat, f"🔐 审批: {n}({a})? 回复 y/n")
+                await self._send(self._chat, f"🔐 审批: {n}({a})? 回复 y/n")
                 while True:
                     rsp = (await self._queue.get()).content or ""
                     if rsp.lower() in ("y", "yes"):
@@ -169,7 +154,7 @@ class FeishuChannel:
             event = data.event
             chat_id = event.message.chat_id
             content = json.loads(event.message.content).get("text", "")
-            self._current_chat = chat_id
+            self._chat = chat_id
             self._queue.put_nowait(UserInput(content=content.strip()))
 
         event_handler = (
@@ -184,8 +169,3 @@ class FeishuChannel:
         if self._ws_task:
             self._ws_task.cancel()
         await self._http.aclose()
-
-
-def truncate(value: Any, limit: int) -> str:
-    s = str(value)
-    return s if len(s) <= limit else s[:limit] + "..."
