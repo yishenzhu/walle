@@ -41,13 +41,14 @@ class CLIChannel:
         self._cancel_event = asyncio.Event()
 
     # ── 终止控制 ────────────────────────────────────────
-    async def run_interruptible(self, task: asyncio.Task) -> bool:
-        """运行 task 直到完成或被 Ctrl+C 打断；返回 True 表示被打断。
+    async def run_interruptible(self, coro) -> bool:
+        """运行协程直到完成或被 Ctrl+C 打断；返回 True 表示被打断。
 
         仅 run 期间拦截 SIGINT（取消 run）；结束后 remove 恢复默认 handler，
         空闲时 Ctrl+C 走默认 KeyboardInterrupt → receive 捕获 → 退出。
         """
         loop = asyncio.get_running_loop()
+        task = asyncio.create_task(coro)
         loop.add_signal_handler(signal.SIGINT, self._cancel_event.set)
         try:
             cancel_waiter = asyncio.create_task(self._cancel_event.wait())

@@ -48,9 +48,7 @@ async def main():
             user_input = await channel.call(Receive())
             if not user_input.content:
                 break            # 空输入（直接回车）/ EOF / 空闲 Ctrl+C → 退出（统一出口）
-            await cli.run_interruptible(
-                asyncio.create_task(runner.run(agent, user_input.content, streamed=True))
-            )
+            await cli.run_interruptible(runner.run(agent, user_input.content, streamed=True))
     finally:
         await runner.close()        # 关闭会话级资源（kernel + session）
         await registry.close()      # 关闭进程级资源（MCP 客户端）
