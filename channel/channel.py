@@ -41,29 +41,26 @@ class CLIChannel:
         self._cancel_event = asyncio.Event()
 
     # ── 终止控制 ────────────────────────────────────────
-    def _on_sigint(self, sig, frame) -> None:
-        """Ctrl+C：标记取消请求（仅当 run 执行中由 run_with_terminate 消费）。"""
-        self._cancel_event.set()
-
-    async def run_with_terminate(self, task: asyncio.Task) -> bool:
+    async def run_interruptible(self, task: asyncio.Task) -> bool:
         """运行 task 直到完成或被 Ctrl+C 打断；返回 True 表示被打断。
 
-        - run 完成后立即返回，主循环回到 receive()；
-        - 此时 Ctrl+C 由 Python 默认处理 → KeyboardInterrupt → 退出程序。
-        - task 取消为 fire-and-forget（不等清理），interrupted 时由调用方决定后续。
+        仅 run 期间拦截 SIGINT（取消 run）；结束后 remove 恢复默认 handler，
+        空闲时 Ctrl+C 走默认 KeyboardInterrupt → receive 捕获 → 退出。
         """
-        cancel_waiter = asyncio.create_task(self._cancel_event.wait())
-        done, pending = await asyncio.wait(
-            [task, cancel_waiter],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for t in pending:
-            t.cancel()  # 清理未触发的 waiter，防泄漏
-        self._cancel_event.clear()
-        interrupted = task not in done
-        if interrupted:
-            task.cancel()  # Ctrl+C：取消当前 run（fire-and-forget）
-        return interrupted
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, self._cancel_event.set)
+        try:
+            cancel_waiter = asyncio.create_task(self._cancel_event.wait())
+            done, pending = await asyncio.wait(
+                [task, cancel_waiter],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            return task not in done
+        finally:
+            loop.remove_signal_handler(signal.SIGINT)
+            self._cancel_event.clear()
 
     # ── 通知：广播渲染（无返回）──
     async def notify(self, n: NotificationUnion) -> None:
@@ -92,11 +89,16 @@ class CLIChannel:
                 return await self.ask_approval(n, a)
 
     async def receive(self) -> UserInput:
+        """读用户输入（去首尾空白）。
+
+        - 直接回车 / 全空格 → content=""（main continue 重新等待）
+        - Ctrl+C / EOF → content=None（main break 退出）
+        """
         try:
             content = await asyncio.to_thread(input, "You> ")
         except (EOFError, KeyboardInterrupt):
-            content = ""
-        return UserInput(content=content)
+            return UserInput()  # Ctrl+C / EOF：退出（content=None）
+        return UserInput(content=content.strip())
 
     async def inquiry(self, question: str, options: list[str] | None = None) -> str:
         print(f"  [提问] {question}")
@@ -116,13 +118,6 @@ class CLIChannel:
                 reason = await asyncio.to_thread(input, "  拒绝原因(可选): ")
                 return ApprovalRsp(approved=False, reason=reason.strip() or None)
             print("  请输入 y/n")
-
-    # ── 生命周期 ────────────────────────────────────────
-    async def start(self) -> None:
-        # 仅主线程可装信号 handler；事件循环在主线程则安全
-        signal.signal(signal.SIGINT, self._on_sigint)
-
-    async def close(self) -> None: ...
 
 
 def truncate(value: Any, limit: int) -> str:

@@ -1,5 +1,4 @@
 import asyncio
-import readline
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor, ChannelApprover
@@ -36,7 +35,6 @@ async def main():
 
     # 交互消费者 + 主渲染（CLI），附加审计观察者（LogObserver）
     cli = CLIChannel()
-    await cli.start()   # 安装 Ctrl+C 信号 handler
     channel = FanoutChannel(target=cli, observers=[LogObserver()])
     runner = Runner(
         channel=channel,
@@ -44,13 +42,15 @@ async def main():
         tool_executor=ToolExecutor(conf.tool, channel=channel, approver=ChannelApprover(channel)),
     )
 
-    # 终止模型：run 为后台 task；Ctrl+C 终止当前 run，空闲时 Ctrl+C 退出
+    # 终止模型：run 期间装 SIGINT handler（Ctrl+C 取消 run）；空闲时默认（Ctrl+C 退出）
     try:
         while True:
             user_input = await channel.call(Receive())
-            if not user_input.content.strip():
+            if user_input.content is None:
                 break            # EOF / 空闲 Ctrl+C → 退出（统一出口）
-            await cli.run_with_terminate(
+            if user_input.content == "":
+                continue          # 直接回车 → 重新等待输入
+            await cli.run_interruptible(
                 asyncio.create_task(runner.run(agent, user_input.content, streamed=True))
             )
     finally:

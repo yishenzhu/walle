@@ -105,7 +105,7 @@ class FakeChannel:
     async def call(self, service):
         match service:
             case Receive():
-                return UserInput(content="")
+                return UserInput()
             case Inquiry():
                 return self._inquiry_response
             case Approval():
