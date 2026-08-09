@@ -69,7 +69,7 @@
              4. 若有 Handoff → 切换 Agent，继续循环
              5. 无 tool_calls → 返回最终结果
          → Channel.notify(Delta) 流式输出     # 通知：广播，无返回
-执行中 Ctrl+C → 终止当前 run，回到输入提示（统一 Ctrl+C 出口）
+执行中 Ctrl+C → 取消当前 run，回到输入提示；空输入（直接回车）/ 空闲 Ctrl+C → 退出（统一出口）
 ```
 
 ### 分层职责
@@ -120,7 +120,7 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh --test          # 运行测试
 ```
 
-启动后在终端输入消息即可对话，输入 `:q` 退出。
+启动后在终端输入消息即可对话，直接回车或按 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
