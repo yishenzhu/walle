@@ -73,10 +73,10 @@ class ToolConfig(BaseModel):
 
 
 class FeishuConfig(BaseModel):
-    """飞书推送配置（自定义机器人 webhook）。webhook 为空则不启用。"""
+    """飞书应用机器人配置（长连接 + 真流式）。app_id 为空则不启用。"""
 
-    webhook: str | None = None
-    secret: str | None = None  # 可选：签名校验密钥
+    app_id: str | None = None
+    app_secret: str | None = None
 
 
 class Config(BaseModel):

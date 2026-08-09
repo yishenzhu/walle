@@ -2,8 +2,8 @@ import asyncio
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor, ChannelApprover
-from .channel import CLIChannel, FanoutChannel, LogObserver
-from .channel.feishu import FeishuObserver
+from .channel import CLIChannel, FanoutChannel, LogObserver, ConsoleObserver
+from .channel.feishu import FeishuChannel
 from .schemas import Receive
 from .tools import ToolRegistry
 from .session import (
@@ -34,12 +34,17 @@ async def main():
         compressor=SummaryCompressor(),
     )
 
-    # 交互消费者 + 主渲染（CLI），附加审计观察者（LogObserver）与飞书推送
+    # 交互主通道：配了飞书应用机器人则走飞书（长连接收发），否则 CLI
     cli = CLIChannel()
-    observers: list = [LogObserver()]
-    if conf.feishu.webhook:
-        observers.append(FeishuObserver(conf.feishu.webhook, conf.feishu.secret))
-    channel = FanoutChannel(target=cli, observers=observers)
+    if conf.feishu.app_id:
+        primary = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
+        await primary.start()
+        # 通知多路消费：飞书主渲染 + CLI 只读观察（本地看进度）
+        observers: list = [LogObserver(), ConsoleObserver()]
+    else:
+        primary = cli
+        observers = [LogObserver()]
+    channel = FanoutChannel(target=primary, observers=observers)
     runner = Runner(
         channel=channel,
         session=session,

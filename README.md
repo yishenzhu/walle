@@ -19,7 +19,7 @@
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
 | 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| � **飞书推送** | 实时把运行进度推送到飞书群（自定义机器人 webhook），Delta 按回合合并 |
+| 📱 **飞书集成** | 应用机器人：长连接接收消息 + 流式更新回复（打字机效果），CLI 可降级为观察者 |
 | �🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
 ---
@@ -162,19 +162,20 @@ tool:
     default: ask                      # 默认需人工审批
 
 feishu:
-  webhook: ""          # 自定义机器人 webhook（飞书群 → 设置 → 群机器人 → 添加），留空则不推送
-  secret: ""           # 可选：签名校验密钥（飞书机器人安全设置 → 签名校验）
+  app_id: ""          # 应用机器人 App ID（开发者后台 → 凭证与基础信息），留空则不启用
+  app_secret: ""       # 应用机器人 App Secret
 ```
 
-#### 飞书推送
+#### 飞书集成
 
-在飞书群中添加「自定义机器人」获得 webhook 地址，填入 `conf.yaml` 的 `feishu.webhook` 即可。Agent 运行时会把进度实时推送到群内：
+创建企业自建应用并开启机器人能力，配置 `im:message` 系列权限，在开发者后台将订阅方式设为「使用长连接接收事件」。填入 `conf.yaml` 的 `feishu.app_id` / `feishu.app_secret` 后，飞书即成为主交互通道：
 
-- 流式回复（Delta）按回合合并发送，避免刷屏
+- 用户在飞书发消息 → agent 处理 → 回复到飞书
+- 流式回复通过「创建消息 → 更新消息」实现打字机效果
 - 工具调用 / 结果 / 错误即时推送
-- 可选 `secret` 签名校验
+- CLI 降级为本地只读观察者（`ConsoleObserver`），方便调试
 
-> 自定义机器人仅支持推送；后续可演进为应用机器人实现收发交互（模式 B）。
+未配置 `feishu.app_id` 时走纯 CLI 交互。
 
 #### 审批规则
 
