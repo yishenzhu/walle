@@ -47,7 +47,7 @@ class FeishuChannel:
         self._app_id = app_id
         self._app_secret = app_secret
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
-        self._chat: str = ""          # 当前会话 chat_id
+        self._chat_id: str = ""          # 当前会话 chat_id
         self._msg_id: str | None = None  # 进行中的流式消息（None = 新回合）
         self._msg_text: str = ""      # 流式累积文本
         self._token: str | None = None
@@ -100,7 +100,7 @@ class FeishuChannel:
                 case Delta(delta=delta):
                     self._msg_text += delta
                     if self._msg_id is None:
-                        self._msg_id = await self._send(self._chat, self._msg_text)
+                        self._msg_id = await self._send(self._chat_id, self._msg_text)
                     else:
                         await self._update(self._msg_id, self._msg_text)
                 case DeltaEnd():
@@ -109,14 +109,14 @@ class FeishuChannel:
                 case _:
                     text = self._render(n)
                     if text:
-                        await self._send(self._chat, text)
+                        await self._send(self._chat_id, text)
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
 
     # ── call：交互 ────────────────────────────────────
     @staticmethod
     def _render(n: NotificationUnion) -> str:
-        """工具事件 → 飞书文本（Delta 由 _stream 处理，不走这里）。"""
+        """工具事件 → 飞书文本（Delta 由 notify 处理，不走这里）。"""
         match n:
             case ToolStart(tool_name=name, arguments=args):
                 return f"🔧 调用工具 **{name}**\n```\n{args}\n```"
@@ -133,10 +133,10 @@ class FeishuChannel:
             case Receive():
                 return await self._queue.get()
             case Inquiry(question=q, options=opts):
-                await self._send(self._chat, f"❓ {q}")
+                await self._send(self._chat_id, f"❓ {q}")
                 return (await self._queue.get()).content or ""
             case Approval(tool_name=n, arguments=a):
-                await self._send(self._chat, f"🔐 审批: {n}({a})? 回复 y/n")
+                await self._send(self._chat_id, f"🔐 审批: {n}({a})? 回复 y/n")
                 while True:
                     rsp = (await self._queue.get()).content or ""
                     if rsp.lower() in ("y", "yes"):
@@ -154,7 +154,7 @@ class FeishuChannel:
             event = data.event
             chat_id = event.message.chat_id
             content = json.loads(event.message.content).get("text", "")
-            self._chat = chat_id
+            self._chat_id = chat_id
             self._queue.put_nowait(UserInput(content=content.strip()))
 
         event_handler = (

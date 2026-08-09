@@ -18,7 +18,7 @@ def _resp(json_body: dict) -> httpx.Response:
 @pytest.fixture
 def ch():
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._chat = "oc_test"
+    c._chat_id = "oc_test"
     c._http.post = AsyncMock()
     c._http.put = AsyncMock()
 
@@ -81,6 +81,6 @@ async def test_call_receive_from_queue(ch):
 async def test_notify_failure_no_raise(ch):
     """推送失败仅告警，不抛异常（不拖垮主链路）。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._chat = "oc_test"
+    c._chat_id = "oc_test"
     c._http.post = AsyncMock(side_effect=Exception("network down"))
     await c.notify(Delta(delta="x"))  # 不应抛出
