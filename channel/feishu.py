@@ -194,7 +194,7 @@ class FeishuChannel:
             )
             .build()
         )
-        await self._channel.send(self._chat_id, {"card": card})
+        await self._channel.send(self._chat_id, {"card": card.data})  # SDK 期望 dict，非 CardPayload 对象
         fut: asyncio.Future[ApprovalRsp] = asyncio.get_running_loop().create_future()
         self._pending_approvals[token] = fut
         try:
