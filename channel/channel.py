@@ -91,7 +91,7 @@ class CLIChannel:
     async def receive(self) -> UserInput:
         """读用户输入（去首尾空白）。
 
-        - 直接回车 / 全空格 → content=""（main continue 重新等待）
+        - 直接回车 / 全空格 → content=""（main break 退出）
         - Ctrl+C / EOF → content=None（main break 退出）
         """
         try:

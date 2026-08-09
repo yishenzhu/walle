@@ -46,10 +46,8 @@ async def main():
     try:
         while True:
             user_input = await channel.call(Receive())
-            if user_input.content is None:
-                break            # EOF / 空闲 Ctrl+C → 退出（统一出口）
-            if user_input.content == "":
-                continue          # 直接回车 → 重新等待输入
+            if not user_input.content:
+                break            # 空输入（直接回车）/ EOF / 空闲 Ctrl+C → 退出（统一出口）
             await cli.run_interruptible(
                 asyncio.create_task(runner.run(agent, user_input.content, streamed=True))
             )
