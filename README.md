@@ -116,12 +116,16 @@ cp .env.example .env             # LLM API Key
 ```bash
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅 agent
+./scripts/run.sh --feishu        # 飞书交互 + 可观测性
+./scripts/run.sh --cli           # CLI 交互（默认）
 ./scripts/run.sh --obs-only      # 仅可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试
 ```
 
 启动后在终端输入消息即可对话，直接回车或按 Ctrl+C 退出。
+
+> `--feishu` 模式需先在 `conf.yaml` 配置 `feishu.app_id` / `feishu.app_secret`；未配置会报错提示。
 
 ### 📊 可观测性面板
 
@@ -171,14 +175,16 @@ feishu:
 
 #### 飞书集成
 
-创建企业自建应用并开启机器人能力，配置 `im:message` 系列权限，在开发者后台将订阅方式设为「使用长连接接收事件」。填入 `conf.yaml` 的 `feishu.app_id` / `feishu.app_secret` 后，飞书即成为主交互通道：
+创建企业自建应用并开启机器人能力，配置 `im:message` 系列权限，在开发者后台将订阅方式设为「使用长连接接收事件」。填入 `conf.yaml` 的 `feishu.app_id` / `feishu.app_secret` 后，以飞书模式启动：
+
+```bash
+./scripts/run.sh --feishu
+```
 
 - 用户在飞书发消息 → agent 处理 → 回复到飞书
 - 流式回复通过「创建消息 → 更新消息」实现打字机效果
 - 工具调用 / 结果 / 错误即时推送
 - CLI 降级为本地只读观察者（`ConsoleObserver`），方便调试
-
-未配置 `feishu.app_id` 时走纯 CLI 交互。
 
 #### 审批规则
 

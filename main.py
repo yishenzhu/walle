@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
@@ -13,7 +14,7 @@ from .session import (
 )
 
 
-async def main():
+async def main(channel_mode: str = "cli"):
 
     conf = Config.load()
     setup_logger(conf.log)
@@ -33,9 +34,11 @@ async def main():
         compressor=SummaryCompressor(),
     )
 
-    # 交互主通道：配了飞书应用机器人则走飞书（长连接收发），否则 CLI
+    # 交互主通道：--channel feishu 用飞书（长连接收发），否则 CLI
     cli = CLIChannel()
-    if conf.feishu.app_id:
+    if channel_mode == "feishu":
+        if not conf.feishu.app_id:
+            raise ValueError("feishu 模式需要 conf.yaml 配置 feishu.app_id / app_secret")
         primary = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
         await primary.start()
         # 通知多路消费：飞书主渲染 + CLI 只读观察（本地看进度）
@@ -62,4 +65,13 @@ async def main():
         await registry.close()      # 关闭进程级资源（MCP 客户端）
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="walle agent")
+    parser.add_argument(
+        "--channel",
+        choices=["cli", "feishu"],
+        default="cli",
+        help="交互通道：cli（默认）或 feishu",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.channel))

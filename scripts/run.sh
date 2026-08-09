@@ -40,11 +40,14 @@ walle 启动脚本
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
   --test         运行测试，不启动 agent
+  --feishu       以飞书应用机器人为交互通道（需 conf.yaml 配置）
+  --cli          以 CLI 为交互通道（默认）
   --help         显示此帮助信息
 
 示例:
-  ./scripts/run.sh              # 启动 agent + 可观测性（默认）
+  ./scripts/run.sh              # 启动 agent + 可观测性（CLI，默认）
   ./scripts/run.sh --no-obs     # 仅启动 agent
+  ./scripts/run.sh --feishu     # 飞书交互 + 可观测性
   ./scripts/run.sh --obs-only   # 仅启动可观测性
   ./scripts/run.sh --stop-obs   # 停止可观测性
   ./scripts/run.sh --test       # 运行测试
@@ -104,10 +107,11 @@ start_agent() {
     log_step "启动 walle agent ..."
     cd "$PROJ_ROOT"
     log_info "使用 Python: $PY"
+    log_info "交互通道: $CHANNEL_MODE"
     # 项目根目录有 __init__.py 是一个包 (walle)，
     # 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
     env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.main
+        "$PY" -m walle.main --channel "$CHANNEL_MODE"
 }
 
 # ── 运行测试 ──────────────────────────────────────────
@@ -123,6 +127,7 @@ main() {
     local obs_only=false
     local stop_obs_flag=false
     local test_only=false
+    CHANNEL_MODE="cli"   # 默认 CLI
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -131,6 +136,8 @@ main() {
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
             --test)        test_only=true ;;
+            --feishu)      CHANNEL_MODE="feishu" ;;
+            --cli)         CHANNEL_MODE="cli" ;;
             --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
