@@ -1,7 +1,7 @@
 """通知观察者：消费 notify 流做渲染 / 审计，不参与交互。"""
 import logging
 
-from ..schemas import Delta, DeltaEnd, NotificationUnion
+from ..schemas import NotificationUnion
 from .render import render_notification
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,5 @@ class ConsoleObserver:
     """纯观察者：把 notify 渲染到终端（不参与交互，供无头模式本地调试）。"""
 
     async def __call__(self, n: NotificationUnion) -> None:
-        text = render_notification(n)
-        if text:
-            print(text, end="" if isinstance(n, Delta) else "\n", flush=True)
-        elif isinstance(n, DeltaEnd):
-            print()
+        text, end = render_notification(n)
+        print(text, end=end, flush=True)

@@ -61,11 +61,8 @@ class CLIChannel:
 
     # ── 通知：广播渲染（无返回）──
     async def notify(self, n: NotificationUnion) -> None:
-        text = render_notification(n)
-        if text:
-            print(text, end="" if isinstance(n, Delta) else "\n", flush=True)
-        elif isinstance(n, DeltaEnd):
-            print()
+        text, end = render_notification(n)
+        print(text, end=end, flush=True)
 
     # ── 服务：终端交互（有返回）──
     async def call(self, s: ServiceUnion) -> Any:
