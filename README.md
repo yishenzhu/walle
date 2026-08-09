@@ -183,7 +183,7 @@ feishu:
 - 用户在飞书发消息 → agent 处理 → 回复到飞书
 - 流式回复通过「创建消息 → 更新消息」实现打字机效果
 - 工具调用 / 结果 / 错误即时推送
-- CLI 降级为本地只读观察者（`ConsoleObserver`），方便调试
+- CLI 降级为本地只读观察者（复用 `cli.notify` 渲染），方便调试
 
 #### 审批规则
 
@@ -316,7 +316,7 @@ walle/
 │   ├── channel.py             #   Channel Protocol (notify/call) + CLI 实现
 │   ├── fanout.py              #   FanoutChannel 通知侧多观察者
 │   ├── feishu.py              #   飞书应用机器人（长连接收发 + 流式）
-│   └── observers.py           #   LogObserver / ConsoleObserver
+│   └── observers.py           #   LogObserver
 ├── tools/                     # 工具系统
 │   ├── tool.py                #   Tool 模型 + ContextVar
 │   ├── registry.py            #   工具注册表

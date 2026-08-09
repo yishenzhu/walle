@@ -3,7 +3,7 @@ import asyncio
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor, ChannelApprover
-from .channel import CLIChannel, FanoutChannel, LogObserver, ConsoleObserver, FeishuChannel
+from .channel import CLIChannel, FanoutChannel, LogObserver, FeishuChannel
 from .schemas import Receive
 from .tools import ToolRegistry
 from .session import (
@@ -42,7 +42,7 @@ async def main(channel: str = "cli"):
         target = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
         await target.start()
         # 通知多路消费：飞书主渲染 + CLI 只读观察（本地看进度）
-        observers: list = [LogObserver(), ConsoleObserver()]
+        observers: list = [LogObserver(), cli.notify]
     else:
         target = cli
         observers = [LogObserver()]
