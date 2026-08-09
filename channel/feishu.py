@@ -8,9 +8,11 @@
 import asyncio
 import json
 import logging
+import threading
 from typing import Any
 
 import httpx
+import lark_oapi as lark  # 模块级 import：主线程无 running loop 时绑定模块级 loop，供独立线程跑 ws.start()
 
 from ..schemas import (
     ApprovalRsp,
@@ -52,7 +54,8 @@ class FeishuChannel:
         self._msg_text: str = ""      # 流式累积文本
         self._token: str | None = None
         self._http = httpx.AsyncClient(timeout=10.0)
-        self._ws_task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ws_thread: threading.Thread | None = None
 
     async def _send(self, chat_id: str, text: str) -> str:
         """发送一条独立消息；返回 message_id（流式起点用）。"""
@@ -152,21 +155,23 @@ class FeishuChannel:
 
     # ── 生命周期 ──────────────────────────────────────
     async def start(self) -> None:
-        """启动长连接事件订阅（在 asyncio 中驱动 lark ws 的 async 方法）。
+        """启动长连接事件订阅（独立线程跑官方 start() + 跨线程安全通信）。
 
-        lark_oapi 的 ws.Client.start() 是同步阻塞式（模块级 loop + run_until_complete），
-        与 asyncio 冲突（"This event loop is already running"）。
-        这里直接 await 其 async 内部方法（_connect / _ping_loop），
-        复用当前运行中的事件循环；事件回调也在主循环执行，无跨线程问题。
+        lark 的 ws.Client.start() 是同步阻塞式（模块级 loop + run_until_complete），
+        必须在独立线程运行，保留其自动重连/异常处理等完整生命周期。
+        事件回调在独立线程执行，用 call_soon_threadsafe 调度回主循环的队列。
         """
-        import lark_oapi as lark
+        self._loop = asyncio.get_running_loop()
 
         def on_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             event = data.event
             chat_id = event.message.chat_id
             content = json.loads(event.message.content).get("text", "")
+            # 跨线程：把消息调度到主循环的 asyncio.Queue
+            self._loop.call_soon_threadsafe(
+                self._queue.put_nowait, UserInput(content=content.strip())
+            )
             self._chat_id = chat_id
-            self._queue.put_nowait(UserInput(content=content.strip()))
 
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
@@ -174,12 +179,13 @@ class FeishuChannel:
             .build()
         )
         ws = lark.ws.Client(self._app_id, self._app_secret, event_handler=event_handler)
-        await ws._connect()  # 连接 + 内部 create_task(_receive_message_loop) 到当前循环
-        self._ws_task = asyncio.create_task(ws._ping_loop())  # 保活 ping
+        self._ws = ws
+        # daemon 线程：进程退出不阻塞（SDK 无公开 stop，start() 会阻塞在 _select）
+        self._ws_thread = threading.Thread(target=ws.start, daemon=True)
+        self._ws_thread.start()
 
     async def close(self) -> None:
-        if self._ws_task:
-            self._ws_task.cancel()
+        # 不 join ws 线程：SDK 无公开 stop，join 会阻塞；daemon 线程随进程退出
         await self._http.aclose()
 
 
