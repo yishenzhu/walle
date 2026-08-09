@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from walle.channel.feishu import FeishuChannel
+from walle.channel import FeishuChannel
 from walle.schemas import Delta, DeltaEnd, Error, ToolStart, Receive, UserInput
 
 

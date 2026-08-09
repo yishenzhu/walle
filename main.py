@@ -2,8 +2,7 @@ import asyncio
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import Agent, Runner, ToolExecutor, ChannelApprover
-from .channel import CLIChannel, FanoutChannel, LogObserver, ConsoleObserver
-from .channel.feishu import FeishuChannel
+from .channel import CLIChannel, FanoutChannel, LogObserver, ConsoleObserver, FeishuChannel
 from .schemas import Receive
 from .tools import ToolRegistry
 from .session import (
