@@ -72,13 +72,13 @@ class CLIChannel:
             case DeltaEnd():
                 print()
             case ToolStart(tool_name=name, arguments=args):
-                print(f"  [调用工具 {name}({args})]", flush=True)
+                print(f"  {CYAN}🔧 {name}{RESET} {truncate(args, 200)}", flush=True)
             case ToolResult(tool_call_id=tc_id, result=result, error=None):
-                print(f"  [工具结果 {tc_id}] {truncate(result, 512)}", flush=True)
+                print(f"  {GREEN}✅ {tc_id}{RESET} {truncate(result, 512)}", flush=True)
             case ToolResult(tool_call_id=tc_id, error=err):
-                print(f"  [工具错误 {tc_id}] {err}", flush=True)
+                print(f"  {RED}❌ {tc_id}{RESET} {err}", flush=True)
             case Error(message=msg):
-                print(f"  [错误] {msg}", flush=True)
+                print(f"  {RED}⚠️ {msg}{RESET}", flush=True)
 
     # ── 服务：终端交互（有返回）──
     async def call(self, s: ServiceUnion) -> Any:
@@ -120,6 +120,13 @@ class CLIChannel:
                 reason = await asyncio.to_thread(input, "  拒绝原因(可选): ")
                 return ApprovalRsp(approved=False, reason=reason.strip() or None)
             print("  请输入 y/n")
+
+
+# ── ANSI 颜色（CLI 渲染） ─────────────────────────────
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
 
 
 def truncate(value: Any, limit: int) -> str:

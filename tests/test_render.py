@@ -17,10 +17,10 @@ async def test_cli_stream_render(capsys):
 
 @pytest.mark.asyncio
 async def test_cli_tool_event_render(capsys):
-    """工具事件独立成行。"""
+    """工具事件独立成行，带 icon 与颜色。"""
     cli = CLIChannel()
     await cli.notify(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
     await cli.notify(Error(message="oops"))
     out = capsys.readouterr().out
-    assert "[调用工具 bash({'cmd': 'ls'})]\n" in out
-    assert "[错误] oops\n" in out
+    assert "🔧 bash" in out
+    assert "⚠️ oops" in out
