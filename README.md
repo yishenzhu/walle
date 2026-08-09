@@ -39,8 +39,8 @@
               ▼                           ▼
      ┌──────────────┐           ┌──────────────┐
      │   Channel    │           │    Runner    │
-     │  (交互抽象)   │           │  (Agent 循环) │
-     │  CLIChannel  │           │  流式/批量执行 │
+     │  (notify/call)│           │  (Agent 循环) │
+     │  CLI/Fanout  │           │  流式/批量执行 │
      └──────────────┘           └──────┬───────┘
                                        │
                     ┌──────────────────┼──────────────────┐
@@ -61,18 +61,19 @@
 ### 核心流程
 
 ```
-用户输入 → Channel.receive()
+用户输入 → Channel.call(Receive())     # 服务：读输入，有返回
          → Session.add(UserMessage)
          → Runner.run() 循环:
              1. 构建消息列表 (历史 + System Instruction)
              2. 调用 LLM (流式/批量)
              3. 若有 tool_calls → ToolExecutor 并发执行
-                ├─ 审批检查 (ApprovalPolicy)
+                ├─ 审批检查 (ApprovalPolicy → Approver)
                 ├─ 执行工具 (内置 / MCP / 动态)
                 └─ 返回结果到 Session
              4. 若有 Handoff → 切换 Agent，继续循环
              5. 无 tool_calls → 返回最终结果
-         → Channel.send(TextDelta) 流式输出
+         → Channel.notify(Delta) 流式输出     # 通知：广播，无返回
+执行中 Ctrl+C → 终止当前 run，回到输入提示（统一 Ctrl+C 出口）
 ```
 
 ### 分层职责
@@ -81,10 +82,10 @@
 |---|---|---|
 | 入口 | `main.py` | 依赖注入组装，启动 REPL 循环 |
 | 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
-| 交互通道 | `channel/` | 用户 I/O 抽象，CLI 实现 |
+| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 实现、Fanout 多观察者、审批/提问服务 |
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
 | 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
-| 数据模型 | `schemas/` | 消息、事件、Token 用量的 Pydantic 模型 |
+| 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
 | 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider、Jupyter kernel |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
@@ -198,7 +199,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 channel（用户交互通道）
+    ctx = tool_context.get()   # 访问 ToolContext（kernel / interact）
     return f"result: {query}"
 ```
 
@@ -292,7 +293,9 @@ walle/
 │   ├── executor.py            #   工具执行器（审批·并发·超时）
 │   └── approval.py            #   审批规则引擎
 ├── channel/                   # 交互通道
-│   └── channel.py             #   Channel Protocol + CLI 实现
+│   ├── channel.py             #   Channel Protocol (notify/call) + CLI 实现
+│   ├── fanout.py              #   FanoutChannel 通知侧多观察者
+│   └── observers.py           #   LogObserver / ConsoleObserver
 ├── tools/                     # 工具系统
 │   ├── tool.py                #   Tool 模型 + ContextVar
 │   ├── registry.py            #   工具注册表
@@ -312,7 +315,8 @@ walle/
 │   └── policies.py            #   压缩触发策略
 ├── schemas/                   # 数据模型
 │   ├── message.py             #   消息类型
-│   ├── channel.py             #   通道事件
+│   ├── events.py              #   判别联合事件（通知/服务）
+│   ├── channel.py             #   服务载荷（UserInput / ApprovalResponse）
 │   └── usage.py               #   Token 用量
 ├── infra/                     # 基础设施
 │   ├── logger.py              #   日志（含 Trace 注入）
