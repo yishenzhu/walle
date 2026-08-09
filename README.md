@@ -20,7 +20,7 @@
 | 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 📱 **飞书集成** | 应用机器人：长连接接收消息 + 流式更新回复（打字机效果），CLI 可降级为观察者 |
-| �🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
+| 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
 ---
 
@@ -37,7 +37,7 @@
      ┌──────────────┐           ┌──────────────┐
      │   Channel    │           │    Runner    │
      │  (notify/call)│           │  (Agent 循环) │
-     │  CLI/Fanout  │           │  流式/批量执行 │
+     │ CLI/Fanout/Feishu│        │  流式/批量执行 │
      └──────────────┘           └──────┬───────┘
                                        │
                     ┌──────────────────┼──────────────────┐
@@ -79,7 +79,7 @@
 |---|---|---|
 | 入口 | `main.py` | 依赖注入组装，启动 REPL 循环 |
 | 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
-| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 实现、Fanout 多观察者、审批/提问服务 |
+| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 实现、Fanout 多观察者、飞书应用机器人（长连接收发）、审批/提问服务 |
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
 | 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
@@ -147,17 +147,20 @@ log:
 
 telemetry:
   enabled: true
+  service_name: "agent"
   otlp:
     endpoint: "http://localhost:4317"
     insecure: true
+  console_export: false
 
 tool:
   timeout: 30                       # 工具执行超时（秒），null 禁用
   approval:
     rules:
+      - [allow, mcp_obsidian*]        # MCP 工具自动放行
+      - [ask, jupyter]                # 代码执行默认需人工确认
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
-      - [ask, jupyter]                # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
     default: ask                      # 默认需人工审批
 
@@ -307,6 +310,7 @@ walle/
 ├── channel/                   # 交互通道
 │   ├── channel.py             #   Channel Protocol (notify/call) + CLI 实现
 │   ├── fanout.py              #   FanoutChannel 通知侧多观察者
+│   ├── feishu.py              #   飞书应用机器人（长连接收发 + 流式）
 │   └── observers.py           #   LogObserver / ConsoleObserver
 ├── tools/                     # 工具系统
 │   ├── tool.py                #   Tool 模型 + ContextVar
