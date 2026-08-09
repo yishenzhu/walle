@@ -152,7 +152,13 @@ class FeishuChannel:
 
     # ── 生命周期 ──────────────────────────────────────
     async def start(self) -> None:
-        """启动长连接事件订阅（后台线程 + asyncio 队列）。"""
+        """启动长连接事件订阅（在 asyncio 中驱动 lark ws 的 async 方法）。
+
+        lark_oapi 的 ws.Client.start() 是同步阻塞式（模块级 loop + run_until_complete），
+        与 asyncio 冲突（"This event loop is already running"）。
+        这里直接 await 其 async 内部方法（_connect / _ping_loop），
+        复用当前运行中的事件循环；事件回调也在主循环执行，无跨线程问题。
+        """
         import lark_oapi as lark
 
         def on_message(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
@@ -168,7 +174,8 @@ class FeishuChannel:
             .build()
         )
         ws = lark.ws.Client(self._app_id, self._app_secret, event_handler=event_handler)
-        self._ws_task = asyncio.create_task(asyncio.to_thread(ws.start))
+        await ws._connect()  # 连接 + 内部 create_task(_receive_message_loop) 到当前循环
+        self._ws_task = asyncio.create_task(ws._ping_loop())  # 保活 ping
 
     async def close(self) -> None:
         if self._ws_task:
