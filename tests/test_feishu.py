@@ -147,8 +147,9 @@ async def _approval_channel(ch) -> FeishuChannel:
 
 
 async def _click(c: FeishuChannel, decision: str) -> None:
-    """等待审批卡片发出，模拟点击按钮。"""
+    """等待审批卡片发出，模拟点击按钮（用实际 token）。"""
     await asyncio.sleep(0.01)
+    assert c._pending_approvals
     token = next(iter(c._pending_approvals))
     c._on_card_action(FakeCardAction({"approval": token, "decision": decision}))
 

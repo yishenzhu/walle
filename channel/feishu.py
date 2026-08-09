@@ -49,7 +49,7 @@ class FeishuChannel:
         self._loop: asyncio.AbstractEventLoop | None = None
         # 流式：官方 stream() 的 producer 通过队列消费 Delta（None = 结束信号）
         self._stream_queue: asyncio.Queue[str | None] | None = None
-        # 审批：token → 等待中的 Future
+        # 审批：token → 等待中的 Future（工具并发执行，需按 token 区分）
         self._pending_approvals: dict[str, asyncio.Future[ApprovalRsp]] = {}
 
     # ── 生命周期 ──────────────────────────────────────
@@ -57,7 +57,7 @@ class FeishuChannel:
         """注册事件监听并启动长连接（官方 SDK 后台运行，就绪后返回）。
 
         事件 handler 在 SDK 后台 loop 执行；跨线程用 call_soon_threadsafe
-        把消息/审批结果调度回主 loop 的队列与 Future。
+        把消息/审批结果调度回主 loop 的队列。
         """
         self._loop = asyncio.get_running_loop()
         self._channel.on(Events.MESSAGE, self._on_message)
@@ -110,7 +110,7 @@ class FeishuChannel:
         """流式增量：入队给官方 stream() 的 producer（首个 Delta 启动）。"""
         if self._stream_queue is None:
             self._stream_queue = asyncio.Queue()
-            asyncio.create_task(self._run_stream())
+            asyncio.create_task(self._stream())
         await self._stream_queue.put(delta)
 
     async def _stream_end(self) -> None:
@@ -119,7 +119,7 @@ class FeishuChannel:
             await self._stream_queue.put(None)
             self._stream_queue = None
 
-    async def _run_stream(self) -> None:
+    async def _stream(self) -> None:
         """驱动官方 stream()：producer 从队列消费 Delta，None 结束信号收尾。
 
         官方内部处理：CardKit 预分配、发送引用消息、节流更新（100ms/50字符）、
@@ -168,7 +168,10 @@ class FeishuChannel:
             # 其他服务不处理
 
     async def _approval_card(self, tool_name: str, arguments: dict) -> ApprovalRsp:
-        """审批：卡片 + ✅/❌ 按钮，等待点击回调。"""
+        """审批：卡片 + ✅/❌ 按钮，等待点击回调。
+
+        工具可并发执行，每张审批卡带唯一 token，回调按 token 路由到对应 Future。
+        """
         token = uuid.uuid4().hex
         card = (
             new_card()
