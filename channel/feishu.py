@@ -11,8 +11,7 @@ import time
 
 import httpx
 
-from ..schemas import Delta, DeltaEnd, NotificationUnion
-from .render import render_notification
+from ..schemas import Delta, DeltaEnd, Error, NotificationUnion, ToolResult, ToolStart
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +66,20 @@ class FeishuObserver:
                 if text:
                     await self._send(text)
             case _:
-                text = render_notification(n)
+                text = self._render(n)
                 if text:
                     await self._send(text)
+
+    @staticmethod
+    def _render(n: NotificationUnion) -> str:
+        """飞书渲染：工具事件文本（Delta 由缓冲策略处理，不走这里）。"""
+        match n:
+            case ToolStart(tool_name=name, arguments=args):
+                return f"[调用工具 {name}({args})]"
+            case ToolResult(tool_call_id=tc_id, result=result, error=None):
+                return f"[工具结果 {tc_id}] {str(result)[:512]}"
+            case ToolResult(tool_call_id=tc_id, error=err):
+                return f"[工具错误 {tc_id}] {err}"
+            case Error(message=msg):
+                return f"[错误] {msg}"
+        return ""
