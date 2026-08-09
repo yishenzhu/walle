@@ -41,7 +41,6 @@ class FakeCardAction:
 def ch():
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
-    c._loop = MagicMock()  # 主 loop（测试中用 MagicMock 模拟 call_soon_threadsafe）
     # mock 官方 SDK channel 的 async 方法
     c._channel = AsyncMock()
     c._channel.send.return_value = MagicMock(success=True)
@@ -109,7 +108,7 @@ async def test_error_sent(ch):
     assert "⚠️" in ch._channel.send.await_args.args[1]["markdown"]
 
 
-async def test_notify_failure_no_raise(ch):
+async def test_notify_failure_no_raise():
     """推送失败仅告警，不抛异常（不拖垮主链路）。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
@@ -130,57 +129,50 @@ async def test_call_receive_from_queue(ch):
 async def test_on_message_enqueues(ch):
     """收到官方 InboundMessage → 入队 UserInput（跨线程桥接）。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._loop = AsyncMock()
-    # 真实 queue 用于验证
-    c._queue = __import__("asyncio").Queue()
+    c._queue = asyncio.Queue()
+    c._loop = MagicMock()
     c._loop.call_soon_threadsafe = lambda fn, *a, **k: fn(*a, **k)
     c._on_message(FakeMsg(chat_id="oc_x", text="  hello  "))
-    rsp = c._queue.get_nowait()
-    assert rsp.content == "hello"
+    assert (await c._queue.get()).content == "hello"
     assert c._chat_id == "oc_x"
+
+
+async def _approval_channel(ch) -> FeishuChannel:
+    """构建审批测试通道：真实 loop + mock SDK。"""
+    c = FeishuChannel(app_id="cli_test", app_secret="secret")
+    c._chat_id = "oc_test"
+    c._channel = ch._channel
+    c._loop = asyncio.get_running_loop()
+    return c
+
+
+async def _click(c: FeishuChannel, decision: str) -> None:
+    """等待审批卡片发出，模拟点击按钮。"""
+    await asyncio.sleep(0.01)
+    token = next(iter(c._pending_approvals))
+    c._on_card_action(FakeCardAction({"approval": token, "decision": decision}))
 
 
 async def test_approval_card_button(ch):
     """审批：卡片按钮回调 → ApprovalRsp。"""
-    # 用真实 loop 验证 Future 完成
-    import asyncio
-
-    c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._chat_id = "oc_test"
-    c._channel = ch._channel
-    c._loop = asyncio.get_running_loop()
-
-    task = asyncio.create_task(c.call(Approval(tool_name="mcp_tavily", arguments={"query": "x"})))
-
-    # 等待卡片发出并拿到 token
-    await asyncio.sleep(0.01)
-    assert c._pending_approvals
-    token = next(iter(c._pending_approvals))
-    # 模拟点击 ✅
-    c._on_card_action(FakeCardAction({"approval": token, "decision": "approve"}))
+    c = await _approval_channel(ch)
+    task = asyncio.create_task(
+        c.call(Approval(tool_name="mcp_tavily", arguments={"query": "x"}))
+    )
+    await _click(c, "approve")
     rsp = await task
     assert rsp == ApprovalRsp(approved=True, reason=None)
-    # 卡片内容包含按钮（CardPayload.data 是卡片 dict）
-    send_args = c._channel.send.await_args.args
-    card_data = send_args[1]["card"]
-    if hasattr(card_data, "data"):
-        card_data = card_data.data
-    assert "🔐 工具审批" in card_data["header"]["title"]["content"]
+    # 卡片含审批按钮（CardPayload.data 是卡片 dict）
+    card = c._channel.send.await_args.args[1]["card"]
+    card = getattr(card, "data", card)
+    assert "🔐 工具审批" in card["header"]["title"]["content"]
 
 
 async def test_approval_reject(ch):
     """审批：❌ 拒绝 → ApprovalRsp(approved=False)。"""
-    import asyncio
-
-    c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._chat_id = "oc_test"
-    c._channel = ch._channel
-    c._loop = asyncio.get_running_loop()
-
+    c = await _approval_channel(ch)
     task = asyncio.create_task(c.call(Approval(tool_name="t", arguments={})))
-    await asyncio.sleep(0.01)
-    token = next(iter(c._pending_approvals))
-    c._on_card_action(FakeCardAction({"approval": token, "decision": "reject"}))
+    await _click(c, "reject")
     rsp = await task
     assert rsp.approved is False
     assert rsp.reason == "用户拒绝"

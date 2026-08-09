@@ -68,11 +68,11 @@ class FeishuChannel:
     def _on_message(self, msg: InboundMessage) -> None:
         """收到用户消息（SDK 后台 loop）。"""
         chat_id = msg.conversation.chat_id
-        text = msg.body_text or msg.content_text or ""
-        logger.info(f"feishu receive: chat={chat_id} content={text.strip()!r}")
+        text = (msg.body_text or msg.content_text or "").strip()
+        logger.info(f"feishu receive: chat={chat_id} content={text!r}")
         self._chat_id = chat_id
         self._loop.call_soon_threadsafe(
-            self._queue.put_nowait, UserInput(content=text.strip())
+            self._queue.put_nowait, UserInput(content=text)
         )
 
     def _on_card_action(self, evt: CardActionEvent) -> None:
@@ -120,22 +120,24 @@ class FeishuChannel:
             self._stream_queue = None
 
     async def _run_stream(self) -> None:
-        """驱动官方 stream()：producer 从队列消费 Delta，结束信号后收尾。
+        """驱动官方 stream()：producer 从队列消费 Delta，None 结束信号收尾。
 
         官方内部处理：CardKit 预分配、发送引用消息、节流更新（100ms/50字符）、
         正常或出错时自动 finish_streaming_card。
         """
+        queue = self._stream_queue  # 捕获稳定引用（_stream_end 会置 None）
+
         async def producer(stream) -> None:
-            while True:
-                chunk = await self._stream_queue.get()
-                if chunk is None:
-                    break
+            while (chunk := await queue.get()) is not None:
                 await stream.append(chunk)
 
         try:
             await self._channel.stream(self._chat_id, {"markdown": producer})
         except Exception as err:
             logger.warning(f"feishu stream failed: {err}")
+        finally:
+            if self._stream_queue is queue:  # 失败时清理，防后续 Delta 入死队列
+                self._stream_queue = None
 
     @staticmethod
     def _render(n: NotificationUnion) -> str:
