@@ -116,16 +116,21 @@ class FeishuChannel:
     # ── call：交互 ────────────────────────────────────
     @staticmethod
     def _render(n: NotificationUnion) -> str:
-        """工具事件 → 飞书文本（Delta 由 notify 处理，不走这里）。"""
+        """工具事件 → 飞书文本（Delta 由 notify 处理，不走这里）。
+
+        参数 / 结果用 JSON 格式化 + 代码块，飞书端展示整齐。
+        """
         match n:
             case ToolStart(tool_name=name, arguments=args):
-                return f"🔧 调用工具 **{name}**\n```\n{args}\n```"
+                params = json.dumps(args, ensure_ascii=False, indent=2)
+                return f"🔧 **{name}**\n```{params}```"
             case ToolResult(tool_call_id=tc_id, result=result, error=None):
-                return f"✅ 工具结果\n{truncate(result, 512)}"
+                body = _to_text(result)
+                return f"✅ 工具结果\n```\n{truncate(body, 512)}\n```"
             case ToolResult(tool_call_id=tc_id, error=err):
-                return f"❌ 工具错误: {err}"
+                return f"❌ 工具错误\n```{err}```"
             case Error(message=msg):
-                return f"⚠️ 错误: {msg}"
+                return f"⚠️ 错误\n```{msg}```"
         return ""
 
     async def call(self, s: ServiceUnion) -> Any:
@@ -169,3 +174,10 @@ class FeishuChannel:
         if self._ws_task:
             self._ws_task.cancel()
         await self._http.aclose()
+
+
+def _to_text(value: Any) -> str:
+    """工具结果 → 文本：dict/list 用 JSON 格式化，其余转字符串。"""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return str(value)

@@ -63,7 +63,7 @@ async def test_delta_end_finalizes(ch):
 async def test_tool_event_sent_independently(ch):
     await ch.notify(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
     assert len(_creates(ch)) == 1
-    assert "调用工具" in _text(_creates(ch)[0])
+    assert "🔧 **bash**" in _text(_creates(ch)[0])
 
 
 async def test_error_sent(ch):
@@ -84,3 +84,20 @@ async def test_notify_failure_no_raise(ch):
     c._chat_id = "oc_test"
     c._http.post = AsyncMock(side_effect=Exception("network down"))
     await c.notify(Delta(delta="x"))  # 不应抛出
+
+
+def test_render_format():
+    """_render 格式：工具名加粗 + 参数 JSON 代码块；结果 dict 格式化。"""
+    from walle.schemas import ToolResult
+
+    start = FeishuChannel._render(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
+    assert "🔧 **bash**" in start
+    assert "```" in start
+
+    result = FeishuChannel._render(ToolResult(tool_call_id="1", result={"status": "ok"}))
+    assert "✅ 工具结果" in result
+    assert '"status": "ok"' in result  # JSON 格式化
+
+    err = FeishuChannel._render(ToolResult(tool_call_id="1", error="boom"))
+    assert "❌ 工具错误" in err
+    assert "boom" in err
