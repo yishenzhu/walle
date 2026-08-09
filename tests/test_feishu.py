@@ -1,74 +1,77 @@
 """FeishuChannel：流式打字机（创建→更新）、工具事件独立发、交互。"""
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
 from walle.channel import FeishuChannel
 from walle.schemas import Delta, DeltaEnd, Error, ToolStart, Receive, UserInput
 
 
-def _resp(json_body: dict) -> httpx.Response:
-    return httpx.Response(
-        200, json=json_body, request=httpx.Request("POST", "https://open.feishu.cn")
-    )
+class FakeResp:
+    def __init__(self, code=0, message_id="om_1"):
+        self.code = code
+        self.msg = "success"
+        self.data = type("D", (), {"message_id": message_id})()
 
 
 @pytest.fixture
 def ch():
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
-    c._http.post = AsyncMock()
-    c._http.put = AsyncMock()
-
-    async def fake_post(url, **kwargs):
-        if "auth/v3/tenant_access_token" in url:
-            return _resp({"tenant_access_token": "t-1"})
-        return _resp({"data": {"message_id": "om_1"}})
-
-    c._http.post.side_effect = fake_post
+    # mock SDK client 的 async 方法
+    c._client = AsyncMock()
+    c._client.im.v1.message.acreate.return_value = FakeResp(message_id="om_1")
+    c._client.im.v1.message.aupdate.return_value = FakeResp()
     return c
 
 
-def _creates(ch):
-    return [c for c in ch._http.post.call_args_list if "messages" in c.args[0]]
-
-
-def _text(call):
-    """从发消息调用的 content 字段解析出纯文本。"""
-    return json.loads(call.kwargs["json"]["content"])["text"]
-
-
 async def test_stream_creates_then_updates(ch):
-    """首条 Delta 创建消息，后续 Delta 更新同一消息（打字机）。"""
-    await ch.notify(Delta(delta="你"))
-    await ch.notify(Delta(delta="好"))
-    assert len(_creates(ch)) == 1
-    assert len(ch._http.put.call_args_list) == 1
-    put_payload = ch._http.put.await_args.kwargs["json"]
-    assert "你好" in json.loads(put_payload["content"])["text"]
-    assert ch._http.put.call_args.args[0].endswith("/om_1")
+    """首条 Delta 创建消息，后续 Delta 节流更新（打字机）。"""
+    times = iter([0.0, 1.5])  # 第二次 delta 距上次超过 1s，触发更新
+    with patch("walle.channel.feishu.time.monotonic", side_effect=lambda: next(times)):
+        await ch.notify(Delta(delta="你"))
+        await ch.notify(Delta(delta="好"))
+    assert ch._client.im.v1.message.acreate.await_count == 1
+    assert ch._client.im.v1.message.aupdate.await_count == 1
+    # 更新内容为累积文本
+    update_req = ch._client.im.v1.message.aupdate.await_args.args[0]
+    content = json.loads(update_req.request_body.content)["text"]
+    assert content == "你好"
+    # 更新的是创建返回的 message_id
+    assert update_req.message_id == "om_1"
+
+
+async def test_stream_throttles_within_second(ch):
+    """同一秒内的 Delta 不重复更新（节流，避免超 20 次编辑限制）。"""
+    times = iter([0.0, 0.3])  # 间隔 < 1s，第二次不更新
+    with patch("walle.channel.feishu.time.monotonic", side_effect=lambda: next(times)):
+        await ch.notify(Delta(delta="a"))
+        await ch.notify(Delta(delta="b"))
+        await ch.notify(Delta(delta="c"))
+    assert ch._client.im.v1.message.acreate.await_count == 1
+    assert ch._client.im.v1.message.aupdate.await_count == 0  # 全部在 1s 内，无更新
 
 
 async def test_delta_end_finalizes(ch):
     """DeltaEnd 后回合定格，新回合重新创建。"""
     await ch.notify(Delta(delta="a"))
     await ch.notify(DeltaEnd())
-    ch._http.post.call_args_list.clear()
+    ch._client.im.v1.message.acreate.reset_mock()
     await ch.notify(Delta(delta="b"))
-    assert len(_creates(ch)) == 1  # 新回合重新创建
+    assert ch._client.im.v1.message.acreate.await_count == 1  # 新回合重新创建
 
 
 async def test_tool_event_sent_independently(ch):
     await ch.notify(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
-    assert len(_creates(ch)) == 1
-    assert "🔧 **bash**" in _text(_creates(ch)[0])
+    assert ch._client.im.v1.message.acreate.await_count == 1
+    create_req = ch._client.im.v1.message.acreate.await_args.args[0]
+    assert "🔧 **bash**" in json.loads(create_req.request_body.content)["text"]
 
 
 async def test_error_sent(ch):
     await ch.notify(Error(message="oops"))
-    assert len(_creates(ch)) == 1
+    assert ch._client.im.v1.message.acreate.await_count == 1
 
 
 async def test_call_receive_from_queue(ch):
@@ -82,7 +85,8 @@ async def test_notify_failure_no_raise(ch):
     """推送失败仅告警，不抛异常（不拖垮主链路）。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
-    c._http.post = AsyncMock(side_effect=Exception("network down"))
+    c._client = AsyncMock()
+    c._client.im.v1.message.acreate.side_effect = Exception("network down")
     await c.notify(Delta(delta="x"))  # 不应抛出
 
 

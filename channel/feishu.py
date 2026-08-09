@@ -9,9 +9,9 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from typing import Any
 
-import httpx
 import lark_oapi as lark  # 模块级 import：主线程无 running loop 时绑定模块级 loop，供独立线程跑 ws.start()
 
 from ..schemas import (
@@ -32,10 +32,6 @@ from .channel import truncate
 
 logger = logging.getLogger(__name__)
 
-API_BASE = "https://open.feishu.cn/open-apis"
-CREATE_MSG = f"{API_BASE}/im/v1/messages"
-UPDATE_MSG = f"{API_BASE}/im/v1/messages/{{message_id}}"
-
 
 class FeishuChannel:
     """飞书交互通道：长连接接收用户消息，流式更新发送 AI 回复。
@@ -52,69 +48,71 @@ class FeishuChannel:
         self._chat_id: str = ""          # 当前会话 chat_id
         self._msg_id: str | None = None  # 进行中的流式消息（None = 新回合）
         self._msg_text: str = ""      # 流式累积文本
-        self._token: str | None = None
-        self._http = httpx.AsyncClient(timeout=10.0)
+        self._last_update: float = 0.0  # 上次更新消息时间（节流用）
+        self._update_count: int = 0   # 本回合更新次数（飞书限制 20 次/消息）
+        self._client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
 
     async def _send(self, chat_id: str, text: str) -> str:
-        """发送一条独立消息；返回 message_id（流式起点用）。"""
-        payload = {
-            "receive_id": chat_id,
-            "msg_type": "text",
-            "content": json.dumps({"text": text}),
-        }
-        resp = await self._http.post(
-            CREATE_MSG,
-            params={"receive_id_type": "chat_id"},
-            headers=await self._headers(),
-            json=payload,
-        )
-        resp.raise_for_status()
-        return resp.json()["data"]["message_id"]
+        """发送一条独立消息（SDK async）；返回 message_id（流式起点用）。"""
+        body = lark.im.v1.CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("text").content(
+            json.dumps({"text": text}, ensure_ascii=False)
+        ).build()
+        req = lark.im.v1.CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+        resp = await self._client.im.v1.message.acreate(req)
+        if resp.code != 0:
+            raise RuntimeError(f"feishu send failed: {resp.code} {resp.msg}")
+        return resp.data.message_id
 
-    async def _headers(self) -> dict:
-        """取 tenant_access_token（缓存）。"""
-        if self._token is None:
-            resp = await self._http.post(
-                f"{API_BASE}/auth/v3/tenant_access_token/internal",
-                json={"app_id": self._app_id, "app_secret": self._app_secret},
-            )
-            resp.raise_for_status()
-            self._token = resp.json()["tenant_access_token"]
-        return {"Authorization": f"Bearer {self._token}"}
-
-    # ── 发送 ──────────────────────────────────────────
     async def _update(self, message_id: str, text: str) -> None:
-        """更新已发送消息（打字机效果）。"""
-        payload = {"msg_type": "text", "content": json.dumps({"text": text})}
-        resp = await self._http.put(
-            UPDATE_MSG.format(message_id=message_id),
-            headers=await self._headers(),
-            json=payload,
-        )
-        resp.raise_for_status()
+        """更新已发送消息（打字机效果，SDK async）。"""
+        body = lark.im.v1.UpdateMessageRequestBody.builder().msg_type("text").content(
+            json.dumps({"text": text}, ensure_ascii=False)
+        ).build()
+        req = lark.im.v1.UpdateMessageRequest.builder().message_id(message_id).request_body(body).build()
+        resp = await self._client.im.v1.message.aupdate(req)
+        if resp.code != 0:
+            raise RuntimeError(f"feishu update failed: {resp.code} {resp.msg}")
 
     # ── notify：流式渲染 ──────────────────────────────
     async def notify(self, n: NotificationUnion) -> None:
-        """流式：首条 Delta 建消息，后续更新；工具事件独立发。"""
+        """流式：首条 Delta 建消息，节流更新；工具事件独立发。
+
+        飞书限制一条消息最多编辑 20 次（230072），因此流式更新需同时
+        节流（每秒最多一次）和限次（每回合最多 18 次 + 最终 1 次）。
+        """
         try:
             match n:
                 case Delta(delta=delta):
-                    self._msg_text += delta
-                    if self._msg_id is None:
-                        self._msg_id = await self._send(self._chat_id, self._msg_text)
-                    else:
-                        await self._update(self._msg_id, self._msg_text)
+                    await self._stream_delta(delta)
                 case DeltaEnd():
+                    if self._msg_id is not None:
+                        await self._update(self._msg_id, self._msg_text)  # 最终内容
                     self._msg_id = None  # 回合定格，新回合重新创建
                     self._msg_text = ""
+                    self._last_update = 0.0
+                    self._update_count = 0
                 case _:
                     text = self._render(n)
                     if text:
                         await self._send(self._chat_id, text)
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
+
+    async def _stream_delta(self, delta: str) -> None:
+        """流式增量：首条创建，后续节流+限次更新。"""
+        self._msg_text += delta
+        if self._msg_id is None:
+            self._msg_id = await self._send(self._chat_id, self._msg_text)
+            self._last_update = time.monotonic()
+            return
+        now = time.monotonic()
+        # 每秒最多一次，且每回合最多 18 次（留 1 次给 DeltaEnd 最终更新）
+        if now - self._last_update >= 1.0 and self._update_count < 18:
+            await self._update(self._msg_id, self._msg_text)
+            self._last_update = now
+            self._update_count += 1
 
     # ── call：交互 ────────────────────────────────────
     @staticmethod
@@ -167,6 +165,7 @@ class FeishuChannel:
             event = data.event
             chat_id = event.message.chat_id
             content = json.loads(event.message.content).get("text", "")
+            logger.info(f"feishu receive: chat={chat_id} content={content!r}")
             # 跨线程：把消息调度到主循环的 asyncio.Queue
             self._loop.call_soon_threadsafe(
                 self._queue.put_nowait, UserInput(content=content.strip())
@@ -178,15 +177,15 @@ class FeishuChannel:
             .register_p2_im_message_receive_v1(on_message)
             .build()
         )
-        ws = lark.ws.Client(self._app_id, self._app_secret, event_handler=event_handler)
-        self._ws = ws
+        ws = lark.ws.Client(
+            self._app_id,
+            self._app_secret,
+            event_handler=event_handler,
+            log_level=lark.LogLevel.INFO,
+        )
         # daemon 线程：进程退出不阻塞（SDK 无公开 stop，start() 会阻塞在 _select）
         self._ws_thread = threading.Thread(target=ws.start, daemon=True)
         self._ws_thread.start()
-
-    async def close(self) -> None:
-        # 不 join ws 线程：SDK 无公开 stop，join 会阻塞；daemon 线程随进程退出
-        await self._http.aclose()
 
 
 def _to_text(value: Any) -> str:
