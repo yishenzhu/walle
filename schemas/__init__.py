@@ -23,5 +23,5 @@ from .events import (
 )
 from .channel import (
     UserInput,
-    ApprovalResponse,
+    ApprovalRsp,
 )

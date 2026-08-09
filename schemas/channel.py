@@ -5,6 +5,6 @@ class UserInput(BaseModel):
     content: str
 
 
-class ApprovalResponse(BaseModel):
+class ApprovalRsp(BaseModel):
     approved: bool
     reason: str | None = None

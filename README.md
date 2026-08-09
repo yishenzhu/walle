@@ -312,7 +312,7 @@ walle/
 ├── schemas/                   # 数据模型
 │   ├── message.py             #   消息类型
 │   ├── events.py              #   判别联合事件（通知/服务）
-│   ├── channel.py             #   服务载荷（UserInput / ApprovalResponse）
+│   ├── channel.py             #   服务载荷（UserInput / ApprovalRsp）
 │   └── usage.py               #   Token 用量
 ├── infra/                     # 基础设施
 │   ├── logger.py              #   日志（含 Trace 注入）

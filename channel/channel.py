@@ -8,7 +8,7 @@ import signal
 from typing import Any, Protocol, runtime_checkable
 
 from ..schemas import (
-    ApprovalResponse,
+    ApprovalRsp,
     Delta,
     DeltaEnd,
     Error,
@@ -32,10 +32,9 @@ class Channel(Protocol):
 class CLIChannel:
     """CLI 通道：直接实现 Channel。notify → 渲染；call → 终端交互。
 
-    终止控制（Ctrl+C 信号驱动，业界一致做法）：
-      - agent 执行中按 Ctrl+C → 取消当前 run，回到输入提示
+    终止控制（Ctrl+C 信号驱动）：
+      - 执行中按 Ctrl+C → 取消当前 run，回到输入提示
       - 空闲等待输入时按 Ctrl+C → KeyboardInterrupt → 退出程序
-    统一出口为 Ctrl+C，无 :q 命令。
     """
 
     def __init__(self) -> None:
@@ -107,15 +106,15 @@ class CLIChannel:
         answer = await asyncio.to_thread(input, "  回答: ")
         return answer.strip()
 
-    async def ask_approval(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+    async def ask_approval(self, tool_name: str, arguments: dict) -> ApprovalRsp:
         print(f"  [审批请求] 允许执行: {tool_name}({arguments})?")
         while True:
             answer = (await asyncio.to_thread(input, "  允许? (y/n): ")).strip().lower()
             if answer in ("y", "yes"):
-                return ApprovalResponse(approved=True)
+                return ApprovalRsp(approved=True)
             if answer in ("n", "no"):
                 reason = await asyncio.to_thread(input, "  拒绝原因(可选): ")
-                return ApprovalResponse(approved=False, reason=reason.strip() or None)
+                return ApprovalRsp(approved=False, reason=reason.strip() or None)
             print("  请输入 y/n")
 
     # ── 生命周期 ────────────────────────────────────────

@@ -71,7 +71,7 @@ class Inquiry(Service):
 
 
 class Approval(Service):
-    """请求工具执行审批。返回 ApprovalResponse。"""
+    """请求工具执行审批。返回 ApprovalRsp。"""
     type: Literal["approval"] = "approval"
     tool_name: str
     arguments: dict[str, Any]

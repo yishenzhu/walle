@@ -4,7 +4,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
 from ..infra.provider import OpenAIProvider
-from ..schemas import Approval, ApprovalResponse, Inquiry, Receive, UserInput
+from ..schemas import Approval, ApprovalRsp, Inquiry, Receive, UserInput
 from ..tools import ToolContext
 
 
@@ -96,7 +96,7 @@ class FakeChannel:
 
     def __init__(self):
         self.events: list = []  # 记录 notify 的通知
-        self._approval_response = ApprovalResponse(approved=True)
+        self._approval_response = ApprovalRsp(approved=True)
         self._inquiry_response = "mock answer"
 
     async def notify(self, notification):
@@ -112,7 +112,7 @@ class FakeChannel:
                 return self._approval_response
 
     def set_approval(self, approved: bool, reason: str | None = None):
-        self._approval_response = ApprovalResponse(approved=approved, reason=reason)
+        self._approval_response = ApprovalRsp(approved=approved, reason=reason)
 
 
 # ── Fixtures ───────────────────────────────────────────

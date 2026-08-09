@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from ..channel import Channel
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
-from ..schemas import Approval, ApprovalResponse
+from ..schemas import Approval, ApprovalRsp
 
 
 class ArgMatch(BaseModel):
@@ -87,7 +87,7 @@ class ApprovalPolicy:
 class Approver(Protocol):
     """审批策略：决定要不要问、怎么问（底层发起 Approval 服务）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse: ...
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp: ...
 
 
 class ChannelApprover:
@@ -96,7 +96,7 @@ class ChannelApprover:
     def __init__(self, channel: Channel):
         self._channel = channel
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
         return await self._channel.call(
             Approval(tool_name=tool_name, arguments=arguments)
         )
@@ -105,15 +105,15 @@ class ChannelApprover:
 class AutoApproveApprover:
     """静默放行（测试 / 无人值守）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
-        return ApprovalResponse(approved=True)
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+        return ApprovalRsp(approved=True)
 
 
 class DenyApprover:
     """静默拒绝（测试拒绝路径）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
-        return ApprovalResponse(approved=False, reason="auto denied")
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+        return ApprovalRsp(approved=False, reason="auto denied")
 
 
 class TimeoutApprover:
@@ -122,10 +122,10 @@ class TimeoutApprover:
     def __init__(self, inner: Approver, timeout: float):
         self._inner, self._timeout = inner, timeout
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalResponse:
+    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
         try:
             return await asyncio.wait_for(
                 self._inner.ask(tool_name, arguments), self._timeout
             )
         except asyncio.TimeoutError:
-            return ApprovalResponse(approved=False, reason=f"审批超时({self._timeout}s)")
+            return ApprovalRsp(approved=False, reason=f"审批超时({self._timeout}s)")
