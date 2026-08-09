@@ -46,7 +46,6 @@ class FeishuChannel:
         self._channel = lark_channel.FeishuChannel(app_id=app_id, app_secret=app_secret)
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
         self._chat_id: str = ""          # 当前会话 chat_id
-        self._loop: asyncio.AbstractEventLoop | None = None
         # 流式：官方 stream() 的 producer 通过队列消费 Delta（None = 结束信号）
         self._stream_queue: asyncio.Queue[str | None] | None = None
         # 审批：token → 等待中的 Future（工具并发执行，需按 token 区分）
@@ -56,39 +55,39 @@ class FeishuChannel:
     async def start(self) -> None:
         """注册事件监听并启动长连接（官方 SDK 后台运行，就绪后返回）。
 
-        事件 handler 在 SDK 后台 loop 执行；跨线程用 call_soon_threadsafe
-        把消息/审批结果调度回主 loop 的队列。
+        事件 handler 在 SDK 后台 loop 执行；用 call_soon_threadsafe 把
+        消息/审批结果调度回主 loop（闭包捕获 loop，无需实例成员）。
         """
-        self._loop = asyncio.get_running_loop()
-        self._channel.on(Events.MESSAGE, self._on_message)
-        self._channel.on(Events.CARD_ACTION, self._on_card_action)
+        loop = asyncio.get_running_loop()
+
+        def on_message(msg: InboundMessage) -> None:
+            chat_id = msg.conversation.chat_id
+            text = (msg.body_text or msg.content_text or "").strip()
+            logger.info(f"feishu receive: chat={chat_id} content={text!r}")
+            self._chat_id = chat_id
+            loop.call_soon_threadsafe(
+                self._queue.put_nowait, UserInput(content=text)
+            )
+
+        def on_card_action(evt: CardActionEvent) -> None:
+            value = evt.action.value if isinstance(evt.action.value, dict) else {}
+            token = value.get("approval") or ""
+            decision = value.get("decision")
+            if token in self._pending_approvals and decision in ("approve", "reject"):
+                fut = self._pending_approvals.pop(token)
+                loop.call_soon_threadsafe(
+                    fut.set_result,
+                    ApprovalRsp(
+                        approved=decision == "approve",
+                        reason=None if decision == "approve" else "用户拒绝",
+                    ),
+                )
+
+        self._on_message, self._on_card_action = on_message, on_card_action  # 测试可触发
+        self._channel.on(Events.MESSAGE, on_message)
+        self._channel.on(Events.CARD_ACTION, on_card_action)
         await self._channel.connect_until_ready()
         logger.info("feishu channel ready")
-
-    def _on_message(self, msg: InboundMessage) -> None:
-        """收到用户消息（SDK 后台 loop）。"""
-        chat_id = msg.conversation.chat_id
-        text = (msg.body_text or msg.content_text or "").strip()
-        logger.info(f"feishu receive: chat={chat_id} content={text!r}")
-        self._chat_id = chat_id
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait, UserInput(content=text)
-        )
-
-    def _on_card_action(self, evt: CardActionEvent) -> None:
-        """审批卡片按钮回调（SDK 后台 loop）。"""
-        value = evt.action.value if isinstance(evt.action.value, dict) else {}
-        token = value.get("approval") or ""
-        decision = value.get("decision")
-        if token in self._pending_approvals and decision in ("approve", "reject"):
-            fut = self._pending_approvals.pop(token)
-            self._loop.call_soon_threadsafe(
-                fut.set_result,
-                ApprovalRsp(
-                    approved=decision == "approve",
-                    reason=None if decision == "approve" else "用户拒绝",
-                ),
-            )
 
     # ── notify：流式 + 工具事件 ───────────────────────
     async def notify(self, n: NotificationUnion) -> None:
@@ -189,7 +188,7 @@ class FeishuChannel:
             .build()
         )
         await self._channel.send(self._chat_id, {"card": card})
-        fut: asyncio.Future[ApprovalRsp] = self._loop.create_future()
+        fut: asyncio.Future[ApprovalRsp] = asyncio.get_running_loop().create_future()
         self._pending_approvals[token] = fut
         try:
             return await fut

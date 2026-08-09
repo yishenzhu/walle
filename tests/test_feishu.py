@@ -45,6 +45,7 @@ def ch():
     c._channel = AsyncMock()
     c._channel.send.return_value = MagicMock(success=True)
     c._channel.stream.return_value = MagicMock(success=True)
+    c._channel.on = MagicMock(return_value=lambda: None)  # on() 同步注册，返回 Unsubscribe
     return c
 
 
@@ -129,20 +130,21 @@ async def test_call_receive_from_queue(ch):
 async def test_on_message_enqueues(ch):
     """收到官方 InboundMessage → 入队 UserInput（跨线程桥接）。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
-    c._queue = asyncio.Queue()
-    c._loop = MagicMock()
-    c._loop.call_soon_threadsafe = lambda fn, *a, **k: fn(*a, **k)
+    c._channel = ch._channel
+    c._channel.connect_until_ready = AsyncMock()
+    await c.start()  # 注册闭包回调（捕获主 loop）
     c._on_message(FakeMsg(chat_id="oc_x", text="  hello  "))
     assert (await c._queue.get()).content == "hello"
     assert c._chat_id == "oc_x"
 
 
 async def _approval_channel(ch) -> FeishuChannel:
-    """构建审批测试通道：真实 loop + mock SDK。"""
+    """构建审批测试通道：start() 注册闭包回调。"""
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._chat_id = "oc_test"
     c._channel = ch._channel
-    c._loop = asyncio.get_running_loop()
+    c._channel.connect_until_ready = AsyncMock()
+    await c.start()
     return c
 
 
