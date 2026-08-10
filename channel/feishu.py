@@ -9,7 +9,6 @@
 import asyncio
 import json
 import logging
-import uuid
 from typing import Any
 
 import lark_channel
@@ -46,10 +45,10 @@ class FeishuChannel:
         self._channel = lark_channel.FeishuChannel(app_id=app_id, app_secret=app_secret)
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
         self._chat_id: str = ""          # 当前会话 chat_id
-        # 流式：常驻队列，producer 读到 None 结束当前卡片流，下回合自动新开
+        # 流式：Delta 入队，None 为回合结束哨兵；任务 start 时创建，stop 时取消
         self._stream_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._stream_task: asyncio.Task | None = None
-        # 审批：token → 等待中的 Future（工具并发执行，需按 token 区分）
+        # 审批：工具调用 id → 等待中的 Future（工具并发执行，按 id 路由）
         self._pending_approvals: dict[str, asyncio.Future[ApprovalRsp]] = {}
 
     # ── 生命周期 ──────────────────────────────────────
@@ -72,10 +71,10 @@ class FeishuChannel:
 
         def on_card_action(evt: CardActionEvent) -> None:
             value = evt.action.value if isinstance(evt.action.value, dict) else {}
-            token = value.get("approval") or ""
+            tc_id = value.get("tool_call_id") or ""
             decision = value.get("decision")
-            if token in self._pending_approvals and decision in ("approve", "reject"):
-                fut = self._pending_approvals.pop(token)
+            if tc_id in self._pending_approvals and decision in ("approve", "reject"):
+                fut = self._pending_approvals.pop(tc_id)
                 loop.call_soon_threadsafe(
                     fut.set_result,
                     ApprovalRsp(
@@ -88,7 +87,7 @@ class FeishuChannel:
         self._channel.on(Events.MESSAGE, on_message)
         self._channel.on(Events.CARD_ACTION, on_card_action)
         await self._channel.connect_until_ready()
-        # 常驻流任务：连接就绪后即启动，等待首个 Delta
+        # 常驻流任务：producer 阻塞消费队列，有 Delta 才建卡，start 即可安全创建
         self._stream_task = asyncio.create_task(self._run_stream())
         logger.info("feishu channel ready")
 
@@ -111,13 +110,15 @@ class FeishuChannel:
 
     # ── notify：流式 + 工具事件 ───────────────────────
     async def notify(self, n: NotificationUnion) -> None:
-        """流式：Delta 写入官方 CardKit 卡片；工具事件精简独立发送。"""
+        """流式：Delta 写入官方 CardKit 卡片；工具调用/错误独立卡片发送。"""
         try:
             match n:
                 case Delta(delta=delta):
-                    await self._stream_delta(delta)
+                    await self._stream_queue.put(delta)
                 case DeltaEnd():
-                    await self._stream_delta(None)  # None 结束当前卡片流
+                    await self._stream_queue.put(None)  # None 结束当前卡片流
+                case ToolStart(tool_name=name, arguments=args):
+                    await self._send_tool_card(name, args)
                 case _:
                     text = self._render(n)
                     if text:
@@ -125,11 +126,21 @@ class FeishuChannel:
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
 
-    async def _stream_delta(self, delta: str | None) -> None:
-        """流式增量入队；None 为回合结束信号，结束当前卡片流。
-        由 start() 启动的常驻流任务消费。
-        """
-        await self._stream_queue.put(delta)
+    async def _send_tool_card(self, tool_name: str, arguments: dict) -> None:
+        """工具调用卡片：🔧 工具名 + 参数，美观展示。"""
+        card = (
+            new_card()
+            .header(title=f"🔧 {tool_name}", template="orange")
+            .markdown(self._tool_markdown(tool_name, arguments))
+            .build()
+        )
+        await self._channel.send(self._chat_id, {"card": card.data})
+
+    @staticmethod
+    def _tool_markdown(tool_name: str, arguments: dict) -> str:
+        """工具名 + 参数 JSON，工具卡 / 审批卡 / 反馈卡共用。"""
+        params = truncate(json.dumps(arguments, ensure_ascii=False, indent=2), 1024)
+        return f"**{tool_name}**\n```json\n{params}\n```"
 
     async def _run_stream(self) -> None:
         """常驻流任务：每回合一个官方 stream() 卡片，读到 None 结束，循环新开。
@@ -144,17 +155,12 @@ class FeishuChannel:
                 await self._channel.stream(self._chat_id, {"markdown": producer})
             except Exception as err:
                 logger.warning(f"feishu stream failed: {err}")
+                await asyncio.sleep(1)
 
     @staticmethod
     def _render(n: NotificationUnion) -> str:
-        """工具事件 → 飞书文本。Delta 由 _stream 处理，不走这里。
-
-        精简：只渲染 ToolStart（🔧 参数截断）与错误；ToolResult 详情静默。
-        """
+        """错误类通知 → 飞书文本。Delta / ToolStart 由各自分支处理。"""
         match n:
-            case ToolStart(tool_name=name, arguments=args):
-                params = json.dumps(args, ensure_ascii=False)
-                return f"🔧 **{name}**\n```{truncate(params, 512)}```"
             case ToolResult(tool_call_id=tc_id, error=err) if err is not None:
                 return f"❌ 工具错误\n```{err}```"
             case Error(message=msg):
@@ -169,35 +175,54 @@ class FeishuChannel:
             case Inquiry(question=q, options=opts):
                 await self._channel.send(self._chat_id, {"markdown": f"❓ {q}"})
                 return (await self._queue.get()).content or ""
-            case Approval(tool_name=n, arguments=a):
-                return await self._approval_card(n, a)
+            case Approval(tool_name=n, arguments=a, tool_call_id=tc_id):
+                return await self._approval_card(n, a, tc_id)
             # 其他服务不处理
 
-    async def _approval_card(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+    async def _approval_card(
+        self, tool_name: str, arguments: dict, tool_call_id: str
+    ) -> ApprovalRsp:
         """审批：卡片 + ✅/❌ 按钮，等待点击回调。
 
-        工具可并发执行，每张审批卡带唯一 token，回调按 token 路由到对应 Future。
+        工具可并发执行，按钮 value 携带工具调用 id，回调按 id 路由到
+        对应 Future。点击后 update_card 替换为已处理状态（保留工具信息）。
         """
-        token = uuid.uuid4().hex
         card = (
             new_card()
             .header(title="🔐 工具审批", template="blue")
-            .markdown(f"**{tool_name}**")
-            .markdown(
-                f"```json\n{truncate(json.dumps(arguments, ensure_ascii=False, indent=2), 1024)}\n```"
-            )
+            .markdown(self._tool_markdown(tool_name, arguments))
             .buttons(
                 [
-                    {"label": "✅ 通过", "action": {"approval": token, "decision": "approve"}, "style": "primary"},
-                    {"label": "❌ 拒绝", "action": {"approval": token, "decision": "reject"}, "style": "danger"},
+                    {"label": "✅ 通过", "action": {"tool_call_id": tool_call_id, "decision": "approve"}, "style": "primary"},
+                    {"label": "❌ 拒绝", "action": {"tool_call_id": tool_call_id, "decision": "reject"}, "style": "danger"},
                 ]
             )
             .build()
         )
-        await self._channel.send(self._chat_id, {"card": card.data})  # SDK 期望 dict，非 CardPayload 对象
+        result = await self._channel.send(self._chat_id, {"card": card.data})  # SDK 期望 dict，非 CardPayload 对象
+        message_id = getattr(result, "message_id", None) or ""
         fut: asyncio.Future[ApprovalRsp] = asyncio.get_running_loop().create_future()
-        self._pending_approvals[token] = fut
+        self._pending_approvals[tool_call_id] = fut
         try:
-            return await fut
+            rsp = await fut
+            if message_id:
+                await self._update_card_feedback(message_id, tool_name, arguments, rsp.approved)
+            return rsp
         finally:
-            self._pending_approvals.pop(token, None)
+            self._pending_approvals.pop(tool_call_id, None)
+
+    async def _update_card_feedback(
+        self, message_id: str, tool_name: str, arguments: dict, approved: bool
+    ) -> None:
+        """审批后更新卡片为已处理状态，保留工具调用信息。失败仅告警。"""
+        try:
+            template, text = ("green", "✅ 已通过") if approved else ("red", "❌ 已拒绝")
+            card = (
+                new_card()
+                .header(title=text, template=template)
+                .markdown(self._tool_markdown(tool_name, arguments))
+                .build()
+            )
+            await self._channel.update_card(message_id, card.data)
+        except Exception as err:
+            logger.warning(f"feishu update card failed: {err}")

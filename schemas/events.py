@@ -75,6 +75,7 @@ class Approval(Service):
     type: Literal["approval"] = "approval"
     tool_name: str
     arguments: dict[str, Any]
+    tool_call_id: str  # 工具调用 id，卡片按钮回调按此路由
 
 
 ServiceUnion = Annotated[

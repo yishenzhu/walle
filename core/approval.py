@@ -87,7 +87,7 @@ class ApprovalPolicy:
 class Approver(Protocol):
     """审批策略：决定要不要问、怎么问（底层发起 Approval 服务）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp: ...
+    async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp: ...
 
 
 class ChannelApprover:
@@ -96,23 +96,23 @@ class ChannelApprover:
     def __init__(self, channel: Channel):
         self._channel = channel
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+    async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp:
         return await self._channel.call(
-            Approval(tool_name=tool_name, arguments=arguments)
+            Approval(tool_name=tool_name, arguments=arguments, tool_call_id=tool_call_id)
         )
 
 
 class AutoApproveApprover:
     """静默放行（测试 / 无人值守）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+    async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp:
         return ApprovalRsp(approved=True)
 
 
 class DenyApprover:
     """静默拒绝（测试拒绝路径）。"""
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+    async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp:
         return ApprovalRsp(approved=False, reason="auto denied")
 
 
@@ -122,10 +122,10 @@ class TimeoutApprover:
     def __init__(self, inner: Approver, timeout: float):
         self._inner, self._timeout = inner, timeout
 
-    async def ask(self, tool_name: str, arguments: dict) -> ApprovalRsp:
+    async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp:
         try:
             return await asyncio.wait_for(
-                self._inner.ask(tool_name, arguments), self._timeout
+                self._inner.ask(tool_name, arguments, tool_call_id), self._timeout
             )
         except asyncio.TimeoutError:
             return ApprovalRsp(approved=False, reason=f"审批超时({self._timeout}s)")

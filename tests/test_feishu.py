@@ -55,7 +55,7 @@ def _make_channel(streams: list[FakeStream] | None = None) -> FeishuChannel:
     """
     c = FeishuChannel(app_id="cli_test", app_secret="secret")
     c._channel = AsyncMock()
-    c._channel.send.return_value = MagicMock(success=True)
+    c._channel.send.return_value = MagicMock(success=True, message_id="msg_1")
 
     async def fake_stream(chat_id, payload):
         stream = FakeStream()
@@ -73,7 +73,7 @@ def _make_channel(streams: list[FakeStream] | None = None) -> FeishuChannel:
 async def ch():
     streams: list[FakeStream] = []
     c = _make_channel(streams)
-    await c.start()  # 连接就绪后启动常驻流任务
+    await c.start()  # 注册回调并连接（流任务懒启动，首个 Delta 时创建）
     c._chat_id = "oc_test"
     c._test_streams = streams  # 测试断言 append 的 chunks
     yield c
@@ -91,11 +91,11 @@ async def test_stream_delta_accumulates(ch):
 
 
 async def test_delta_end_sends_end_signal(ch):
-    """DeltaEnd（None）结束当前卡片流，常驻任务下一回合新开卡片。"""
+    """DeltaEnd（None）结束当前卡片流，常驻任务循环新开下一回合。"""
     await ch.notify(Delta(delta="a"))
     await ch.notify(DeltaEnd())
     await asyncio.sleep(0.05)
-    # 第一回合已 finish（a 被消费），常驻任务已新开第二回合卡片
+    # 第一回合已 finish（a 被消费），任务已新开第二回合（等待新 Delta）
     assert len(ch._test_streams) == 2
     assert ch._test_streams[0].chunks == ["a"]
     assert ch._test_streams[1].chunks == []  # 第二回合等待新 Delta
@@ -105,33 +105,39 @@ async def test_delta_end_sends_end_signal(ch):
     assert ch._test_streams[1].chunks == ["b"]
 
 
-# ── notify：工具事件精简 ─────────────────────────────
-async def test_tool_start_sent(ch):
-    """ToolStart 独立发送（markdown，参数截断）。"""
+# ── notify：工具事件 ────────────────────────────────
+async def test_tool_start_card(ch):
+    """ToolStart 以卡片展示：🔧 工具名 + 参数。"""
     await ch.notify(ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="1"))
     ch._channel.send.assert_awaited_once()
     args = ch._channel.send.await_args.args
     assert args[0] == "oc_test"
-    assert "🔧 **bash**" in args[1]["markdown"]
+    card = args[1]["card"]
+    assert card["header"]["title"]["content"] == "🔧 bash"
+    body = " ".join(e.get("content", "") for e in card["body"]["elements"])
+    assert "**bash**" in body and '"cmd"' in body and '"ls"' in body
+
+
+@pytest.mark.parametrize(
+    ("n", "marker"),
+    [
+        (ToolResult(tool_call_id="1", error="boom"), "❌ 工具错误"),
+        (Error(message="oops"), "⚠️"),
+    ],
+)
+async def test_error_rendered(ch, n, marker):
+    """错误类通知按 markdown 发送（chat_id + 内容标记）。"""
+    await ch.notify(n)
+    ch._channel.send.assert_awaited_once()
+    args = ch._channel.send.await_args.args
+    assert args[0] == "oc_test"
+    assert marker in args[1]["markdown"]
 
 
 async def test_tool_result_success_silent(ch):
     """ToolResult 成功详情静默（精简，不发）。"""
     await ch.notify(ToolResult(tool_call_id="1", result={"status": "ok"}))
     ch._channel.send.assert_not_awaited()
-
-
-async def test_tool_result_error_sent(ch):
-    """ToolResult 错误发送（❌）。"""
-    await ch.notify(ToolResult(tool_call_id="1", error="boom"))
-    ch._channel.send.assert_awaited_once()
-    assert "❌ 工具错误" in ch._channel.send.await_args.args[1]["markdown"]
-
-
-async def test_error_sent(ch):
-    await ch.notify(Error(message="oops"))
-    ch._channel.send.assert_awaited_once()
-    assert "⚠️" in ch._channel.send.await_args.args[1]["markdown"]
 
 
 async def test_notify_failure_no_raise():
@@ -141,6 +147,7 @@ async def test_notify_failure_no_raise():
     c._channel.send.side_effect = Exception("network down")
     await c.notify(Delta(delta="x"))  # 不应抛出
     await c.notify(ToolStart(tool_name="bash", arguments={}, tool_call_id="1"))  # 不应抛出
+    await c.stop()
 
 
 # ── call：接收 / 审批 ────────────────────────────────
@@ -161,47 +168,44 @@ async def test_on_message_enqueues():
     await c.stop()
 
 
-async def _approval_channel() -> FeishuChannel:
-    """构建审批测试通道：start() 注册闭包回调。"""
-    c = _make_channel()
-    await c.start()
-    c._chat_id = "oc_test"
-    return c
-
-
 async def _click(c: FeishuChannel, decision: str) -> None:
-    """等待审批卡片注册 token，模拟点击按钮（带超时保护）。"""
+    """等待审批卡片注册工具调用 id，模拟点击按钮（带超时保护）。"""
     for _ in range(1000):
         if c._pending_approvals:
             break
-        await asyncio.sleep(0)  # 让 call(Approval) task 推进到注册 token
+        await asyncio.sleep(0)  # 让 call(Approval) task 推进到注册 Future
     assert c._pending_approvals
-    token = next(iter(c._pending_approvals))
-    c._on_card_action(FakeCardAction({"approval": token, "decision": decision}))
+    tc_id = next(iter(c._pending_approvals))
+    c._on_card_action(FakeCardAction({"tool_call_id": tc_id, "decision": decision}))
 
 
-async def test_approval_card_button():
-    """审批：卡片按钮回调 → ApprovalRsp。"""
-    c = await _approval_channel()
+@pytest.mark.parametrize(
+    ("decision", "expected", "feedback"),
+    [
+        ("approve", ApprovalRsp(approved=True, reason=None), "✅ 已通过"),
+        ("reject", ApprovalRsp(approved=False, reason="用户拒绝"), "❌ 已拒绝"),
+    ],
+)
+async def test_approval(decision, expected, feedback):
+    """审批：按钮回调 → ApprovalRsp，反馈卡片保留工具调用信息。"""
+    c = _make_channel()
+    await c.start()  # 注册闭包回调
+    c._chat_id = "oc_test"
     task = asyncio.create_task(
-        c.call(Approval(tool_name="mcp_tavily", arguments={"query": "x"}))
+        c.call(Approval(tool_name="t", arguments={"cmd": "x"}, tool_call_id="tc1"))
     )
-    await _click(c, "approve")
+    await _click(c, decision)
     rsp = await task
-    assert rsp == ApprovalRsp(approved=True, reason=None)
-    # 卡片含审批按钮（CardPayload.data 是卡片 dict）
+    assert rsp == expected
+    # 审批卡含按钮与工具信息
     card = c._channel.send.await_args.args[1]["card"]
-    card = getattr(card, "data", card)
-    assert "🔐 工具审批" in card["header"]["title"]["content"]
-    await c.stop()
-
-
-async def test_approval_reject():
-    """审批：❌ 拒绝 → ApprovalRsp(approved=False)。"""
-    c = await _approval_channel()
-    task = asyncio.create_task(c.call(Approval(tool_name="t", arguments={})))
-    await _click(c, "reject")
-    rsp = await task
-    assert rsp.approved is False
-    assert rsp.reason == "用户拒绝"
+    assert card["header"]["title"]["content"] == "🔐 工具审批"
+    # 反馈卡：状态 + 保留工具调用信息
+    c._channel.update_card.assert_awaited_once()
+    args = c._channel.update_card.await_args.args
+    assert args[0] == "msg_1"
+    card = args[1]
+    assert feedback in card["header"]["title"]["content"]
+    body = " ".join(e.get("content", "") for e in card["body"]["elements"])
+    assert "**t**" in body and '"cmd"' in body
     await c.stop()

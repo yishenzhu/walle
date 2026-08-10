@@ -28,7 +28,7 @@ class ToolExecutor:
         self._approver = approver  # 审批策略，None 时无审批渠道 → 拒绝
 
     async def _check_approval(
-        self, name: str, args: dict[str, Any]
+        self, name: str, args: dict[str, Any], tc_id: str
     ) -> str | None:
         decision = self._policy.evaluate(name, args)
         if decision == ApprovalDecision.DENY:
@@ -37,7 +37,9 @@ class ToolExecutor:
             return None
         if self._approver is None:
             return f"Tool '{name}' denied: no approval channel"
-        response = await self._approver.ask(tool_name=name, arguments=args)
+        response = await self._approver.ask(
+            tool_name=name, arguments=args, tool_call_id=tc_id
+        )
         if response.approved:
             return None
         reason = f"Tool '{name}' denied by user"
@@ -65,7 +67,7 @@ class ToolExecutor:
                 ToolStart(tool_name=name, arguments=args, tool_call_id=tc_id)
             )
 
-        denied = await self._check_approval(name, args)
+        denied = await self._check_approval(name, args, tc_id)
         if denied:
             logger.info(denied)
             if self._channel is not None:
