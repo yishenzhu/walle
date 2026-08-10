@@ -45,7 +45,7 @@ class FeishuChannel:
         self._channel = lark_channel.FeishuChannel(app_id=app_id, app_secret=app_secret)
         self._queue: asyncio.Queue[UserInput] = asyncio.Queue()
         self._chat_id: str = ""          # 当前会话 chat_id
-        # 流式：Delta 入队，None 为回合结束哨兵；任务 start 时创建，stop 时取消
+        # 流式：Delta 入队，None 为回合结束哨兵；任务懒启动（首个 Delta 时创建）
         self._stream_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._stream_task: asyncio.Task | None = None
         # 审批：工具调用 id → 等待中的 Future（工具并发执行，按 id 路由）
@@ -87,8 +87,6 @@ class FeishuChannel:
         self._channel.on(Events.MESSAGE, on_message)
         self._channel.on(Events.CARD_ACTION, on_card_action)
         await self._channel.connect_until_ready()
-        # 常驻流任务：producer 阻塞消费队列，有 Delta 才建卡，start 即可安全创建
-        self._stream_task = asyncio.create_task(self._run_stream())
         logger.info("feishu channel ready")
 
     async def stop(self) -> None:
@@ -114,9 +112,9 @@ class FeishuChannel:
         try:
             match n:
                 case Delta(delta=delta):
-                    await self._stream_queue.put(delta)
+                    await self._stream_delta(delta)
                 case DeltaEnd():
-                    await self._stream_queue.put(None)  # None 结束当前卡片流
+                    await self._stream_delta(None)  # None 结束当前卡片流
                 case ToolStart(tool_name=name, arguments=args):
                     await self._send_tool_card(name, args)
                 case _:
@@ -125,6 +123,12 @@ class FeishuChannel:
                         await self._channel.send(self._chat_id, {"markdown": text})
         except Exception as err:
             logger.warning(f"feishu notify failed: {err}")
+
+    async def _stream_delta(self, delta: str | None) -> None:
+        """流式增量入队；None 为回合结束哨兵。首个 Delta 时懒启动常驻流任务。"""
+        if self._stream_task is None:
+            self._stream_task = asyncio.create_task(self._run_stream())
+        await self._stream_queue.put(delta)
 
     async def _send_tool_card(self, tool_name: str, arguments: dict) -> None:
         """工具调用卡片：🔧 工具名 + 参数，美观展示。"""
