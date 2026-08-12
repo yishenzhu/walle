@@ -104,8 +104,6 @@ stop_obs() {
 }
 
 # ── 启动 agent ────────────────────────────────────────
-AGENT_PID_FILE="$PROJ_ROOT/.agent.pid"
-
 start_agent() {
     log_step "启动 walle agent ..."
     cd "$PROJ_ROOT"
@@ -117,16 +115,14 @@ start_agent() {
 }
 
 stop_agent() {
-    # 用 pgrep 精确匹配 walle.main 进程（PID 文件仅是 setsid 壳，勿直接 kill）
+    # 按进程名精确匹配 walle.main（setsid 起的服务端 PID 会 fork，不能用 PID 文件）
     local pids
     pids=$(pgrep -f "python.* -m walle.main" || true)
     if [ -n "$pids" ]; then
         log_step "停止 agent 服务端 (pid $pids) ..."
         kill $pids 2>/dev/null
-        rm -f "$AGENT_PID_FILE"
         log_info "agent 服务端已停止"
     else
-        rm -f "$AGENT_PID_FILE"
         log_info "agent 服务端未在运行"
     fi
 }
@@ -216,7 +212,6 @@ main() {
         if ! port_in_use 8899; then
             setsid env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
                 "$PY" -m walle.main >/dev/null 2>&1 < /dev/null &
-            echo $! > "$AGENT_PID_FILE"
             log_info "agent 已在后台启动（常驻，--stop 停止）"
             for _ in $(seq 1 100); do
                 if port_in_use 8899; then

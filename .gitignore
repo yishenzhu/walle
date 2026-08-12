@@ -7,4 +7,3 @@ data/
 .env
 conf.yaml
 /tmp
-.agent.pid
