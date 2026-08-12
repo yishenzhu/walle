@@ -131,6 +131,7 @@ class MCPClient:
                 )
             elif self._conf.url:
                 del params["url"]
+                # timeout 语义为秒（httpx 原生），未配置用默认
                 (
                     read_stream,
                     write_stream,

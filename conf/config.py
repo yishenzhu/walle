@@ -25,7 +25,7 @@ class MCPConfig(BaseModel):
     cwd: str | None = None
     url: str | None = None
     headers: dict[str, str] | None = None
-    timeout: int | None = None
+    timeout: int | None = None   # 连接超时（秒），None 用 httpx 默认
     enabled: bool = True
 
 

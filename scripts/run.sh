@@ -39,6 +39,7 @@ walle 启动脚本
   --no-obs       不启动可观测性容器，仅启动 agent
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
+  --stop         停止常驻 agent 服务端
   --test         运行测试，不启动 agent
   --cli          启动 agent 服务端并自动连接一个 CLI 客户端
   --help         显示此帮助信息
@@ -47,6 +48,7 @@ walle 启动脚本
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
   ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
+  ./scripts/run.sh --stop             # 停止常驻 agent 服务端
   ./scripts/run.sh --obs-only         # 仅启动可观测性
   ./scripts/run.sh --stop-obs         # 停止可观测性
   ./scripts/run.sh --test             # 运行测试
@@ -102,6 +104,8 @@ stop_obs() {
 }
 
 # ── 启动 agent ────────────────────────────────────────
+AGENT_PID_FILE="$PROJ_ROOT/.agent.pid"
+
 start_agent() {
     log_step "启动 walle agent ..."
     cd "$PROJ_ROOT"
@@ -110,6 +114,21 @@ start_agent() {
     # 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
     env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
         "$PY" -m walle.main
+}
+
+stop_agent() {
+    # 用 pgrep 精确匹配 walle.main 进程（PID 文件仅是 setsid 壳，勿直接 kill）
+    local pids
+    pids=$(pgrep -f "python.* -m walle.main" || true)
+    if [ -n "$pids" ]; then
+        log_step "停止 agent 服务端 (pid $pids) ..."
+        kill $pids 2>/dev/null
+        rm -f "$AGENT_PID_FILE"
+        log_info "agent 服务端已停止"
+    else
+        rm -f "$AGENT_PID_FILE"
+        log_info "agent 服务端未在运行"
+    fi
 }
 
 # ── 启动 CLI 客户端 ──────────────────────────────────
@@ -121,8 +140,9 @@ start_cli_client() {
 }
 
 # ── 端口检测 ─────────────────────────────────────────
+# 用 ss 读内核监听表（不发起连接，永不挂起）——/dev/tcp 会因 SYN 黑洞挂起 2 分钟
 port_in_use() {
-    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+    ss -tln 2>/dev/null | awk '{print $4}' | grep -q ":$1$"
 }
 
 # ── 运行测试 ──────────────────────────────────────────
@@ -137,6 +157,7 @@ main() {
     local no_obs=false
     local obs_only=false
     local stop_obs_flag=false
+    local stop_agent_flag=false
     local test_only=false
     local cli=false
 
@@ -146,6 +167,7 @@ main() {
             --no-obs)      no_obs=true ;;
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
+            --stop)        stop_agent_flag=true ;;
             --test)        test_only=true ;;
             --cli)         cli=true ;;
             --help|-h)     usage ;;
@@ -156,6 +178,12 @@ main() {
         esac
         shift
     done
+
+    # 停止常驻 agent 服务端
+    if [ "$stop_agent_flag" = true ]; then
+        stop_agent
+        exit 0
+    fi
 
     # 运行测试
     if [ "$test_only" = true ]; then
@@ -182,18 +210,24 @@ main() {
         start_obs
     fi
 
-    # --cli：服务端若未运行则后台起一个，等就绪后前台连客户端（一键对话）
+    # --cli：服务端若未运行则后台常驻起一个（setsid 脱离终端与信号，
+    # Ctrl+C 客户端不波及服务端）；等就绪后前台连客户端（一键对话）
     if [ "$cli" = true ]; then
         if ! port_in_use 8899; then
-            start_agent &
-            AGENT_PID=$!
-            trap 'kill "$AGENT_PID" 2>/dev/null || true' EXIT
+            setsid env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
+                "$PY" -m walle.main >/dev/null 2>&1 < /dev/null &
+            echo $! > "$AGENT_PID_FILE"
+            log_info "agent 已在后台启动（常驻，--stop 停止）"
             for _ in $(seq 1 100); do
                 if port_in_use 8899; then
                     break
                 fi
                 sleep 0.2
             done
+            if ! port_in_use 8899; then
+                log_error "agent 未在 20 秒内就绪，请检查日志: logs/agent.log"
+                exit 1
+            fi
         else
             log_info "agent 已在运行，直接连接"
         fi

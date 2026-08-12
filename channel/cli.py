@@ -161,7 +161,10 @@ class CLIChannel:
             if session is not None:
                 await session.close()
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass   # 对端已断开：wait_closed 可能抛 BrokenPipeError，属预期
 
 
 # ── 客户端（独立进程）─────────────────────────────────
@@ -177,6 +180,7 @@ class CLIClient:
         self._host = host
         self._port = port
         self._chat_id = f"cli-{uuid.uuid4().hex[:12]}"
+        self._reply_done = asyncio.Event()   # 回复完成（delta_end）信号
 
     @staticmethod
     def render_notification(data: dict) -> None:
@@ -213,29 +217,35 @@ class CLIClient:
 
     # ── 双循环 ────────────────────────────────────────
     async def _read_stdin(self, writer) -> None:
-        """stdin → input 帧；EOF / Ctrl+C 退出。"""
+        """stdin → input 帧；发送后等回复完成再提示下一个（避免提示符与回复混排）。"""
         while True:
             try:
                 content = (await asyncio.to_thread(input, "You> ")).strip()
-            except (EOFError, KeyboardInterrupt):
-                return
+            except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
+                return   # EOF / Ctrl+C / 取消：优雅退出，不打 traceback
             if content:
                 await self._send(
                     writer,
                     {"type": "input", "content": content, "chat_id": self._chat_id},
                 )
+                self._reply_done.clear()
+                await self._reply_done.wait()
 
     async def _read_socket(self, reader, writer) -> None:
-        """socket 帧：notify → 渲染；call → 交互并回 reply。"""
+        """socket 帧：notify → 渲染；delta_end 置回复完成；call → 交互并回 reply。"""
         while line := await reader.readline():
             if not line:
+                self._reply_done.set()   # 断开：解除等待，避免挂起
                 return
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
             if msg.get("type") == "notify":
-                self.render_notification(msg["data"])
+                data = msg["data"]
+                self.render_notification(data)
+                if data.get("type") == "delta_end":
+                    self._reply_done.set()
             elif msg.get("type") == "call":
                 reply = await self._handle_call(msg["data"])
                 await self._send(

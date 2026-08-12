@@ -10,7 +10,7 @@ QwenImage:
   url: https://dashscope.aliyuncs.com/api/v1/mcps/QwenImage/mcp
   headers:
     Authorization: Bearer sk-cad17ca56dd24c1e82368981b4d4afa5
-  timeout: 30000
+  timeout: 30
   enabled: false
 tavily:
   url: https://mcp.tavily.com/mcp
