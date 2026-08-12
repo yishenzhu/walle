@@ -278,4 +278,7 @@ class CLIClient:
 
 
 if __name__ == "__main__":
-    asyncio.run(CLIClient().run())
+    try:
+        asyncio.run(CLIClient().run())
+    except KeyboardInterrupt:
+        print()   # Ctrl+C 优雅退出，不打印栈
