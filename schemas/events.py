@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class Notification(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
+    chat_id: str = ""  # 目标会话（路由字段）
 
 
 class Delta(Notification):
@@ -56,6 +57,7 @@ NotificationUnion = Annotated[
 class Service(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
+    chat_id: str = ""  # 目标会话（路由字段）
 
 
 class Receive(Service):

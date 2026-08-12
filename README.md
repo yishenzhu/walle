@@ -19,7 +19,7 @@
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
 | 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| 📱 **飞书集成** | 应用机器人：长连接接收消息 + 流式更新回复（打字机效果），CLI 可降级为观察者 |
+| � **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
 | 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
 ---
@@ -37,7 +37,7 @@
      ┌──────────────┐           ┌──────────────┐
      │   Channel    │           │    Runner    │
      │  (notify/call)│           │  (Agent 循环) │
-     │ CLI/Fanout/Feishu│        │  流式/批量执行 │
+     │     CLI      │           │  流式/批量执行 │
      └──────────────┘           └──────┬───────┘
                                        │
                     ┌──────────────────┼──────────────────┐
@@ -79,7 +79,7 @@
 |---|---|---|
 | 入口 | `main.py` | 依赖注入组装，启动 REPL 循环 |
 | 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
-| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 实现、Fanout 多观察者、飞书应用机器人（长连接收发）、审批/提问服务 |
+| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
 | 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
@@ -116,15 +116,12 @@ cp .env.example .env             # LLM API Key
 ```bash
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅 agent
-./scripts/run.sh --feishu        # 飞书交互 + 可观测性
 ./scripts/run.sh --obs-only      # 仅可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试
 ```
 
-启动后在终端输入消息即可对话，直接回车或按 Ctrl+C 退出。
-
-> `--feishu` 模式需先在 `conf.yaml` 配置 `feishu.app_id` / `feishu.app_secret`；未配置会报错提示。
+启动后可用 `walle.channel.cli` 连接对话（JSON-line 协议多会话），服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
@@ -166,24 +163,7 @@ tool:
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [allow, ask_user]             # 提问工具自动放行
     default: ask                      # 默认需人工审批
-
-feishu:
-  app_id: ""          # 应用机器人 App ID（开发者后台 → 凭证与基础信息），留空则不启用
-  app_secret: ""       # 应用机器人 App Secret
 ```
-
-#### 飞书集成
-
-创建企业自建应用并开启机器人能力，配置 `im:message` 系列权限，在开发者后台将订阅方式设为「使用长连接接收事件」。填入 `conf.yaml` 的 `feishu.app_id` / `feishu.app_secret` 后，以飞书模式启动：
-
-```bash
-./scripts/run.sh --feishu
-```
-
-- 用户在飞书发消息 → agent 处理 → 回复到飞书
-- 流式回复通过「创建消息 → 更新消息」实现打字机效果
-- 工具调用 / 结果 / 错误即时推送
-- CLI 降级为本地只读观察者（复用 `cli.notify` 渲染），方便调试
 
 #### 审批规则
 
@@ -313,10 +293,8 @@ walle/
 │   ├── executor.py            #   工具执行器（审批·并发·超时）
 │   └── approval.py            #   审批规则引擎
 ├── channel/                   # 交互通道
-│   ├── channel.py             #   Channel Protocol (notify/call) + CLI 实现
-│   ├── fanout.py              #   FanoutChannel 通知侧多观察者
-│   ├── feishu.py              #   飞书应用机器人（长连接收发 + 流式）
-│   └── observers.py           #   LogObserver
+│   ├── protocol.py            #   Channel Protocol (notify/call)
+│   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
 ├── tools/                     # 工具系统
 │   ├── tool.py                #   Tool 模型 + ContextVar
 │   ├── registry.py            #   工具注册表

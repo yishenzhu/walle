@@ -1,21 +1,26 @@
 import argparse
 import asyncio
+import logging
+
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
-from .core import Agent, Runner, ToolExecutor, ChannelApprover
-from .channel import CLIChannel, FanoutChannel, LogObserver, FeishuChannel
-from .schemas import Receive
+from .core import Agent, Runner, SessionRouter
+from .channel import CLIChannel
 from .tools import ToolRegistry
-from .session import (
-    InMemorySession,
-    CompressibleSession,
-    SummaryCompressor,
-    PromptLimitPolicy,
-)
+
+logger = logging.getLogger(__name__)
 
 
-async def main(channel: str = "cli"):
+def _make_runner() -> Runner:
+    """构建 Runner（持有默认 provider / executor，供所有会话复用）。"""
+    return Runner()
 
+
+async def main() -> None:
+    """启动 agent 服务端 + CLI 客户端连接通道。
+
+    CLI 客户端需显式启动交互：python -m walle.channel.cli。
+    """
     conf = Config.load()
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
@@ -23,54 +28,27 @@ async def main(channel: str = "cli"):
 
     registry = await ToolRegistry().initialize(conf)
 
-    agent = Agent(
-        instruction="You are a helpful assistant.",
-        tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
+    # 会话路由：按 chat_id 取/建 Session（每会话独立 agent，历史/kernel 隔离）
+    cli_ch = CLIChannel()
+    router = SessionRouter(
+        transport=cli_ch,
+        agent_factory=lambda: Agent(
+            instruction="You are a helpful assistant.",
+            tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
+        ),
+        runner=_make_runner(),
     )
+    cli_ch.dispatcher = router   # 消息入口绑定（start 前）
+    await cli_ch.start()
 
-    session = CompressibleSession(
-        session=InMemorySession(),
-        policy=PromptLimitPolicy(),
-        compressor=SummaryCompressor(),
-    )
-
-    # 交互主通道：--channel feishu 用飞书（长连接收发），否则 CLI
-    cli = CLIChannel()
-    if channel == "feishu":
-        if not conf.feishu.app_id:
-            raise ValueError("feishu 模式需要 conf.yaml 配置 feishu.app_id / app_secret")
-        target = FeishuChannel(conf.feishu.app_id, conf.feishu.app_secret)
-        await target.start()
-        observers: list = [LogObserver()]  # 只保留日志，本地 CLI 不渲染
-    else:
-        target = cli
-        observers = [LogObserver()]
-    fanout = FanoutChannel(target=target, observers=observers)
-    runner = Runner(
-        channel=fanout,
-        session=session,
-        tool_executor=ToolExecutor(conf.tool, channel=fanout, approver=ChannelApprover(fanout)),
-    )
-
-    # 终止模型：run 期间装 SIGINT handler（Ctrl+C 取消 run）；空闲时默认（Ctrl+C 退出）
     try:
-        while True:
-            user_input = await fanout.call(Receive())
-            if not user_input.content:
-                break            # 空输入（直接回车）/ EOF / 空闲 Ctrl+C → 退出（统一出口）
-            await cli.run_interruptible(runner.run(agent, user_input.content, streamed=True))
+        # 事件驱动，主协程挂起等待（Ctrl+C 退出）
+        await asyncio.Event().wait()
     finally:
-        await runner.close()        # 关闭会话级资源（kernel + session）
+        await router.close()        # 关闭所有会话（kernel + stream task）
+        await cli_ch.stop()
         await registry.close()      # 关闭进程级资源（MCP 客户端）
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="walle agent")
-    parser.add_argument(
-        "--channel",
-        choices=["cli", "feishu"],
-        default="cli",
-        help="交互通道：cli（默认）或 feishu",
-    )
-    args = parser.parse_args()
-    asyncio.run(main(args.channel))
+    asyncio.run(main())

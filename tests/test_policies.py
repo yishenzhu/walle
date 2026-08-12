@@ -2,7 +2,7 @@
 import pytest
 
 from ..schemas import Usage, UserMessage
-from ..session.policies import PromptLimitPolicy, CompressionContext, PROMPT_LIMIT
+from ..messages import PromptLimitPolicy, CompressionContext, PROMPT_LIMIT
 
 
 class TestPromptLimitPolicy:

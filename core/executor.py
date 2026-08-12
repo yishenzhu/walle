@@ -5,11 +5,10 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..schemas import ToolResult as ToolResultEvent
+from ..schemas import ToolResult, ToolStart
 from .approval import ApprovalPolicy, Approver
 from ..conf import ApprovalDecision, ToolConfig
 from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
-from ..schemas import ToolStart
 from ..tools import Tool, ToolContext, tool_context
 
 logger = logging.getLogger(__name__)
@@ -72,7 +71,7 @@ class ToolExecutor:
             logger.info(denied)
             if self._channel is not None:
                 await self._channel.notify(
-                    ToolResultEvent(tool_call_id=tc_id, error=denied)
+                    ToolResult(tool_call_id=tc_id, error=denied)
                 )
             return tc_id, denied
 
@@ -94,14 +93,14 @@ class ToolExecutor:
             TOOL_ERRORS.add(1, attrs)
             error = f"Error: tool '{name}' timed out after {self._timeout}s"
             if self._channel is not None:
-                await self._channel.notify(ToolResultEvent(tool_call_id=tc_id, error=error))
+                await self._channel.notify(ToolResult(tool_call_id=tc_id, error=error))
             return tc_id, error
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)
             error = f"Error: {e}"
             if self._channel is not None:
-                await self._channel.notify(ToolResultEvent(tool_call_id=tc_id, error=error))
+                await self._channel.notify(ToolResult(tool_call_id=tc_id, error=error))
             return tc_id, error
 
     async def execute_batch(

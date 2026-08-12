@@ -22,8 +22,4 @@ tool:
       - [allow, grilling]
     default: ask
 
-feishu:
-  app_id: ""          # 应用机器人 App ID（开发者后台 → 凭证与基础信息），留空则不启用
-  app_secret: ""       # 应用机器人 App Secret
-
 # MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）

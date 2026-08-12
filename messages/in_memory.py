@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from ..schemas import Message, Usage
 
 
-class InMemorySession:
+class InMemoryMessages:
     def __init__(self):
         self._items: list[Message] = []
 

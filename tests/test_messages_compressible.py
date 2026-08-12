@@ -1,10 +1,13 @@
-"""CompressibleSession 测试。"""
+"""CompressibleMessages 测试。"""
 import pytest
 
 from ..schemas import UserMessage, Usage, Message
-from ..session.memory import InMemorySession
-from ..session.compressible_session import CompressibleSession
-from ..session.policies import PromptLimitPolicy, CompressionContext
+from ..messages import (
+    InMemoryMessages,
+    CompressibleMessages,
+    PromptLimitPolicy,
+    CompressionContext,
+)
 
 
 class FakeCompressor:
@@ -24,7 +27,7 @@ class FakeCompressor:
 
 @pytest.fixture
 def inner():
-    return InMemorySession()
+    return InMemoryMessages()
 
 
 @pytest.fixture
@@ -33,57 +36,57 @@ def compressor():
 
 
 @pytest.fixture
-def session(inner, compressor):
-    return CompressibleSession(
-        session=inner,
+def messages(inner, compressor):
+    return CompressibleMessages(
+        messages=inner,
         policy=PromptLimitPolicy(limit=100),
         compressor=compressor,
     )
 
 
-class TestCompressibleSession:
-    async def test_add_below_limit_no_compress(self, session, compressor):
-        await session.add(
+class TestCompressibleMessages:
+    async def test_add_below_limit_no_compress(self, messages, compressor):
+        await messages.add(
             [UserMessage(content="hi")],
             usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
         assert compressor.called is False
 
-    async def test_add_above_limit_triggers_compress(self, session, compressor):
-        await session.add(
+    async def test_add_above_limit_triggers_compress(self, messages, compressor):
+        await messages.add(
             [UserMessage(content="hi")],
             usage=Usage(prompt_tokens=200, completion_tokens=10, total_tokens=210),
         )
         assert compressor.called is True
 
     async def test_auto_compress_disabled(self, inner, compressor):
-        session = CompressibleSession(
-            session=inner,
+        messages = CompressibleMessages(
+            messages=inner,
             policy=PromptLimitPolicy(limit=1),
             compressor=compressor,
             auto_compress=False,
         )
-        await session.add(
+        await messages.add(
             [UserMessage(content="hi")],
             usage=Usage(prompt_tokens=1000, completion_tokens=10, total_tokens=1010),
         )
         assert compressor.called is False
 
-    async def test_manual_compress(self, session, compressor):
+    async def test_manual_compress(self, messages, compressor):
         for i in range(4):
-            await session.add([UserMessage(content=f"msg{i}")])
-        await session.compress()
+            await messages.add([UserMessage(content=f"msg{i}")])
+        await messages.compress()
         assert compressor.called is True
-        result = await session.get()
+        result = await messages.get()
         assert result[0].content == "[summary]"
 
-    async def test_delegates_pop(self, session):
-        await session.add([UserMessage(content="first"), UserMessage(content="second")])
-        popped = await session.pop()
+    async def test_delegates_pop(self, messages):
+        await messages.add([UserMessage(content="first"), UserMessage(content="second")])
+        popped = await messages.pop()
         assert popped.content == "first"
 
-    async def test_delegates_clear(self, session):
-        await session.add([UserMessage(content="hi")])
-        await session.clear()
-        result = await session.get()
+    async def test_delegates_clear(self, messages):
+        await messages.add([UserMessage(content="hi")])
+        await messages.clear()
+        result = await messages.get()
         assert len(result) == 0

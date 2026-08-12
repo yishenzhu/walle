@@ -35,7 +35,6 @@ class Handoff(BaseModel):
 class Agent(BaseModel, Generic[TContext]):
     name: str | None = None
     description: str | None = None
-    model: str | None = None
     instruction: str | None = None
     handoffs: list[Handoff] = Field(default_factory=list)
     temperature: float | None = None
@@ -54,11 +53,14 @@ class Agent(BaseModel, Generic[TContext]):
         agent = self
 
         async def fn(input: str):
-            from .runner import Runner
+            from .runner import Runner, SessionEnv
+            from ..infra import PyKernel
+            from ..messages import InMemoryMessages
 
-            # 嵌套 Runner 拥有自己的 kernel：与父执行实体隔离，互不污染
+            # 嵌套 Runner 显式构造隔离环境（独立 kernel + 历史）：与父执行实体互不污染
             runner = Runner()
-            result = await runner.run(agent, input)
+            env = SessionEnv(kernel=PyKernel(), messages=InMemoryMessages())
+            result = await runner.run(agent, input, env=env)
             return result.output
 
         return Tool.from_function(

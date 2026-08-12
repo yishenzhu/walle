@@ -2,9 +2,9 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Handoff, Runner, RunConfig, ToolExecutor
+from ..core import Agent, Handoff, Runner, RunOptions, SessionEnv, ToolExecutor
 from ..schemas import UserMessage
-from ..session.memory import InMemorySession
+from ..messages import InMemoryMessages
 from ..tools import Tool
 
 from .conftest import (
@@ -35,6 +35,24 @@ def allow_executor():
     return ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW)))
 
 
+@pytest.fixture
+def runner(allow_executor):
+    """带放行审批执行器的 Runner（executor 由 Runner 持有）。"""
+    return Runner(executor=allow_executor)
+
+
+@pytest.fixture
+def env(channel):
+    """默认会话环境：独立 kernel + 历史（每测试隔离）。"""
+    from ..infra import PyKernel
+
+    return SessionEnv(
+        channel=channel,
+        kernel=PyKernel(),
+        messages=InMemoryMessages(),
+    )
+
+
 def make_echo_tool(result="echoed"):
     async def fn(args):
         return result
@@ -50,48 +68,48 @@ def make_echo_tool(result="echoed"):
 class TestRunnerSimple:
     """无工具调用的简单场景。"""
 
-    async def test_single_turn_text_response(self, provider, channel):
+    async def test_single_turn_text_response(self, provider, env):
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="Hello!"))
         )
         agent = Agent(instruction="You are helpful.")
-        runner = Runner(channel=channel, provider=provider)
+        runner = Runner()
 
-        result = await runner.run(agent, "hi")
+        result = await runner.run(agent, "hi", env=env)
 
         assert result.output == "Hello!"
         assert result.completed_turns == 1
         assert result.input == "hi"
 
-    async def test_instruction_in_messages(self, provider, channel):
+    async def test_instruction_in_messages(self, provider, env):
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="ok"))
         )
         agent = Agent(instruction="be concise")
-        runner = Runner(channel=channel, provider=provider)
+        runner = Runner()
 
-        await runner.run(agent, "hello")
+        await runner.run(agent, "hello", env=env)
 
-        # _build_messages 返回 session 消息 + system instruction
-        messages = await runner._build_messages(agent)
+        # _build_messages 返回会话历史 + system instruction
+        messages = await runner._build_messages(agent, InMemoryMessages())
         roles = [m.role for m in messages]
         assert "system" in roles
 
-    async def test_none_content_output(self, provider, channel):
+    async def test_none_content_output(self, provider, env):
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content=None))
         )
         agent = Agent(instruction="helpful")
-        runner = Runner(channel=channel, provider=provider)
+        runner = Runner()
 
-        result = await runner.run(agent, "hi")
+        result = await runner.run(agent, "hi", env=env)
         assert result.output is None
 
 
 class TestRunnerWithTools:
     """带工具调用的场景。"""
 
-    async def test_tool_call_then_answer(self, provider, channel, allow_executor):
+    async def test_tool_call_then_answer(self, provider, env, runner):
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
@@ -104,19 +122,15 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool("result!")])
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
-            config=RunConfig(max_turns=5),
-        )
 
-        result = await runner.run(agent, "use echo")
+        result = await runner.run(
+            agent, "use echo", env=env
+        )
 
         assert result.output == "I used echo"
         assert result.completed_turns == 2
 
-    async def test_multiple_tool_calls_in_one_turn(self, provider, channel, allow_executor):
+    async def test_multiple_tool_calls_in_one_turn(self, provider, env, runner):
         async def fn_a(args):
             return "a"
 
@@ -139,17 +153,14 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful", tools=lambda: [tool_a, tool_b])
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
-        )
 
-        result = await runner.run(agent, "use both")
+        result = await runner.run(
+            agent, "use both", env=env
+        )
         assert result.completed_turns == 2
         assert result.output == "done"
 
-    async def test_unknown_tool_call(self, provider, channel, allow_executor):
+    async def test_unknown_tool_call(self, provider, env, runner):
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
@@ -162,13 +173,10 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
-        )
 
-        result = await runner.run(agent, "use unknown")
+        result = await runner.run(
+            agent, "use unknown", env=env
+        )
         assert result.completed_turns == 2
         assert result.output == "handled"
 
@@ -176,7 +184,7 @@ class TestRunnerWithTools:
 class TestRunnerMaxTurns:
     """max_turns 限制测试。"""
 
-    async def test_max_turns_reached(self, provider, channel, allow_executor):
+    async def test_max_turns_reached(self, provider, env, runner):
         responses = [
             FakeCompletion(
                 FakeMessage(
@@ -190,30 +198,25 @@ class TestRunnerMaxTurns:
         provider.client.chat.completions.set_responses(*responses)
 
         agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool()])
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
-            config=RunConfig(max_turns=3),
-        )
 
-        result = await runner.run(agent, "loop forever")
+        result = await runner.run(
+            agent,
+            "loop forever",
+            env=env,
+            options=RunOptions(max_turns=3),
+        )
         assert result.completed_turns == 3
         assert result.output is None
 
-    async def test_custom_max_turns(self, provider, channel, allow_executor):
+    async def test_custom_max_turns(self, provider, env, runner):
         provider.client.chat.completions.set_responses(
             FakeCompletion(FakeMessage(content="immediate"))
         )
         agent = Agent(instruction="helpful")
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
-            config=RunConfig(max_turns=1),
-        )
 
-        result = await runner.run(agent, "hi")
+        result = await runner.run(
+            agent, "hi", env=env, options=RunOptions(max_turns=1)
+        )
         assert result.completed_turns == 1
         assert result.max_turns == 1
 
@@ -221,7 +224,7 @@ class TestRunnerMaxTurns:
 class TestRunnerHandoff:
     """Agent Handoff 测试。"""
 
-    async def test_handoff_to_another_agent(self, provider, channel, allow_executor):
+    async def test_handoff_to_another_agent(self, provider, env, runner):
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
@@ -245,13 +248,11 @@ class TestRunnerHandoff:
             handoffs=[Handoff(target=researcher)],
         )
 
-        runner = Runner(
-            channel=channel,
-            provider=provider,
-            tool_executor=allow_executor,
+        result = await runner.run(
+            main_agent,
+            "research something",
+            env=env,
         )
-
-        result = await runner.run(main_agent, "research something")
         assert result.completed_turns == 2
         assert result.last_agent.name == "researcher"
         assert result.output == "researched!"
@@ -262,12 +263,12 @@ class TestRunnerModelParams:
 
     def test_no_params(self, provider):
         agent = Agent(instruction="helpful")
-        runner = Runner(provider=provider)
+        runner = Runner()
         assert runner.model_params(agent) == {}
 
     def test_temperature(self, provider):
         agent = Agent(instruction="helpful", temperature=0.7)
-        runner = Runner(provider=provider)
+        runner = Runner()
         params = runner.model_params(agent)
         assert params["temperature"] == 0.7
 
@@ -278,7 +279,7 @@ class TestRunnerModelParams:
             answer: str
 
         agent = Agent(instruction="helpful", output_type=MyOutput)
-        runner = Runner(provider=provider)
+        runner = Runner()
         params = runner.model_params(agent)
         assert "response_format" in params
         assert params["response_format"]["type"] == "json_schema"
@@ -290,7 +291,7 @@ class TestRunnerBuildTools:
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
         agent = Agent(instruction="helpful", tools=lambda: [tool])
-        runner = Runner(provider=provider)
+        runner = Runner()
         tools = runner._build_tools(agent)
         assert "echo" in tools
 
@@ -300,7 +301,7 @@ class TestRunnerBuildTools:
             instruction="helpful",
             handoffs=[Handoff(target=researcher)],
         )
-        runner = Runner(provider=provider)
+        runner = Runner()
         tools = runner._build_tools(agent)
         assert "transfer_to_researcher" in tools
 
@@ -312,7 +313,7 @@ class TestRunnerBuildTools:
             instruction="helpful",
             tools=lambda: [dynamic],
         )
-        runner = Runner(provider=provider)
+        runner = Runner()
         tools = runner._build_tools(agent)
         assert "echo" in tools
 
@@ -330,47 +331,97 @@ class TestRunnerBuildTools:
     def test_agent_tools_none(self, provider):
         """无 tools 源时 _build_tools 正常（空工具）。"""
         agent = Agent(instruction="helpful")
-        runner = Runner(provider=provider)
+        runner = Runner()
         assert runner._build_tools(agent) == {}
 
 
 class TestRunnerNoProvider:
-    """无 Provider 时应报错。"""
+    """无 Provider 时 run 应报错（默认 provider 缺失）。"""
 
-    def test_raises_without_provider(self):
-        OpenAIProvider_backup = None
-        from ..infra.provider import OpenAIProvider
-        OpenAIProvider_backup = OpenAIProvider._default
+    async def test_raises_without_provider(self):
+        from ..infra import OpenAIProvider, PyKernel
+        backup = OpenAIProvider._default
         OpenAIProvider._default = None
         try:
+            agent = Agent(instruction="helpful")
             with pytest.raises(RuntimeError, match="no invalid provider"):
-                Runner()
+                await Runner().run(
+                    agent, "hi", env=SessionEnv(kernel=PyKernel(), messages=InMemoryMessages())
+                )
         finally:
-            OpenAIProvider._default = OpenAIProvider_backup
+            OpenAIProvider._default = backup
 
 
 class TestRunnerKernel:
-    """Runner 持有会话级 kernel：经 ToolContext 供 python 工具使用，close 回收。"""
+    """Runner 完全无状态：kernel 由调用方传入 run，工具经其执行。"""
 
-    async def test_runner_owns_kernel_in_context(self, provider):
-        """kernel 挂到 ToolContext，且同一 Runner 的 kernel 实例稳定（跨 run 保留状态）。"""
-        runner = Runner(provider=provider)
-        ctx = runner.tool_context()
-        assert ctx.kernel is not None
-        assert runner.tool_context().kernel is ctx.kernel   # 同一 kernel
-        await runner.close()
+    async def test_run_uses_passed_kernel(self, provider, channel, allow_executor):
+        """run 传入的 kernel 被工具执行使用（同一 kernel 跨 run 状态保留）。"""
+        from ..infra import PyKernel
+        from ..tools import ToolContext, tool_context
 
-    async def test_runner_kernel_executes_code(self, provider):
-        """经 ToolContext 的 kernel 可直接执行代码。"""
-        runner = Runner(provider=provider)
-        ctx = runner.tool_context()
-        assert await ctx.kernel.run("40 + 2") == "42"
-        await runner.close()
+        async def py(args):
+            # 通过 tool_context 上下文变量拿 kernel 并执行
+            ctx = tool_context.get()
+            return await ctx.kernel.run("x = 5")
 
-    async def test_runner_kernel_state_persists_across_turns(self, provider):
-        """同一 Runner 多次 run：kernel 状态跨 run 保留（会话级）。"""
-        runner = Runner(provider=provider)
-        ctx = runner.tool_context()
-        assert await ctx.kernel.run("x = 10") == "(no output)"
-        assert await ctx.kernel.run("x * 2") == "20"
-        await runner.close()
+        tool = Tool(name="py", description="run py", parameters={"type": "object", "properties": {}}, fn=py)
+
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(FakeMessage(
+                tool_calls=[FakeToolCall(id="tc1", name="py", arguments="{}")]
+            )),
+            FakeCompletion(FakeMessage(content="done")),
+        )
+        agent = Agent(instruction="helpful", tools=lambda: [tool])
+
+        runner = Runner(executor=allow_executor)
+        kernel = PyKernel()
+        result = await runner.run(
+            agent,
+            "run",
+            env=SessionEnv(
+                channel=channel,
+                kernel=kernel,
+                messages=InMemoryMessages(),
+            ),
+        )
+        assert result.output == "done"
+        await kernel.close()
+
+    async def test_runner_kernel_state_persists_across_turns(self, provider, channel, allow_executor):
+        """同一 kernel 跨多次 run 保留状态（会话级，由 Session 持有）。"""
+        from ..infra import PyKernel
+        from ..tools import tool_context
+
+        async def py(args):
+            ctx = tool_context.get()
+            return await ctx.kernel.run(args["code"])
+
+        tool = Tool(name="py", description="run py", parameters={"type": "object", "properties": {"code": {"type": "string"}}}, fn=py)
+
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(FakeMessage(
+                tool_calls=[FakeToolCall(id="t1", name="py", arguments='{"code": "y = 10"}')]
+            )),
+            FakeCompletion(FakeMessage(content="ok")),
+            FakeCompletion(FakeMessage(
+                tool_calls=[FakeToolCall(id="t2", name="py", arguments='{"code": "y * 2"}')]
+            )),
+            FakeCompletion(FakeMessage(content="done")),
+        )
+        agent = Agent(instruction="helpful", tools=lambda: [tool])
+
+        runner = Runner(executor=allow_executor)
+        kernel = PyKernel()
+        r1 = await runner.run(
+            agent, "set",
+            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
+        )
+        r2 = await runner.run(
+            agent, "get",
+            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
+        )
+        assert r1.output == "ok"
+        assert r2.output == "done"
+        await kernel.close()

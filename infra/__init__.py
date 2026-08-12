@@ -11,3 +11,4 @@ from .metrics import (
 )
 from .provider import OpenAIProvider
 from .jupyter import PyKernel
+from .sqlite_store import SQLiteStore

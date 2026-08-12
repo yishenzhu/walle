@@ -11,5 +11,10 @@ from .executor import ToolExecutor
 from .runner import (
     Runner,
     RunResult,
-    RunConfig,
+    RunOptions,
+    SessionEnv,
+)
+from .session import (
+    Session,
+    SessionRouter,
 )

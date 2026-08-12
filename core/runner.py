@@ -1,11 +1,13 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from pydantic import BaseModel
 from typing import Any
 
 from .agent import Agent, TContext, Handoff
 from .executor import ToolExecutor
-from ..session import Session, InMemorySession
+from ..channel import Channel
+from ..messages import Messages, InMemoryMessages
 from ..infra import OpenAIProvider, tracer, AGENT_ITERATIONS, HANDOFF
 from ..schemas import (
     AssistantMessage,
@@ -15,10 +17,9 @@ from ..schemas import (
     UserMessage,
     Delta,
     DeltaEnd,
-    ToolResult as ToolResultEvent,
+    ToolResult,
 )
-from ..channel import Channel
-from ..tools import ToolContext, Tool, ChannelInteractor
+from ..tools import ToolContext, Tool
 from ..infra import PyKernel
 
 
@@ -27,9 +28,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_TURNS = 10
 
 
-class RunConfig(BaseModel):
-    model: str | None = None
+@dataclass
+class RunOptions:
+    """单次 run 的可选行为配置（怎么做），与会话环境（SessionEnv）分离。"""
+
     max_turns: int = DEFAULT_MAX_TURNS
+    streamed: bool = False      # 流式输出（delta 通知）
+
+
+@dataclass
+class SessionEnv:
+    """会话级环境与状态：Session 唯一持有，每次 run 原样传入。"""
+
+    kernel: PyKernel                  # 会话级有状态解释器（必填）
+    messages: Messages                # 会话历史（必填）
+    provider: OpenAIProvider = None         # 模型接入（None 用 Runner 默认）
+    channel: Channel = None          # 会话 channel 端点
 
 
 class RunResult(BaseModel):
@@ -43,66 +57,53 @@ class RunResult(BaseModel):
 
 
 class Runner:
+    """Agent 执行器：持有默认 provider / 工具执行器，env 未提供时复用。"""
+
     def __init__(
         self,
-        channel: Channel | None = None,
-        config: RunConfig | None = None,
         provider: OpenAIProvider | None = None,
-        session: Session | None = None,
-        tool_executor: ToolExecutor | None = None,
-    ):
-        self._channel = channel
-        self._config = config or RunConfig()
-        provider = provider or OpenAIProvider.get_default()
-        if provider is None:
-            raise RuntimeError("no invalid provider")
-        self._provider = provider
-        self._session = session or InMemorySession()
-        self._executor = tool_executor or ToolExecutor()
-        # 会话级计算资源：每个 Runner 拥有自己的 kernel
-        self._kernel = PyKernel()
-
-    def tool_context(self):
-        """构造执行上下文：kernel 等会话级状态跨工具调用保留。"""
-        return ToolContext(
-            kernel=self._kernel,
-            interact=ChannelInteractor(self._channel) if self._channel else None,
-        )
-
-    async def close(self) -> None:
-        """关闭会话级资源：kernel + session。"""
-        await self._kernel.close()
-        await self._session.close()
+        executor: ToolExecutor | None = None,
+    ) -> None:
+        # 默认实例（复用，避免每次 run 新建）
+        self._provider = provider or OpenAIProvider.get_default()
+        self._executor = executor or ToolExecutor()
 
     async def run(
         self,
         agent: Agent[TContext],
         input: str,
-        streamed: bool = False,
+        env: SessionEnv,
+        options: RunOptions | None = None,
     ) -> RunResult:
-        await self._session.add([UserMessage(content=input)])
+        options = options or RunOptions()
+        provider = env.provider or self._provider
+        if provider is None:
+            raise RuntimeError("no invalid provider")
+        channel, history, kernel = env.channel, env.messages, env.kernel
+        streamed = options.streamed
+        await history.add([UserMessage(content=input)])
 
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("streamed", streamed)
             turn = 0
-            while turn < self._config.max_turns:
+            while turn < options.max_turns:
                 turn += 1
                 span.set_attribute("agent.turn", turn)
-                model = self._config.model or agent.model or self._provider.model
+                model = provider.model
                 span.set_attribute("agent.model", model)
 
-                messages = await self._build_messages(agent)
+                messages = await self._build_messages(agent, history)
                 tools = self._build_tools(agent)
 
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
-                    agent, model, messages, tools
+                    agent, model, messages, tools, kernel, channel, provider
                 )
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
-                await self._session.add([message], usage=usage)
-                await self._session.add(
+                await history.add([message], usage=usage)
+                await history.add(
                     [
                         ToolMessage(content=str(r), tool_call_id=tc_id)
                         for tc_id, r in tool_results
@@ -129,54 +130,69 @@ class Runner:
                         input=input,
                         last_agent=agent,
                         output=output,
-                        max_turns=self._config.max_turns,
+                        max_turns=options.max_turns,
                         completed_turns=turn,
                     )
 
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
-            logger.warning(f"max turns ({self._config.max_turns}) reached. Stopping.")
+            logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
             return RunResult(
                 input=input,
                 last_agent=agent,
-                max_turns=self._config.max_turns,
+                max_turns=options.max_turns,
                 completed_turns=turn,
             )
 
     async def _run_turn_streamed(
-        self, agent: Agent[Any], model: str, messages: list, tools: dict[str, Tool]
+        self,
+        agent: Agent[Any],
+        model: str,
+        messages: list,
+        tools: dict[str, Tool],
+        kernel,
+        channel,
+        provider,
     ):
         tool_results: list = []
-        async with self._provider.client.chat.completions.stream(
+        async with provider.client.chat.completions.stream(
             model=model,
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
             **self.model_params(agent),
         ) as stream:
             async for event in stream:
-                if event.type == "content.delta" and self._channel:
-                    await self._channel.notify(Delta(delta=event.delta))
+                if event.type == "content.delta" and channel:
+                    await channel.notify(Delta(delta=event.delta))
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message
             if message.tool_calls:
+                ctx = ToolContext(kernel=kernel, channel=channel)
                 async for tc_id, r in self._executor.execute_iter(
-                    message.tool_calls, tools, self.tool_context()
+                    message.tool_calls, tools, ctx
                 ):
                     tool_results.append((tc_id, r))
-                    if self._channel:
-                        await self._channel.notify(
-                            ToolResultEvent(tool_call_id=tc_id, result=r)
+                    if channel:
+                        await channel.notify(
+                            ToolResult(tool_call_id=tc_id, result=r)
                         )
-            elif self._channel:
-                await self._channel.notify(DeltaEnd())
+            elif channel:
+                await channel.notify(DeltaEnd())
         return completion, message, tool_results
 
     async def _run_turn(
-        self, agent: Agent[Any], model: str, messages: list, tools: dict[str, Tool]
+        self,
+        agent: Agent[Any],
+        model: str,
+        messages: list,
+        tools: dict[str, Tool],
+        kernel,
+        channel,
+        provider,
     ):
         tool_results: list = []
-        completion = await self._provider.client.chat.completions.create(
+        completion = await provider.client.chat.completions.create(
             model=model,
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
@@ -185,8 +201,9 @@ class Runner:
 
         message = completion.choices[0].message
         if message.tool_calls:
+            ctx = ToolContext(kernel=kernel, channel=channel)
             tool_results = await self._executor.execute_batch(
-                message.tool_calls, tools, self.tool_context()
+                message.tool_calls, tools, ctx
             )
         return completion, message, tool_results
 
@@ -194,6 +211,8 @@ class Runner:
         self,
         agent: Agent[TContext],
         input: str,
+        env: SessionEnv,
+        options: RunOptions | None = None,
     ) -> RunResult:
         try:
             loop = asyncio.get_running_loop()
@@ -205,7 +224,7 @@ class Runner:
                     "Cannot call run_sync from within an async context. Use run instead."
                 )
 
-        return asyncio.run(self.run(agent, input))
+        return asyncio.run(self.run(agent, input, env, options))
 
     def model_params(self, agent: Agent[Any]):
         params: dict[str, Any] = {}
@@ -232,8 +251,8 @@ class Runner:
             return agent.output_type.model_validate_json(content)
         return content
 
-    async def _build_messages(self, agent: Agent[Any]) -> list:
-        messages = await self._session.get()
+    async def _build_messages(self, agent: Agent[Any], history: Messages) -> list:
+        messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
         return messages

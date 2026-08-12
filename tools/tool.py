@@ -1,36 +1,20 @@
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
 from pydantic import BaseModel
 
 from ..channel import Channel
 from ..infra import PyKernel
-from ..schemas import Inquiry
-
-
-class UserInteractor(Protocol):
-    """工具与用户交互的最小接口：只发起 Inquiry。"""
-
-    async def ask(self, question: str, options: list[str] | None = None) -> str: ...
-
-
-class ChannelInteractor:
-    """内部实现：把 ask 转成 channel.call(Inquiry(...))。"""
-
-    def __init__(self, channel: Channel):
-        self._channel = channel
-
-    async def ask(self, question: str, options: list[str] | None = None) -> str:
-        return await self._channel.call(Inquiry(question=question, options=options))
 
 
 @dataclass
 class ToolContext:
-    interact: UserInteractor | None = None   # 最小权限：仅 Inquiry
-    # 会话级计算资源：python 工具的持久解释器（按会话隔离，由 Runner 管理）
+    # 会话 channel：工具按需发起 notify / call（如 ask_user 提问）
+    channel: Channel | None = None
+    # 会话级计算资源：python 工具的持久解释器（按会话隔离，由 Session 管理）
     kernel: PyKernel | None = None
 
 

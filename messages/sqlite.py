@@ -1,11 +1,11 @@
 import asyncio
 import sqlite3
 from collections.abc import Sequence
-from ..infra.sqlite_store import SQLiteStore
+from ..infra import SQLiteStore
 from ..schemas import Message, MessageAdapter, Usage
 
 
-class SQLiteSession(SQLiteStore):
+class SQLiteMessages(SQLiteStore):
     def __init__(self, db_path: str = "data/session.db", session_id: str = "default"):
         super().__init__(db_path)
         self._session_id = session_id

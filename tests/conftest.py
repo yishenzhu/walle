@@ -3,7 +3,7 @@ import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
-from ..infra.provider import OpenAIProvider
+from ..infra import OpenAIProvider
 from ..schemas import Approval, ApprovalRsp, Inquiry, Receive, UserInput
 from ..tools import ToolContext
 

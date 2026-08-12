@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "walle"
 version = "0.1.0"
 description = "An AI agent framework"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
     "openai>=1.0",
@@ -22,7 +22,6 @@ dependencies = [
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-instrumentation-openai>=0.40b0",
-    "lark-channel-sdk>=1.0",
 ]
 
 [tool.setuptools.packages.find]

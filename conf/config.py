@@ -72,18 +72,10 @@ class ToolConfig(BaseModel):
     timeout: float | None = 30.0
 
 
-class FeishuConfig(BaseModel):
-    """飞书应用机器人配置（长连接 + 真流式）。app_id 为空则不启用。"""
-
-    app_id: str | None = None
-    app_secret: str | None = None
-
-
 class Config(BaseModel):
     log: LogConfig
     telemetry: TelemetryConfig = TelemetryConfig()
     tool: ToolConfig = ToolConfig()
-    feishu: FeishuConfig = FeishuConfig()
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):
