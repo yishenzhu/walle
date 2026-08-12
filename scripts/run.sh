@@ -40,13 +40,13 @@ walle 启动脚本
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
   --test         运行测试，不启动 agent
-  --cli          连接已运行的 agent 服务端，启动 CLI 交互客户端
+  --cli          启动 agent 服务端并自动连接一个 CLI 客户端
   --help         显示此帮助信息
 
 示例:
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
-  ./scripts/run.sh --cli              # 新开 CLI 交互窗口（连接已运行的服务端）
+  ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
   ./scripts/run.sh --obs-only         # 仅启动可观测性
   ./scripts/run.sh --stop-obs         # 停止可观测性
   ./scripts/run.sh --test             # 运行测试
@@ -120,6 +120,11 @@ start_cli_client() {
         "$PY" -m walle.channel.cli
 }
 
+# ── 端口检测 ─────────────────────────────────────────
+port_in_use() {
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
 # ── 运行测试 ──────────────────────────────────────────
 run_tests() {
     log_step "运行测试 ..."
@@ -152,12 +157,6 @@ main() {
         shift
     done
 
-    # CLI 客户端模式：连接已运行的服务端，直接交互
-    if [ "$cli" = true ]; then
-        start_cli_client
-        exit 0
-    fi
-
     # 运行测试
     if [ "$test_only" = true ]; then
         run_tests
@@ -183,7 +182,26 @@ main() {
         start_obs
     fi
 
-    # 启动 agent
+    # --cli：服务端若未运行则后台起一个，等就绪后前台连客户端（一键对话）
+    if [ "$cli" = true ]; then
+        if ! port_in_use 8899; then
+            start_agent &
+            AGENT_PID=$!
+            trap 'kill "$AGENT_PID" 2>/dev/null || true' EXIT
+            for _ in $(seq 1 100); do
+                if port_in_use 8899; then
+                    break
+                fi
+                sleep 0.2
+            done
+        else
+            log_info "agent 已在运行，直接连接"
+        fi
+        start_cli_client
+        exit 0
+    fi
+
+    # 启动 agent（前台）
     start_agent
 }
 
