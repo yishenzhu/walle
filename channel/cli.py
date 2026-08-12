@@ -159,7 +159,10 @@ class CLIChannel:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:
             if session is not None:
-                await session.close()
+                try:
+                    await session.close()
+                except Exception as exc:
+                    logger.warning(f"session {chat_id} close failed: {exc}")
             writer.close()
             try:
                 await writer.wait_closed()
