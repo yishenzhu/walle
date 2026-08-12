@@ -116,6 +116,7 @@ cp .env.example .env             # LLM API Key
 ```bash
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅 agent
+./scripts/run.sh --cli           # 新开 CLI 交互客户端（连接已运行的服务端）
 ./scripts/run.sh --obs-only      # 仅可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试

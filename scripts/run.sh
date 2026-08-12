@@ -40,13 +40,13 @@ walle 启动脚本
   --obs-only     仅启动可观测性容器，不启动 agent
   --stop-obs     停止可观测性容器
   --test         运行测试，不启动 agent
-  --cli-client   连接已运行的 agent 服务端，启动 CLI 交互客户端
+  --cli          连接已运行的 agent 服务端，启动 CLI 交互客户端
   --help         显示此帮助信息
 
 示例:
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
-  ./scripts/run.sh --cli-client       # 新开 CLI 交互窗口（连接已运行的服务端）
+  ./scripts/run.sh --cli              # 新开 CLI 交互窗口（连接已运行的服务端）
   ./scripts/run.sh --obs-only         # 仅启动可观测性
   ./scripts/run.sh --stop-obs         # 停止可观测性
   ./scripts/run.sh --test             # 运行测试
@@ -133,7 +133,7 @@ main() {
     local obs_only=false
     local stop_obs_flag=false
     local test_only=false
-    local cli_client=false
+    local cli=false
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -142,7 +142,7 @@ main() {
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
             --test)        test_only=true ;;
-            --cli-client)  cli_client=true ;;
+            --cli)         cli=true ;;
             --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
@@ -153,7 +153,7 @@ main() {
     done
 
     # CLI 客户端模式：连接已运行的服务端，直接交互
-    if [ "$cli_client" = true ]; then
+    if [ "$cli" = true ]; then
         start_cli_client
         exit 0
     fi

@@ -1,9 +1,7 @@
-"""会话管理：Session 会话实体 + SessionRouter 注册表。
+"""会话实体：每连接（session_id）一个 Session（连接即会话）。
 
-每连接（session_id）一个 Session。Session 自身是绑定 chat_id 的端点
-（notify/call 填 chat_id 后转发到底层通道），并持有会话状态（历史 /
-kernel / agent）。SessionRouter 按 session_id 取/建会话，作为消息入口
-（dispatcher）供通道注入。
+Session 自身是绑定 chat_id 的端点（notify/call 填 chat_id 后转发到底层
+连接），并持有会话状态（历史 / kernel / agent）。连接断开即会话结束。
 """
 from typing import Callable
 
@@ -66,43 +64,3 @@ class Session:
     async def close(self) -> None:
         await self._kernel.close()
         await self._messages.close()
-
-
-class SessionRouter:
-    """会话注册表：按 session_id 取/建 Session（每会话独立 agent）。
-
-    作为通道的 dispatcher：收到带 chat_id 的消息 → 取/建会话 → 处理一轮。
-    """
-
-    def __init__(
-        self,
-        transport: Channel,
-        agent_factory: Callable[[], Agent],
-        runner: Runner,
-    ):
-        self._transport = transport
-        self._agent_factory = agent_factory
-        self._runner = runner
-        self._sessions: dict[str, Session] = {}
-
-    def get_or_create(self, session_id: str) -> Session:
-        s = self._sessions.get(session_id)
-        if s is None:
-            s = Session(
-                session_id=session_id,
-                transport=self._transport,
-                agent_factory=self._agent_factory,
-                runner=self._runner,
-            )
-            self._sessions[session_id] = s
-        return s
-
-    async def dispatch(self, user_input: UserInput) -> None:
-        """按 session_id 取会话，交由 Session 处理一轮。"""
-        s = self.get_or_create(user_input.chat_id)
-        await s.handle(user_input)
-
-    async def close(self) -> None:
-        for s in self._sessions.values():
-            await s.close()
-        self._sessions.clear()

@@ -1,19 +1,13 @@
-import argparse
 import asyncio
 import logging
 
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
-from .core import Agent, Runner, SessionRouter
-from .channel import CLIChannel
+from .core import Agent, Runner, Session
+from .channel.cli import CLIChannel, CLIConn
 from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
-
-
-def _make_runner() -> Runner:
-    """构建 Runner（持有默认 provider / executor，供所有会话复用）。"""
-    return Runner()
 
 
 async def main() -> None:
@@ -28,25 +22,26 @@ async def main() -> None:
 
     registry = await ToolRegistry().initialize(conf)
 
-    # 会话路由：按 chat_id 取/建 Session（每会话独立 agent，历史/kernel 隔离）
-    cli_ch = CLIChannel()
-    router = SessionRouter(
-        transport=cli_ch,
-        agent_factory=lambda: Agent(
-            instruction="You are a helpful assistant.",
-            tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
-        ),
-        runner=_make_runner(),
-    )
-    cli_ch.dispatcher = router   # 消息入口绑定（start 前）
-    await cli_ch.start()
+    def make_session(conn: CLIConn) -> Session:
+        """连接即会话：每连接一个 Session（独立 agent / 历史 / kernel）。"""
+        return Session(
+            session_id=conn.chat_id,
+            transport=conn,   # 本连接即本会话的传输端点
+            agent_factory=lambda: Agent(
+                instruction="You are a helpful assistant.",
+                tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
+            ),
+            runner=Runner(),   # 会话复用同一 Runner（默认 provider/executor）
+        )
+
+    channel = CLIChannel(session_factory=make_session)
+    await channel.start()
 
     try:
         # 事件驱动，主协程挂起等待（Ctrl+C 退出）
         await asyncio.Event().wait()
     finally:
-        await router.close()        # 关闭所有会话（kernel + stream task）
-        await cli_ch.stop()
+        await channel.stop()
         await registry.close()      # 关闭进程级资源（MCP 客户端）
 
 

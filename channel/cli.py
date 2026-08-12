@@ -1,8 +1,9 @@
 """CLI 通道：服务端（CLIChannel）+ 客户端（CLIClient），JSON-line 协议。
 
-服务端：每个连接 = 一个会话。CLIConn 是该连接的 Channel 端点（实现
-notify/call，收发 JSON-line 帧，input 帧注入 dispatcher）；CLIChannel
-只负责监听 / accept / 按 chat_id 路由到对应连接。
+服务端：每连接即一个会话。CLIConn 是该连接的 Channel 端点（实现
+notify/call，收发 JSON-line 帧）；CLIChannel 只负责监听 / accept，
+握手后经 session_factory 创建会话（持本连接作为传输），读循环的输入
+直接喂给该会话，连接断开即会话结束。
 客户端：python -m walle.channel.cli 连接服务端交互（独立进程）。
 """
 import asyncio
@@ -30,9 +31,9 @@ PORT = 8899
 class CLIConn:
     """一个 CLI 客户端连接的 Channel 端点。
 
-    该连接即一个会话：notify 发帧给客户端；call 走 request/reply
-    （uuid id 路由 pending Future）；读循环把 input 帧交给注入的
-    on_input（由 CLIChannel 绑定本连接 chat_id，消息天然属于本会话）。
+    notify 发帧给客户端；call 走 request/reply（uuid id 路由 pending
+    Future）；读循环把 input 帧交给注入的 on_input（由 CLIChannel 绑定
+    本连接所属会话，消息天然属于本会话）。
     """
 
     def __init__(
@@ -40,12 +41,10 @@ class CLIConn:
         chat_id: str,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
-        on_input: Callable[[str], Awaitable[None]],
     ) -> None:
         self.chat_id = chat_id
         self._reader = reader
         self._writer = writer
-        self._on_input = on_input   # 本连接的消息处理入口（绑定 chat_id）
         self._pending: dict[str, asyncio.Future] = {}
 
     # ── 传输 ──────────────────────────────────────────
@@ -87,7 +86,7 @@ class CLIConn:
         self._pending.clear()
 
     # ── 读循环 ────────────────────────────────────────
-    async def run(self) -> None:
+    async def run(self, on_input: Callable[[str], Awaitable[None]]) -> None:
         """读帧：input → on_input（本连接消息）；reply → resolve 对应 request。"""
         while line := await self.read_line():
             if not line.strip():
@@ -98,27 +97,27 @@ class CLIConn:
                 continue
             t = msg.get("type")
             if t == "input":
-                await self._on_input(msg.get("content") or "")
+                await on_input(msg.get("content") or "")
             elif t == "reply":
                 self.resolve(msg.get("id", ""), msg.get("data"))
 
 
 class CLIChannel:
-    """CLI 客户端服务端：监听端口，每连接一个 CLIConn（会话端点）。
+    """CLI 服务端：监听端口，每连接一个会话（连接即会话）。
 
-    作为聚合端点实现 Channel：notify/call 按 chat_id 转发到对应连接。
+    握手后经 session_factory 创建会话（持本连接作为传输）；读循环输入
+    直接喂该会话；连接断开即会话结束（close）。
     """
 
     def __init__(
         self,
+        session_factory: Callable[[CLIConn], Any],
         host: str = HOST,
         port: int = PORT,
-        dispatcher=None,
-    ):
+    ) -> None:
+        self._session_factory = session_factory
         self._host = host
         self._port = port
-        self.dispatcher = dispatcher   # 消息入口（SessionRouter），start 前设置
-        self._conns: dict[str, CLIConn] = {}
         self._server: asyncio.AbstractServer | None = None
 
     # ── 生命周期 ──────────────────────────────────────
@@ -134,11 +133,11 @@ class CLIChannel:
             self._server.close()   # 3.12+：停止监听并等待挂起连接完成
             self._server = None
 
-    # ── 连接处理 ──────────────────────────────────────
+    # ── 连接处理：握手 → 建会话 → 读循环 ──────────────
     async def _handle_conn(self, reader, writer) -> None:
-        """每连接一个任务：握手（hello 帧带 chat_id）→ 连接读循环。"""
+        """每连接一个任务：握手（hello 帧带 chat_id）→ 创建会话 → 读循环。"""
         chat_id = ""
-        conn = None
+        session = None
         try:
             line = await reader.readline()
             if not line:
@@ -146,38 +145,23 @@ class CLIChannel:
             hello = json.loads(line)
             chat_id = hello.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
 
-            async def on_input(content: str) -> None:
-                """本连接的消息处理入口：chat_id 已绑定，直接交上层。"""
-                await self.dispatcher.dispatch(
-                    UserInput(content=content, chat_id=chat_id)
-                )
+            conn = CLIConn(chat_id, reader, writer)
+            session = self._session_factory(conn)
 
-            conn = CLIConn(chat_id, reader, writer, on_input=on_input)
-            self._conns[chat_id] = conn
+            async def on_input(content: str) -> None:
+                """本连接输入 → 本会话处理（chat_id 已绑定）。"""
+                await session.handle(UserInput(content=content, chat_id=chat_id))
+
             await conn.send({"type": "welcome", "chat_id": chat_id})
             logger.info(f"cli client connected: {chat_id}")
-            await conn.run()
+            await conn.run(on_input)
         except (json.JSONDecodeError, ConnectionError, asyncio.IncompleteReadError) as exc:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:
-            self._conns.pop(chat_id, None)
-            if conn is not None:
-                conn.close()
+            if session is not None:
+                await session.close()
             writer.close()
             await writer.wait_closed()
-
-    # ── Channel 协议：按 chat_id 转发到连接 ────────────
-    async def notify(self, n: NotificationUnion) -> None:
-        conn = self._conns.get(n.chat_id)
-        if conn is None:
-            return  # 广播语义：目标不在线 = 无人接收，静默丢弃
-        await conn.notify(n)
-
-    async def call(self, s: ServiceUnion) -> Any:
-        conn = self._conns.get(s.chat_id)
-        if conn is None:
-            raise ConnectionError(f"cli client {s.chat_id} not connected")
-        return await conn.call(s)
 
 
 # ── 客户端（独立进程）─────────────────────────────────
