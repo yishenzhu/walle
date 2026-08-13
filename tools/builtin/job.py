@@ -18,7 +18,8 @@ async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
     if ctx is None:
         return JobDispatch(job_id="", status=JobStatus.ERROR, error="background 不可用：无执行上下文")
     job_id = ctx.add_pending(tool_name, args)
-    return JobDispatch(job_id=job_id, status=JobStatus.RUNNING)
+    # 仅登记待启动：executor 在本轮工具跑完后才拉起，故报 pending（非 running）
+    return JobDispatch(job_id=job_id, status=JobStatus.PENDING)
 
 
 async def job_result(job_id: str) -> JobResult:

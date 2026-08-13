@@ -66,12 +66,13 @@ class ToolExecutor:
         tools: dict[str, Tool],
         ctx: ToolContext,
     ) -> tuple[str, Any]:
-        """入口·名字+参数：按工具名执行（复用 execute_tool 完整链：审批/超时/通知）。
+        """入口·名字+参数：按工具名执行（复用 execute_tool 完整链：审批/超时）。
 
-        background 元工具用它把任意工具丢到后台；tc_id 为生成的伪调用 id。
+        background 元工具把任意工具丢后台时用它；tc_id 为生成的伪调用 id，
+        静默执行（不推送 ToolStart/ToolResult，结果由 job_result 查询取回）。
         """
         tc_id = f"bg-{uuid.uuid4().hex[:8]}"
-        return await self.execute_tool(name, args, tc_id, tools, ctx)
+        return await self.execute_tool(name, args, tc_id, tools, ctx, notify=False)
 
     async def execute_tool(
         self,
@@ -80,11 +81,14 @@ class ToolExecutor:
         tc_id: str,
         tools: dict[str, Tool],
         ctx: ToolContext,
+        *,
+        notify: bool = True,
     ) -> tuple[str, Any]:
-        """核心链：查找 → 通知 → 审批 → 执行（超时）→ 结果/错误。
+        """核心链：查找 → 通知（可关）→ 审批 → 执行（超时）→ 结果/错误。
 
         execute_call / execute_named 两个入口共用；参数已解包
-        （name/args/tc_id），不依赖模型回调对象结构。
+        （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
+        静默执行（后台作业用，不推送 ToolStart/ToolResult）。
         """
         ft = tools.get(name)
         if ft is None:
@@ -94,7 +98,7 @@ class ToolExecutor:
 
         channel = ctx.channel
 
-        if channel is not None:
+        if notify and channel is not None:
             await channel.notify(
                 ToolStart(tool_name=name, arguments=args, tool_call_id=tc_id)
             )
@@ -107,7 +111,7 @@ class ToolExecutor:
         )
         if denied:
             logger.info(denied)
-            if channel is not None:
+            if notify and channel is not None:
                 await channel.notify(
                     ToolResult(tool_call_id=tc_id, error=denied)
                 )
@@ -127,7 +131,7 @@ class ToolExecutor:
             TOOL_DURATION.record(elapsed_ms, attrs)
             TOOL_CALLS.add(1, attrs)
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
-            if channel is not None:
+            if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, result=result))
             return tc_id, result
         except asyncio.TimeoutError:
@@ -135,14 +139,14 @@ class ToolExecutor:
             logger.warning(f"{name}: timeout after {timeout}s")
             TOOL_ERRORS.add(1, attrs)
             error = f"Error: tool '{name}' timed out after {timeout}s"
-            if channel is not None:
+            if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
             return tc_id, error
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)
             error = f"Error: {e}"
-            if channel is not None:
+            if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
             return tc_id, error
 
