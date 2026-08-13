@@ -59,7 +59,7 @@
 
 ```
 用户输入 → Channel.call(Receive())     # 服务：读输入，有返回
-         → Session.add(UserMessage)
+         → Session.handle(UserInput)   # 会话实体（连接即会话）
          → Runner.run() 循环:
              1. 构建消息列表 (历史 + System Instruction)
              2. 调用 LLM (流式/批量)
@@ -81,7 +81,7 @@
 | 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
 | 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
-| 会话管理 | `session/` | 消息存储、压缩策略、持久化 |
+| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略（会话实体在 `core/session.py`） |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
 | 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider、Jupyter kernel |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
@@ -115,14 +115,15 @@ cp .env.example .env             # LLM API Key
 
 ```bash
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
-./scripts/run.sh --no-obs        # 仅 agent
-./scripts/run.sh --cli           # 新开 CLI 交互客户端（连接已运行的服务端）
-./scripts/run.sh --obs-only      # 仅可观测性容器
+./scripts/run.sh --no-obs        # 仅启动 agent
+./scripts/run.sh --cli           # 服务端 + CLI 客户端（一键对话）
+./scripts/run.sh --stop          # 停止常驻 agent 服务端
+./scripts/run.sh --obs-only      # 仅启动可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试
 ```
 
-启动后可用 `walle.channel.cli` 连接对话（JSON-line 协议多会话），服务端空闲 Ctrl+C 退出。
+启动后可用 `python -m walle.channel.cli` 连接对话（JSON-line 协议多会话），服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
@@ -292,7 +293,8 @@ walle/
 │   ├── agent.py               #   Agent / Handoff 模型
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（审批·并发·超时）
-│   └── approval.py            #   审批规则引擎
+│   ├── approval.py            #   审批规则引擎
+│   └── session.py             #   会话实体（连接即会话）
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
@@ -306,11 +308,11 @@ walle/
 │       ├── ask_user.py        #     向用户提问
 │       └── skill.py           #     Skill 加载器
 
-├── session/                   # 会话管理
-│   ├── protocol.py            #   Session Protocol
-│   ├── memory.py              #   内存实现
+├── messages/                  # 消息存储
+│   ├── protocol.py            #   Messages Protocol
+│   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化
-│   ├── compressible_session.py#   可压缩会话装饰器
+│   ├── compressible.py        #   可压缩消息装饰器
 │   ├── compressors.py         #   摘要压缩器
 │   └── policies.py            #   压缩触发策略
 ├── schemas/                   # 数据模型
