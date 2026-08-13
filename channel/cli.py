@@ -1,10 +1,10 @@
 """CLI 通道：服务端（CLIChannel）+ 客户端（CLIClient），JSON-line 协议。
 
-服务端：每连接即一个会话。CLIConn 是该连接的 Channel 端点（实现
-notify/call，收发 JSON-line 帧）；CLIChannel 只负责监听 / accept，
-握手后经 session_factory 创建会话（持本连接作为传输），读循环的输入
-直接喂给该会话，连接断开即会话结束。
-客户端：python -m walle.channel.cli 连接服务端交互（独立进程）。
+服务端：会话由 SessionRegistry（协议）管理。CLIConn 是该连接的 Channel
+端点（实现 notify/call，收发 JSON-line 帧）；CLIChannel 监听 / accept，
+握手后经 registry 新建或 attach 会话，读循环的输入直接喂给该会话；
+连接断开 detach 保留（状态跨连接存活）。
+客户端：python -m walle.channel.cli [--attach <id>] [--list] 独立进程。
 """
 import asyncio
 import json
@@ -15,6 +15,7 @@ from typing import Any
 import readline
 
 from ..schemas import NotificationUnion, ServiceUnion, UserInput
+from .protocol import SessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -141,19 +142,22 @@ class CLIConn:
 
 
 class CLIChannel:
-    """CLI 服务端：监听端口，每连接一个会话（连接即会话）。
+    """CLI 服务端：监听端口，会话由 SessionRegistry 管理。
 
-    握手后经 session_factory 创建会话（持本连接作为传输）；读循环输入
-    直接喂该会话；连接断开即会话结束（close）。
+    握手 hello 帧：
+      - 带 attach=true + chat_id → 从 registry 取已有会话 attach（resume）
+      - 否则 → registry.create(conn) 新建会话（绑定本连接为 transport）
+    连接断开 → detach 保留会话（kernel/messages 状态跨连接存活），
+    会话留在 registry 供重连 attach。真正销毁走 registry 显式 remove+close。
     """
 
     def __init__(
         self,
-        session_factory: Callable[[CLIConn], Any],
+        registry: SessionRegistry,
         host: str = HOST,
         port: int = PORT,
     ) -> None:
-        self._session_factory = session_factory
+        self._registry = registry
         self._host = host
         self._port = port
         self._server: asyncio.AbstractServer | None = None
@@ -171,36 +175,67 @@ class CLIChannel:
             self._server.close()   # 3.12+：停止监听并等待挂起连接完成
             self._server = None
 
-    # ── 连接处理：握手 → 建会话 → 读循环 ──────────────
+    # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
     async def _handle_conn(self, reader, writer) -> None:
-        """每连接一个任务：握手（hello 帧带 chat_id）→ 创建会话 → 读循环。"""
+        """每连接一个任务：握手（hello 帧）→ 新建或 attach 会话 → 读循环。
+
+        特殊帧 list：浏览会话列表后立即断开（不进入会话循环）。
+        断开时 detach 保留会话（状态跨连接存活），不销毁。
+        """
         chat_id = ""
         session = None
         try:
             line = await reader.readline()
             if not line:
                 return
-            hello = json.loads(line)
-            chat_id = hello.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
+            msg = json.loads(line)
+
+            # list 帧：返回会话元数据（id/状态/存活，不含消息内容）后关闭
+            if msg.get("type") == "list":
+                writer.write(
+                    json.dumps(
+                        {"type": "list", "sessions": self._registry.list()}
+                    ).encode()
+                    + b"\n"
+                )
+                await writer.drain()
+                return
+
+            chat_id = msg.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
+            attach = bool(msg.get("attach", False))
 
             conn = CLIConn(chat_id, reader, writer)
-            session = self._session_factory(conn)
+
+            if attach:
+                # resume：从 registry 取已存在会话，绑定新 transport
+                session = self._registry.get(chat_id)
+                if session is None:
+                    await conn.send(
+                        {"type": "error", "message": f"会话不存在: {chat_id}"}
+                    )
+                    return
+                session.attach(conn)
+                logger.info(f"cli client reattached: {chat_id}")
+            else:
+                # 新会话：registry.create（注入 factory 构造 + attach + 注册）
+                session = self._registry.create(conn)
+                logger.info(f"cli client connected: {chat_id}")
 
             async def on_input(content: str) -> None:
                 """本连接输入 → 本会话处理（chat_id 已绑定）。"""
                 await session.handle(UserInput(content=content, chat_id=chat_id))
 
             await conn.send({"type": "welcome", "chat_id": chat_id})
-            logger.info(f"cli client connected: {chat_id}")
             await conn.run(on_input)
         except (json.JSONDecodeError, ConnectionError, asyncio.IncompleteReadError) as exc:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:
             if session is not None:
                 try:
-                    await session.close()
+                    # 断开只 detach（保留 kernel/messages 供重连），不 close
+                    session.detach()
                 except Exception as exc:
-                    logger.warning(f"session {chat_id} close failed: {exc}")
+                    logger.warning(f"session {chat_id} detach failed: {exc}")
             writer.close()
             try:
                 await writer.wait_closed()
@@ -213,14 +248,20 @@ class CLIChannel:
 class CLIClient:
     """CLI 客户端：连接服务端，stdin 发送 + socket 渲染回复（独立进程）。
 
-    用法：python -m walle.channel.cli（连接参数固定为 HOST / PORT）
+    用法：python -m walle.channel.cli [--attach <session_id>] [--list]
     双循环：stdin → input 帧；socket notify → 渲染，call → 交互后回 reply。
     """
 
-    def __init__(self, host: str = HOST, port: int = PORT):
+    def __init__(
+        self,
+        host: str = HOST,
+        port: int = PORT,
+        attach: str = "",
+    ):
         self._host = host
         self._port = port
-        self._chat_id = f"cli-{uuid.uuid4().hex[:12]}"
+        self._chat_id = attach or f"cli-{uuid.uuid4().hex[:12]}"
+        self._attach = bool(attach)
         self._reply_done = asyncio.Event()   # 回复完成（delta_end）信号
 
     @staticmethod
@@ -243,10 +284,15 @@ class CLIClient:
             print(f"  {RED}⚠️ {data.get('message')}{RESET}", flush=True)
 
     async def run(self) -> None:
-        """连接服务端，握手后双循环收发。"""
+        """连接服务端，握手（attach 或新建）后双循环收发。"""
         reader, writer = await asyncio.open_connection(self._host, self._port)
-        await self._send(writer, {"type": "hello", "chat_id": self._chat_id})
-        print(f"已连接 {self._host}:{self._port}（会话 {self._chat_id}，Ctrl+C 退出）")
+        await self._send(writer, {
+            "type": "hello",
+            "chat_id": self._chat_id,
+            "attach": bool(self._attach),
+        })
+        mode = "恢复会话" if self._attach else "新会话"
+        print(f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C 退出）")
         try:
             await asyncio.gather(
                 self._read_stdin(writer),
@@ -347,9 +393,51 @@ class CLIClient:
         writer.write(json.dumps(msg).encode() + b"\n")
         await writer.drain()
 
+    # ── 会话列表（一次性查询渲染，不持有/不缓存）──────
+    @classmethod
+    async def list_sessions(cls, host: str = HOST, port: int = PORT) -> None:
+        """查询并渲染会话列表后退出。
+
+        只展示元数据（id / attached 状态 / 存活时长），不含任何消息内容；
+        一次性拉取渲染，客户端不持有全局会话列表。异常统一兜底报错。
+        """
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            try:
+                await cls._send(writer, {"type": "list"})
+                line = await reader.readline()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+            sessions = json.loads(line).get("sessions") or []
+        except Exception as exc:
+            print(f"获取会话列表失败: {exc}")
+            return
+        print(f"{'会话ID':<28} {'状态':<10} {'存活':>8}")
+        print("-" * 50)
+        for s in sessions:
+            state = "运行中" if s.get("attached") else "空闲"
+            age = s.get("age_seconds", 0)
+            print(f"{s.get('session_id'):<28} {state:<10} {age:>6.0f}s")
+
+
+def main() -> None:
+    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--list]。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="walle-cli", description="walle CLI 客户端")
+    parser.add_argument("--attach", default="", help="恢复已有会话（attach）")
+    parser.add_argument("--list", action="store_true", help="浏览会话（仅元数据）")
+    args = parser.parse_args()
+
+    if args.list:
+        asyncio.run(CLIClient.list_sessions())
+    else:
+        asyncio.run(CLIClient(attach=args.attach).run())
+
 
 if __name__ == "__main__":
     try:
-        asyncio.run(CLIClient().run())
+        main()
     except KeyboardInterrupt:
         print()   # Ctrl+C 优雅退出，不打印栈

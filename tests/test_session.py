@@ -24,6 +24,17 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
     )
 
 
+def make_registry(db_path: str) -> SessionRegistry:
+    """构造带 Session 构造参数的 registry（register 测试用）。"""
+    return SessionRegistry(
+        agent_factory=lambda: Agent(instruction="You are a helpful assistant."),
+        runner=Runner(executor=ToolExecutor(ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+        ))),
+        db_path=db_path,
+    )
+
+
 @pytest.fixture
 def provider():
     p = FakeProvider()
@@ -112,7 +123,7 @@ class TestSessionLifecycle:
 
 class TestSessionRegistry:
     async def test_register_get_remove(self, tmp_path):
-        reg = SessionRegistry()
+        reg = make_registry(str(tmp_path / "s.db"))
         s = make_session("reg-1", str(tmp_path / "s.db"))
         reg.register(s)
         assert reg.get("reg-1") is s
@@ -121,7 +132,7 @@ class TestSessionRegistry:
         await s.close()
 
     async def test_duplicate_register_raises(self, tmp_path):
-        reg = SessionRegistry()
+        reg = make_registry(str(tmp_path / "s.db"))
         s = make_session("dup", str(tmp_path / "s.db"))
         reg.register(s)
         with pytest.raises(ValueError):
@@ -129,7 +140,7 @@ class TestSessionRegistry:
         await s.close()
 
     async def test_list_shows_attach_state(self, tmp_path):
-        reg = SessionRegistry()
+        reg = make_registry(str(tmp_path / "s.db"))
         s = make_session("list-1", str(tmp_path / "s.db"))
         reg.register(s)
         s.detach()
@@ -140,11 +151,11 @@ class TestSessionRegistry:
         assert items[0]["age_seconds"] >= 0
         await s.close()
 
-    async def test_close_all(self, tmp_path):
-        reg = SessionRegistry()
+    async def test_close(self, tmp_path):
+        reg = make_registry(str(tmp_path / "s.db"))
         s1 = make_session("c1", str(tmp_path / "s.db"))
         s2 = make_session("c2", str(tmp_path / "s.db"))
         reg.register(s1)
         reg.register(s2)
-        await reg.close_all()
+        await reg.close()
         assert reg.list() == []

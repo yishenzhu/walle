@@ -42,12 +42,18 @@ walle 启动脚本
   --stop         停止常驻 agent 服务端
   --test         运行测试，不启动 agent
   --cli          启动 agent 服务端并自动连接一个 CLI 客户端
+  --agents       浏览运行中的会话列表（仅元数据）
+  --attach <id>  恢复（attach）已有会话
+  --status       检查 agent 服务端运行状态并列出会话
   --help         显示此帮助信息
 
 示例:
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
   ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
+  ./scripts/run.sh --agents           # 浏览会话
+  ./scripts/run.sh --attach cli-xxx   # 恢复会话
+  ./scripts/run.sh --status           # 服务端状态
   ./scripts/run.sh --stop             # 停止常驻 agent 服务端
   ./scripts/run.sh --obs-only         # 仅启动可观测性
   ./scripts/run.sh --stop-obs         # 停止可观测性
@@ -135,6 +141,43 @@ start_cli_client() {
         "$PY" -m walle.channel.cli
 }
 
+# ── 会话管理 ──────────────────────────────────────────
+require_server() {
+    if ! port_in_use 8899; then
+        log_error "agent 服务端未在运行，请先启动（./scripts/run.sh --no-obs 或 --cli）"
+        exit 1
+    fi
+}
+
+list_sessions() {
+    require_server
+    log_step "运行中的会话 ..."
+    cd "$PROJ_ROOT"
+    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" -m walle.channel.cli --list
+}
+
+attach_session() {
+    local sid="$1"
+    require_server
+    log_step "连接会话 $sid ..."
+    cd "$PROJ_ROOT"
+    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" -m walle.channel.cli --attach "$sid"
+}
+
+agent_status() {
+    if port_in_use 8899; then
+        log_info "agent 服务端: 运行中（端口 8899）"
+        local pids
+        pids=$(pgrep -f "python.* -m walle.main" || true)
+        [ -n "$pids" ] && log_info "进程: $pids"
+        list_sessions
+    else
+        log_info "agent 服务端: 未运行"
+    fi
+}
+
 # ── 端口检测 ─────────────────────────────────────────
 # 用 ss 读内核监听表（不发起连接，永不挂起）——/dev/tcp 会因 SYN 黑洞挂起 2 分钟
 port_in_use() {
@@ -156,6 +199,10 @@ main() {
     local stop_agent_flag=false
     local test_only=false
     local cli=false
+    local agents_flag=false
+    local status_flag=false
+    local attach_flag=false
+    local attach_id=""
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -166,14 +213,35 @@ main() {
             --stop)        stop_agent_flag=true ;;
             --test)        test_only=true ;;
             --cli)         cli=true ;;
+            --agents)      agents_flag=true ;;
+            --status)      status_flag=true ;;
+            --attach)      attach_flag=true; shift; attach_id="${1:-}" ;;
             --help|-h)     usage ;;
             *)
                 log_error "未知参数: $1"
                 usage
                 ;;
         esac
-        shift
+        shift || true   # set -e 下 $#=0 时 shift 返回非零，需兜底（--attach 取参后）
     done
+
+    # 会话管理命令（无需启动服务端/可观测性）
+    if [ "$attach_flag" = true ]; then
+        if [ -z "$attach_id" ]; then
+            log_error "--attach 需要会话 ID 参数，如: $0 --attach cli-xxx"
+            exit 1
+        fi
+        attach_session "$attach_id"
+        exit 0
+    fi
+    if [ "$agents_flag" = true ]; then
+        list_sessions
+        exit 0
+    fi
+    if [ "$status_flag" = true ]; then
+        agent_status
+        exit 0
+    fi
 
     # 停止常驻 agent 服务端
     if [ "$stop_agent_flag" = true ]; then

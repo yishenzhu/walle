@@ -3,8 +3,8 @@ import logging
 
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
-from .core import Agent, Runner, Session, ToolExecutor
-from .channel.cli import CLIChannel, CLIConn
+from .core import Agent, Runner, SessionRegistry, ToolExecutor
+from .channel.cli import CLIChannel
 from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -20,26 +20,22 @@ async def main() -> None:
     setup_telemetry(conf.telemetry)
     OpenAIProvider.load_env()
 
-    registry = await ToolRegistry().initialize(conf)
+    tools = await ToolRegistry().initialize(conf)
 
-    def make_session(conn: CLIConn) -> Session:
-        """连接即会话：每连接一个 Session（独立 agent / 历史 / kernel）。"""
-        return Session(
-            session_id=conn.chat_id,
-            transport=conn,   # 本连接即本会话的传输端点
-            agent_factory=lambda: Agent(
-                instruction="You are a helpful assistant.",
-                tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
-            ),
-            # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
-            # 会退化为全量 ASK（allow 规则失效），必须显式传入。
-            runner=Runner(executor=ToolExecutor(conf.tool)),
-            # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
-            storage=conf.session.storage,
-            db_path=conf.session.db_path,
-        )
-
-    channel = CLIChannel(session_factory=make_session)
+    sessions = SessionRegistry(
+        # Session 构造参数：每个会话独立 agent（工具源实时反映）+ 审批配置
+        agent_factory=lambda: Agent(
+            instruction="You are a helpful assistant.",
+            tools=tools.all_tools,   # 工具源：define_tool/add_mcp 实时反映
+        ),
+        # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
+        # 会退化为全量 ASK（allow 规则失效），必须显式传入。
+        runner=Runner(executor=ToolExecutor(conf.tool)),
+        # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
+        storage=conf.session.storage,
+        db_path=conf.session.db_path,
+    )
+    channel = CLIChannel(registry=sessions)
     await channel.start()
 
     try:
@@ -47,7 +43,8 @@ async def main() -> None:
         await asyncio.Event().wait()
     finally:
         await channel.stop()
-        await registry.close()      # 关闭进程级资源（MCP 客户端）
+        await sessions.close()          # 停机销毁全部会话（关 kernel/存储）
+        await tools.close()             # 关闭进程级资源（MCP 客户端）
 
 
 if __name__ == "__main__":

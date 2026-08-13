@@ -7,7 +7,7 @@ Channel 端点——chat_id 补全由连接负责（连接即会话，身份内�
 kernel/messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
 transport。真正销毁走 close()（registry 显式调用）。
 """
-from typing import Callable
+from typing import Any, Callable
 
 from .agent import Agent
 from .runner import Runner, RunOptions, SessionEnv
@@ -84,15 +84,44 @@ class Session:
 
 
 class SessionRegistry:
-    """进程级会话注册表：session_id → Session。
+    """进程级会话注册表 + 工厂：session_id → Session。
 
     连接断开只 detach（保留状态），会话仍在 registry 中可被重连 attach；
     显式 remove/close 才真正销毁。附加元数据（创建时间等）供列表展示。
+
+    Session 构造参数（agent_factory / runner / 存储配置）由组装层直接注入，
+    create() 据此构造——注册表是会话的持有者，负责创建与登记。
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        agent_factory: Callable[[], Agent],
+        runner: Runner,
+        provider: OpenAIProvider | None = None,
+        storage: str = "sqlite",
+        db_path: str = "data/session.db",
+    ) -> None:
+        self._agent_factory = agent_factory
+        self._runner = runner
+        self._provider = provider
+        self._storage = storage
+        self._db_path = db_path
         self._sessions: dict[str, Session] = {}
         self._created_at: dict[str, float] = {}
+
+    def create(self, conn: Any) -> Session:
+        """用注入的构造参数新建会话，绑定 conn 为 transport 并注册。"""
+        session = Session(
+            session_id=conn.chat_id,
+            agent_factory=self._agent_factory,
+            runner=self._runner,
+            provider=self._provider,
+            storage=self._storage,
+            db_path=self._db_path,
+        )
+        session.attach(conn)
+        self.register(session)
+        return session
 
     def register(self, session: Session) -> None:
         """注册新会话。同 id 已存在则报错（重连走 attach，不重建）。"""
@@ -125,7 +154,7 @@ class SessionRegistry:
             for sid, s in self._sessions.items()
         ]
 
-    async def close_all(self) -> None:
+    async def close(self) -> None:
         """销毁全部会话（服务端停机）。"""
         for s in self._sessions.values():
             try:
