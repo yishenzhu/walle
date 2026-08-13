@@ -32,7 +32,7 @@ flowchart TD
     Main["main.py<br/>组装依赖 · 启动循环"]
     Channel["Channel<br/>notify / call<br/>CLI 多会话 (JSON-line)"]
     Runner["Runner<br/>Agent 循环 · 流式/批量"]
-    Session["Session<br/>会话实体 · 连接即会话<br/>Memory / SQLite · 自动压缩"]
+    Session["Session<br/>会话实体 · attach/detach<br/>Memory / SQLite · 自动压缩"]
     Exec["ToolExecutor<br/>工具执行器<br/>审批 · 并发 · 超时"]
     AgentNode["Agent<br/>智能体定义<br/>Handoff · 工具筛选"]
     Reg["ToolRegistry<br/>MCP 远程工具<br/>DefinedTool 定义工具"]
@@ -138,7 +138,9 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh --test          # 运行测试
 ```
 
-启动后可用 `python -m walle.channel.cli` 连接对话（JSON-line 协议多会话），服务端空闲 Ctrl+C 退出。
+启动后可用 `python -m walle.channel.cli` 连接对话（JSON-line 协议多会话）。
+
+会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史/kernel），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
@@ -354,7 +356,7 @@ walle/
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（审批·并发·超时）
 │   ├── approval.py            #   审批规则引擎
-│   └── session.py             #   会话实体（连接即会话，支持切换 Agent）
+│   └── session.py             #   会话实体（attach/detach，支持切换 Agent）
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）

@@ -61,7 +61,7 @@ class CLIConn:
 
     # ── Channel 协议 ──────────────────────────────────
     async def notify(self, n: NotificationUnion) -> None:
-        # 连接即会话：补全 chat_id（上层构造事件时不带，由本连接注入身份）
+        # 本连接归属的会话身份：补全 chat_id（上层构造事件时不带，由本连接注入）
         await self.send(
             {"type": "notify", "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(mode="json")}
         )
