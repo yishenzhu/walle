@@ -85,10 +85,18 @@ class ToolConfig(BaseModel):
     timeout: TimeoutConfig = TimeoutConfig()
 
 
+class SessionConfig(BaseModel):
+    """会话持久化配置：历史存储后端与 db 路径。"""
+
+    storage: str = "sqlite"           # sqlite | memory
+    db_path: str = "data/session.db"  # sqlite 存储路径（相对项目根）
+
+
 class Config(BaseModel):
     log: LogConfig
     telemetry: TelemetryConfig = TelemetryConfig()
     tool: ToolConfig = ToolConfig()
+    session: SessionConfig = SessionConfig()
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):

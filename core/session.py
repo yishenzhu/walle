@@ -10,7 +10,7 @@ from .agent import Agent
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
 from ..infra import OpenAIProvider, PyKernel
-from ..messages import InMemoryMessages
+from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import UserInput
 
 
@@ -28,6 +28,8 @@ class Session:
         agent_factory: Callable[[], Agent],
         runner: Runner,
         provider: OpenAIProvider | None = None,
+        storage: str = "sqlite",
+        db_path: str = "data/session.db",
     ) -> None:
         self.id = session_id
         self._transport = transport
@@ -35,7 +37,11 @@ class Session:
         self._runner = runner
         self._provider = provider
         # 会话状态：历史 + kernel（每会话隔离）
-        self._messages = InMemoryMessages()
+        # 历史持久化：默认 SQLite（跨连接/重启保留），可配置切回内存
+        if storage == "memory":
+            self._messages: Messages = InMemoryMessages()
+        else:
+            self._messages = SQLiteMessages(db_path=db_path, session_id=session_id)
         self._kernel = PyKernel()
         # 执行环境打包：channel 直接用传输端点（连接即会话）
         self._env = SessionEnv(

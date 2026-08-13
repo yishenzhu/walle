@@ -9,6 +9,7 @@ from .config import (
     RawRule,
     TimeoutConfig,
     ToolConfig,
+    SessionConfig,
     PROJ_ROOT,
     DOT_AGENT,
     auto_path,

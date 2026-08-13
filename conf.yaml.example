@@ -25,4 +25,9 @@ tool:
       - [allow, grilling]
     default: ask
 
+# 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
+session:
+  storage: "sqlite"              # sqlite | memory
+  db_path: "data/session.db"     # sqlite 存储路径（相对项目根）
+
 # MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）

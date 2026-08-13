@@ -34,6 +34,9 @@ async def main() -> None:
             # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
             # 会退化为全量 ASK（allow 规则失效），必须显式传入。
             runner=Runner(executor=ToolExecutor(conf.tool)),
+            # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
+            storage=conf.session.storage,
+            db_path=conf.session.db_path,
         )
 
     channel = CLIChannel(session_factory=make_session)
