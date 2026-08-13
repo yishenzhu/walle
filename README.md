@@ -19,7 +19,7 @@
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
 | 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
 | 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| � **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
+| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
 | 🔄 **自我进化** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
 ---
