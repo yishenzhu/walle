@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pydantic import BaseModel
 from typing import Any
 
@@ -19,7 +19,7 @@ from ..schemas import (
     DeltaEnd,
     ToolResult,
 )
-from ..tools import ToolContext, Tool
+from ..tools import ToolContext, Tool, Job
 from ..infra import PyKernel
 
 
@@ -44,6 +44,7 @@ class SessionEnv:
     messages: Messages                # 会话历史（必填）
     provider: OpenAIProvider = None         # 模型接入（None 用 Runner 默认）
     channel: Channel = None          # 会话 channel 端点
+    jobs: dict[str, Job] = field(default_factory=dict)   # 后台作业表（跨轮存活）
 
 
 class RunResult(BaseModel):
@@ -95,10 +96,14 @@ class Runner:
                 messages = await self._build_messages(agent, history)
                 tools = self._build_tools(agent)
 
+                # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用）
+                ctx = ToolContext(kernel=kernel, channel=channel, jobs=env.jobs)
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
-                    agent, model, messages, tools, kernel, channel, provider
+                    agent, model, messages, tools, provider, ctx
                 )
+                # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
+                await self._executor.launch_pending(ctx, tools)
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
@@ -150,9 +155,8 @@ class Runner:
         model: str,
         messages: list,
         tools: dict[str, Tool],
-        kernel,
-        channel,
         provider,
+        ctx: ToolContext,
     ):
         tool_results: list = []
         async with provider.client.chat.completions.stream(
@@ -162,21 +166,18 @@ class Runner:
             **self.model_params(agent),
         ) as stream:
             async for event in stream:
-                if event.type == "content.delta" and channel:
-                    await channel.notify(Delta(delta=event.delta))
+                if event.type == "content.delta" and ctx.channel:
+                    await ctx.channel.notify(Delta(delta=event.delta))
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message
             if message.tool_calls:
-                ctx = ToolContext(kernel=kernel, channel=channel)
                 async for tc_id, r in self._executor.execute_iter(
                     message.tool_calls, tools, ctx
                 ):
                     tool_results.append((tc_id, r))
-                    # ToolResult 通知由 execute() 统一发出（成功/失败各一次），
-                    # 避免这里重复通知导致客户端双行渲染。
-            elif channel:
-                await channel.notify(DeltaEnd())
+            elif ctx.channel:
+                await ctx.channel.notify(DeltaEnd())
         return completion, message, tool_results
 
     async def _run_turn(
@@ -185,9 +186,8 @@ class Runner:
         model: str,
         messages: list,
         tools: dict[str, Tool],
-        kernel,
-        channel,
         provider,
+        ctx: ToolContext,
     ):
         tool_results: list = []
         completion = await provider.client.chat.completions.create(
@@ -199,7 +199,6 @@ class Runner:
 
         message = completion.choices[0].message
         if message.tool_calls:
-            ctx = ToolContext(kernel=kernel, channel=channel)
             tool_results = await self._executor.execute_batch(
                 message.tool_calls, tools, ctx
             )

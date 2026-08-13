@@ -20,6 +20,8 @@ from .events import (
     Inquiry,
     Approval,
     ServiceUnion,
+    JobDispatch,
+    JobResult,
 )
 from .channel import (
     UserInput,

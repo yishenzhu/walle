@@ -7,6 +7,7 @@ Session 持有会话状态（历史 / kernel / agent），传输（CLIConn）是
 kernel/messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
 transport。真正销毁走 close()（registry 显式调用）。
 """
+import asyncio
 import time
 from typing import Any, Callable
 
@@ -16,6 +17,7 @@ from ..channel import Channel
 from ..infra import OpenAIProvider, PyKernel
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import UserInput
+from ..tools import Job
 class Session:
     """单会话实体：会话状态 + 驱动 Runner，transport 是其 Channel 端点。
 
@@ -49,6 +51,8 @@ class Session:
         else:
             self._messages = SQLiteMessages(db_path=db_path, session_id=session_id)
         self._kernel = PyKernel()
+        # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
+        self._jobs: dict[str, Job] = {}
         # 执行环境打包：channel 随 attach/detach 切换
         self._transport: Channel | None = transport
         self._env = SessionEnv(
@@ -56,7 +60,13 @@ class Session:
             channel=self._transport,
             kernel=self._kernel,
             messages=self._messages,
+            jobs=self._jobs,
         )
+
+    @property
+    def jobs(self) -> dict[str, Job]:
+        """后台作业表（供 registry 停机时统一取消）。"""
+        return self._jobs
 
     @property
     def attached(self) -> bool:
@@ -91,7 +101,14 @@ class Session:
         )
 
     async def close(self) -> None:
-        """真正销毁：关 kernel + 消息存储。"""
+        """真正销毁：取消未完成的后台作业，关 kernel + 消息存储。"""
+        pending = [j.task for j in self._jobs.values()
+                   if j.task is not None and not j.task.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._jobs.clear()
         await self._kernel.close()
         await self._messages.close()
 

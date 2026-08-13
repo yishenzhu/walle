@@ -84,3 +84,20 @@ ServiceUnion = Annotated[
     Receive | Inquiry | Approval,
     Field(discriminator="type"),
 ]
+
+
+class JobDispatch(BaseModel):
+    """background 工具返回：作业派发结果，成功即拿到 job_id。"""
+
+    job_id: str
+    status: str = "running"   # 派发成功即 running（待 executor 拉起）
+    error: str | None = None   # 非空表示派发失败
+
+
+class JobResult(BaseModel):
+    """job_result 工具返回：作业状态与结果。"""
+
+    job_id: str
+    status: str                 # running | done | error
+    result: Any = None          # done：执行结果
+    error: str | None = None    # error：错误信息

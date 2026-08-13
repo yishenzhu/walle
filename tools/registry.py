@@ -6,7 +6,7 @@ from ..conf import Config, MCPConfig
 from .tool import Tool
 from .mcp import MCP
 from .defined import DefinedTool, ToolCodeError
-from .builtin import Skill, ask_user, bash, jupyter
+from .builtin import Skill, ask_user, bash, jupyter, background, job_result
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,10 @@ class ToolRegistry:
     async def initialize(self, conf: Config) -> Self:
         """初始化工具系统：注册内置工具 + MCP server + 动态工具。"""
         self.add_tool(*Skill.load())
-        # define_tool / add_mcp 是元工具（操作 registry 自身），作为实例方法注册
-        self.add_function(ask_user, bash, jupyter, self.define_tool, self.add_mcp)
+        # 内置工具 + 后台作业对（background 派发 / job_result 查询）
+        # + 元工具（define_tool / add_mcp 操作 registry 自身）
+        self.add_function(background, job_result, ask_user, bash, jupyter,
+                          self.define_tool, self.add_mcp)
         await self.load_mcp()
         self.load_defined()
         return self
