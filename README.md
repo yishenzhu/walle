@@ -14,6 +14,7 @@
 | 特性 | 说明 |
 |---|---|
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
+| 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选），启动按名加载，会话内可切换 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
 | 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
@@ -26,52 +27,61 @@
 
 ## 🏗️ 架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        main.py (入口)                        │
-│                   组装依赖 · 启动 REPL 循环                   │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-     ┌──────────────┐           ┌──────────────┐
-     │   Channel    │           │    Runner    │
-     │  (notify/call)│           │  (Agent 循环) │
-     │     CLI      │           │  流式/批量执行 │
-     └──────────────┘           └──────┬───────┘
-                                       │
-                    ┌──────────────────┼──────────────────┐
-                    ▼                  ▼                  ▼
-            ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-            │   Session    │  │ ToolExecutor │  │    Agent     │
-            │  会话管理     │  │  工具执行器   │  │  智能体定义   │
-            │  Memory/SQLite│ │  审批·并发     │  │  Handoff     │
-            │  自动压缩     │  └──────┬───────┘  └──────────────┘
-            └──────────────┘         │
-                               ┌─────┴──────────────┐
-                               │  ToolRegistry       │
-                               │  ├ MCP (远程工具)    │
-                               │  └ DefinedTool (定义)│
-                               └────────────────────┘
+```mermaid
+flowchart TD
+    Main["main.py<br/>组装依赖 · 启动循环"]
+    Channel["Channel<br/>notify / call<br/>CLI 多会话 (JSON-line)"]
+    Runner["Runner<br/>Agent 循环 · 流式/批量"]
+    Session["Session<br/>会话实体 · 连接即会话<br/>Memory / SQLite · 自动压缩"]
+    Exec["ToolExecutor<br/>工具执行器<br/>审批 · 并发 · 超时"]
+    AgentNode["Agent<br/>智能体定义<br/>Handoff · 工具筛选"]
+    Reg["ToolRegistry<br/>MCP 远程工具<br/>DefinedTool 定义工具"]
+
+    Main --> Channel
+    Main --> Runner
+    Runner --> Session
+    Runner --> Exec
+    Runner --> AgentNode
+    Exec --> Reg
+
+    classDef entry fill:#e8f5e9,stroke:#2e7d32
+    classDef core fill:#e3f2fd,stroke:#1565c0
+    classDef tool fill:#fff3e0,stroke:#e65100
+    class Main entry
+    class Runner,Session,Exec,AgentNode core
+    class Channel,Reg tool
 ```
 
 ### 核心流程
 
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant C as Channel
+    participant S as Session
+    participant R as Runner
+    participant T as ToolExecutor
+    participant M as LLM
+
+    U->>C: 输入
+    C->>S: handle(UserInput)
+    S->>R: run(agent, input)
+    loop 多轮迭代
+        R->>M: 调用 LLM（流式/批量）
+        M-->>R: 返回（tool_calls / 最终回复）
+        alt 有 tool_calls
+            R->>T: 并发执行
+            T->>T: 审批检查 → 执行
+            T-->>R: 结果
+        else 无 tool_calls
+            R-->>S: 最终结果
+        end
+    end
+    S-->>C: notify(Delta) 流式输出
+    C-->>U: 回复
 ```
-用户输入 → Channel.call(Receive())     # 服务：读输入，有返回
-         → Session.handle(UserInput)   # 会话实体（连接即会话）
-         → Runner.run() 循环:
-             1. 构建消息列表 (历史 + System Instruction)
-             2. 调用 LLM (流式/批量)
-             3. 若有 tool_calls → ToolExecutor 并发执行
-                ├─ 审批检查 (ApprovalPolicy → Approver)
-                ├─ 执行工具 (内置 / MCP / 动态)
-                └─ 返回结果到 Session
-             4. 若有 Handoff → 切换 Agent，继续循环
-             5. 无 tool_calls → 返回最终结果
-         → Channel.notify(Delta) 流式输出     # 通知：广播，无返回
+
 执行中 Ctrl+C → 取消当前 run，回到输入提示；空输入（直接回车）/ 空闲 Ctrl+C → 退出（统一出口）
-```
 
 ### 分层职责
 
@@ -117,6 +127,8 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅启动 agent
 ./scripts/run.sh --cli           # 服务端 + CLI 客户端（一键对话）
+./scripts/run.sh --status        # 服务端状态 + 会话列表
+./scripts/run.sh --attach <id>   # 恢复（attach）已有会话
 ./scripts/run.sh --stop          # 停止常驻 agent 服务端
 ./scripts/run.sh --obs-only      # 仅启动可观测性容器
 ./scripts/run.sh --stop-obs      # 停止可观测性
@@ -183,11 +195,43 @@ tool:
 
 | 路径 | 内容 | 写入方式 |
 |---|---|---|
+| `.agent/agents/` | Agent 定义（frontmatter Markdown，文件名即 agent 名） | 手动编辑 |
 | `.agent/skills/` | 技能（SKILL.md + 可选 scripts/assets） | `skill-creator` 或手动 |
 | `.agent/tools/` | 模型定义的代码工具 | `define_tool` |
 | `.agent/mcp.yaml` | MCP Server 配置 | `add_mcp` 或手动编辑 |
 
-三者均在下次启动自动恢复。
+以上均在下次启动自动恢复。
+
+### Agent 定义（frontmatter）
+
+每个 Agent 是一个 `.agent/agents/<name>.md` 文件（**文件名 = agent 名**），frontmatter 定义角色与工具筛选，markdown 正文即 system prompt：
+
+```markdown
+---
+name: coder
+description: 编码助手，专注代码编写与重构
+temperature: 0.2
+tools:
+  allow:
+    - "*"
+  deny:
+    - bash
+---
+
+你是一名资深编码助手。优先使用 python/jupyter 完成任务，禁止 bash 执行任意命令。
+```
+
+| frontmatter 字段 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 必填，必须等于文件名 |
+| `description` | string | 可选，Agent 描述 |
+| `temperature` | float | 可选，采样温度 |
+| `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `["*"]` 全放行） |
+| `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
+
+- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具
+- **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
+- **会话内切换**：同一会话可在运行中按名切换 Agent（历史/kernel 保留）
 
 ---
 
@@ -280,6 +324,8 @@ writer = Agent(
 )
 ```
 
+代码方式灵活，但角色/工具组合固定时更推荐 **frontmatter 定义**（见上文）：每个 Agent 一个 `.md` 文件，启动按名加载、会话内可切换，无需改代码。
+
 ---
 
 ## 📁 项目结构
@@ -290,11 +336,11 @@ walle/
 ├── conf.yaml.example          # 配置模板
 ├── pyproject.toml             # 依赖声明
 ├── core/                      # 核心引擎
-│   ├── agent.py               #   Agent / Handoff 模型
+│   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（审批·并发·超时）
 │   ├── approval.py            #   审批规则引擎
-│   └── session.py             #   会话实体（连接即会话）
+│   └── session.py             #   会话实体（连接即会话，支持切换 Agent）
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
@@ -332,6 +378,7 @@ walle/
 │   ├── docker-compose.yaml    #   OTel + Tempo + Mimir + Grafana
 │   └── *.yaml                 #   各服务配置
 ├── .agent/                    # Agent 运行时持久化
+│   ├── agents/                #   Agent 定义（frontmatter Markdown）
 │   ├── skills/                #   技能（skill-creator 生成）
 │   ├── tools/                 #   模型定义的工具（define_tool）
 │   └── mcp.yaml               #   MCP Server 配置（add_mcp）
