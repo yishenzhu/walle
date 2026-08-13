@@ -16,7 +16,7 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
     )))
     return Session(
         session_id=session_id,
-        agent_factory=lambda _name: Agent(instruction="You are a helpful assistant."),
+        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
         runner=runner,
         transport=transport or FakeChannel(),
         storage=storage,
@@ -27,7 +27,7 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
 def make_registry(db_path: str) -> SessionRegistry:
     """构造带 Session 构造参数的 registry（register 测试用）。"""
     return SessionRegistry(
-        agent_factory=lambda _name: Agent(instruction="You are a helpful assistant."),
+        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
         runner=Runner(executor=ToolExecutor(ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ))),

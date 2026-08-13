@@ -72,15 +72,16 @@ class Agent(BaseModel, Generic[TContext]):
     @classmethod
     def load(
         cls,
-        name: str = "default",
+        name: str | None = None,
         tools: Callable[[], list[Tool]] | None = None,
     ) -> "Agent":
         """按 agent 名从 frontmatter 加载 Agent（.agent/agents/<name>.md）。
 
         frontmatter 支持：name / description / temperature /
         tools(allow, deny)。markdown 正文即 instruction。
-        缺省加载 default；文件不存在或 name 与文件名不符时抛 ValueError。
+        未提供 name 时加载 default；文件不存在或 name 与文件名不符时抛 ValueError。
         """
+        name = name or "default"
         path = DOT_AGENT / "agents" / f"{name}.md"
         if not path.exists():
             raise ValueError(f"agent file not found: {path}")

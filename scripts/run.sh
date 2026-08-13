@@ -42,7 +42,6 @@ walle 启动脚本
   --stop         停止常驻 agent 服务端
   --test         运行测试，不启动 agent
   --cli          启动 agent 服务端并自动连接一个 CLI 客户端
-  --agents       浏览运行中的会话列表（仅元数据）
   --attach <id>  恢复（attach）已有会话
   --status       检查 agent 服务端运行状态并列出会话
   --help         显示此帮助信息
@@ -51,7 +50,6 @@ walle 启动脚本
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
   ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
-  ./scripts/run.sh --agents           # 浏览会话
   ./scripts/run.sh --attach cli-xxx   # 恢复会话
   ./scripts/run.sh --status           # 服务端状态
   ./scripts/run.sh --stop             # 停止常驻 agent 服务端
@@ -199,7 +197,6 @@ main() {
     local stop_agent_flag=false
     local test_only=false
     local cli=false
-    local agents_flag=false
     local status_flag=false
     local attach_flag=false
     local attach_id=""
@@ -213,7 +210,6 @@ main() {
             --stop)        stop_agent_flag=true ;;
             --test)        test_only=true ;;
             --cli)         cli=true ;;
-            --agents)      agents_flag=true ;;
             --status)      status_flag=true ;;
             --attach)      attach_flag=true; shift; attach_id="${1:-}" ;;
             --help|-h)     usage ;;
@@ -232,10 +228,6 @@ main() {
             exit 1
         fi
         attach_session "$attach_id"
-        exit 0
-    fi
-    if [ "$agents_flag" = true ]; then
-        list_sessions
         exit 0
     fi
     if [ "$status_flag" = true ]; then

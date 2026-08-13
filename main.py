@@ -23,9 +23,8 @@ async def main() -> None:
     tools = await ToolRegistry().initialize(conf)
 
     sessions = SessionRegistry(
-        # 闭包：只接受 agent 名，路径拼接/校验由 Agent.load 负责
-        # （.agent/agents/<name>.md；缺省 default.md）
-        agent_factory=lambda name: Agent.load(
+        # 闭包：只接受 agent 名（None = default），路径拼接/校验由 Agent.load 负责
+        agent_factory=lambda name=None: Agent.load(
             name, tools=tools.all_tools,   # 工具源：define_tool/add_mcp 实时反映
         ),
         # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
