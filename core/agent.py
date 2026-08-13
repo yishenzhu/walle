@@ -103,7 +103,7 @@ class Agent(BaseModel, Generic[TContext]):
 
     def available_tools(self) -> list[Tool]:
         """当前可用的工具：实时取 tools 源并应用 tool_filter 筛选。"""
-        return self.tool_filter.apply(self.tools() if self.tools else [])
+        return self.tool_filter.apply(self.tools()) if self.tools else []
 
     def _validate_as_tool(self) -> None:
         if self.name is None or self.description is None:
