@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path
 from typing import TypeVar, Generic, Any, Callable
 
 import frontmatter
 from pydantic import BaseModel, Field, model_validator
+from ..conf import DOT_AGENT
 from ..tools import Tool
 
 TContext = TypeVar("TContext")
@@ -72,22 +72,23 @@ class Agent(BaseModel, Generic[TContext]):
     @classmethod
     def load(
         cls,
-        path: str | Path,
+        name: str = "default",
         tools: Callable[[], list[Tool]] | None = None,
     ) -> "Agent":
-        """从 frontmatter 文件（.md）加载 Agent。
+        """按 agent 名从 frontmatter 加载 Agent（.agent/agents/<name>.md）。
 
         frontmatter 支持：name / description / temperature /
         tools(allow, deny)。markdown 正文即 instruction。
-        name 必须等于文件名（不含 .md）。
+        缺省加载 default；文件不存在或 name 与文件名不符时抛 ValueError。
         """
-        path = Path(path)
+        path = DOT_AGENT / "agents" / f"{name}.md"
+        if not path.exists():
+            raise ValueError(f"agent file not found: {path}")
         post = frontmatter.load(path)
         meta = post.metadata
-        name = meta.get("name")
-        if name != path.stem:
+        if meta.get("name") != name:
             raise ValueError(
-                f"agent name '{name}' not match file name '{path.stem}'"
+                f"agent name '{meta.get('name')}' not match file name '{name}'"
             )
         instruction = post.content.strip() or None
         return cls(

@@ -23,10 +23,10 @@ async def main() -> None:
     tools = await ToolRegistry().initialize(conf)
 
     sessions = SessionRegistry(
-        # Session 构造参数：每个会话独立 agent（工具源实时反映）+ 审批配置
-        agent_factory=lambda: Agent(
-            instruction="You are a helpful assistant.",
-            tools=tools.all_tools,   # 工具源：define_tool/add_mcp 实时反映
+        # 闭包：只接受 agent 名，路径拼接/校验由 Agent.load 负责
+        # （.agent/agents/<name>.md；缺省 default.md）
+        agent_factory=lambda name: Agent.load(
+            name, tools=tools.all_tools,   # 工具源：define_tool/add_mcp 实时反映
         ),
         # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
         # 会退化为全量 ASK（allow 规则失效），必须显式传入。

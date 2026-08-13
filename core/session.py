@@ -25,7 +25,7 @@ class Session:
     def __init__(
         self,
         session_id: str,
-        agent_factory: Callable[[], Agent],
+        agent_factory: Callable[[str], Agent],
         runner: Runner,
         transport: Channel | None = None,
         provider: OpenAIProvider | None = None,
@@ -33,6 +33,8 @@ class Session:
         db_path: str = "data/session.db",
     ) -> None:
         self.id = session_id
+        # factory 接收 agent 名（缺省 = default）：会话内可随时按名切换 agent
+        self._agent_factory = agent_factory
         self._agent = agent_factory()
         self._runner = runner
         self._provider = provider
@@ -56,6 +58,13 @@ class Session:
     def attached(self) -> bool:
         """是否有活跃连接的 transport 绑定。"""
         return self._transport is not None
+
+    def set_agent(self, name: str = "default") -> None:
+        """按名切换 agent（factory 重新加载 frontmatter）；缺省用 default。
+
+        历史/kernel 保留，仅换 agent 配置——同一会话可随时切换。
+        """
+        self._agent = self._agent_factory(name)
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点，环境随之更新。"""
@@ -95,7 +104,7 @@ class SessionRegistry:
 
     def __init__(
         self,
-        agent_factory: Callable[[], Agent],
+        agent_factory: Callable[[str], Agent],
         runner: Runner,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
@@ -110,7 +119,11 @@ class SessionRegistry:
         self._created_at: dict[str, float] = {}
 
     def create(self, conn: Any) -> Session:
-        """用注入的构造参数新建会话，绑定 conn 为 transport 并注册。"""
+        """用注入的构造参数新建会话，绑定 conn 为 transport 并注册。
+
+        Session 初始用默认 agent（factory 内部业务），运行时可在会话内
+        按名切换（Session.set_agent）。
+        """
         session = Session(
             session_id=conn.chat_id,
             agent_factory=self._agent_factory,

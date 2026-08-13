@@ -157,7 +157,7 @@ class _TestServer:
 
     def __init__(self, db_path: str):
         self.registry = SessionRegistry(
-            agent_factory=lambda: Agent(instruction="You are a helpful assistant."),
+            agent_factory=lambda _name: Agent(instruction="You are a helpful assistant."),
             runner=Runner(executor=ToolExecutor(ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ))),
