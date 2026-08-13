@@ -2,8 +2,7 @@
 import json
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
-from ..core.approval import ChannelApprover
+from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
 from ..schemas import ApprovalRsp
 from ..tools import Tool, ToolContext
@@ -79,25 +78,25 @@ class TestExecute:
     async def test_execute_user_approves(self, channel):
         channel.set_approval(approved=True)
         executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)),
-            channel=channel,
-            approver=ChannelApprover(channel),
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK))
         )
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute(tc, {"bash": tool}, ToolContext())
+        tc_id, result = await executor.execute(
+            tc, {"bash": tool}, ToolContext(channel=channel)
+        )
         assert result == "done"
 
     async def test_execute_user_denies(self, channel):
         channel.set_approval(approved=False, reason="dangerous")
         executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK)),
-            channel=channel,
-            approver=ChannelApprover(channel),
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK))
         )
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute(tc, {"bash": tool}, ToolContext())
+        tc_id, result = await executor.execute(
+            tc, {"bash": tool}, ToolContext(channel=channel)
+        )
         assert "denied by user" in result
         assert "dangerous" in result
 
@@ -116,7 +115,7 @@ class TestExecute:
             return "should not reach"
 
         tool = Tool(name="slow", description="d", parameters={"type": "object", "properties": {}}, fn=slow_fn)
-        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=0.1))
+        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=TimeoutConfig(default=0.1)))
         tc = make_tool_call(name="slow")
         tc_id, result = await executor.execute(tc, {"slow": tool}, ctx)
         assert "timed out" in result
@@ -126,10 +125,54 @@ class TestExecute:
             return "ok"
 
         tool = Tool(name="ok", description="d", parameters={"type": "object", "properties": {}}, fn=fn)
-        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=None))
+        executor = ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW), timeout=TimeoutConfig(default=None)))
         tc = make_tool_call(name="ok")
         tc_id, result = await executor.execute(tc, {"ok": tool}, ctx)
         assert result == "ok"
+
+    async def test_execute_timeout_overrides_global(self, ctx):
+        import asyncio
+
+        # 全局 0.1s 超时，但 ask_user 用单工具覆盖长超时
+        async def slow_interactive(args):
+            await asyncio.sleep(0.5)
+            return "answered"
+
+        tool = Tool(
+            name="ask_user", description="d",
+            parameters={"type": "object", "properties": {}}, fn=slow_interactive,
+        )
+        executor = ToolExecutor(
+            ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+                timeout=TimeoutConfig(default=0.1, overrides={"ask_user": 5.0}),
+            )
+        )
+        tc = make_tool_call(name="ask_user")
+        tc_id, result = await executor.execute(tc, {"ask_user": tool}, ctx)
+        assert result == "answered"   # 未被 0.1s 全局超时打断
+
+    async def test_execute_timeout_exempt_with_none(self, ctx):
+        import asyncio
+
+        # 覆盖值为 None = 豁免超时：交互工具等用户回答不设时限
+        async def interactive(args):
+            await asyncio.sleep(0.5)
+            return "answered"
+
+        tool = Tool(
+            name="ask_user", description="d",
+            parameters={"type": "object", "properties": {}}, fn=interactive,
+        )
+        executor = ToolExecutor(
+            ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+                timeout=TimeoutConfig(default=0.1, overrides={"ask_user": None}),
+            )
+        )
+        tc = make_tool_call(name="ask_user")
+        tc_id, result = await executor.execute(tc, {"ask_user": tool}, ctx)
+        assert result == "answered"
 
 
 class TestExecuteBatch:

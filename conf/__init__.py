@@ -7,6 +7,7 @@ from .config import (
     ApprovalConfig,
     ApprovalDecision,
     RawRule,
+    TimeoutConfig,
     ToolConfig,
     PROJ_ROOT,
     DOT_AGENT,

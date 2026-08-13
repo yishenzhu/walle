@@ -3,7 +3,7 @@ import logging
 
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
-from .core import Agent, Runner, Session
+from .core import Agent, Runner, Session, ToolExecutor
 from .channel.cli import CLIChannel, CLIConn
 from .tools import ToolRegistry
 
@@ -31,7 +31,9 @@ async def main() -> None:
                 instruction="You are a helpful assistant.",
                 tools=registry.all_tools,   # 工具源：define_tool/add_mcp 实时反映
             ),
-            runner=Runner(),   # 会话复用同一 Runner（默认 provider/executor）
+            # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
+            # 会退化为全量 ASK（allow 规则失效），必须显式传入。
+            runner=Runner(executor=ToolExecutor(conf.tool)),
         )
 
     channel = CLIChannel(session_factory=make_session)

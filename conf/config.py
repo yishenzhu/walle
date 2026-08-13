@@ -67,9 +67,22 @@ class ApprovalConfig(BaseModel):
     default: ApprovalDecision = ApprovalDecision.ASK
 
 
+class TimeoutConfig(BaseModel):
+    """工具超时：全局默认 + 按工具名覆盖（None = 豁免超时）。"""
+
+    default: float | None = 30.0
+    overrides: dict[str, float | None] = Field(default_factory=dict)
+
+    def resolve(self, name: str) -> float | None:
+        """按工具名匹配 overrides > 全局 default。"""
+        if name in self.overrides:
+            return self.overrides[name]
+        return self.default
+
+
 class ToolConfig(BaseModel):
     approval: ApprovalConfig = ApprovalConfig()
-    timeout: float | None = 30.0
+    timeout: TimeoutConfig = TimeoutConfig()
 
 
 class Config(BaseModel):

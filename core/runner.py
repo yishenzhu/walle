@@ -173,10 +173,8 @@ class Runner:
                     message.tool_calls, tools, ctx
                 ):
                     tool_results.append((tc_id, r))
-                    if channel:
-                        await channel.notify(
-                            ToolResult(tool_call_id=tc_id, result=r)
-                        )
+                    # ToolResult 通知由 execute() 统一发出（成功/失败各一次），
+                    # 避免这里重复通知导致客户端双行渲染。
             elif channel:
                 await channel.notify(DeltaEnd())
         return completion, message, tool_results

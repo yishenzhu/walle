@@ -97,8 +97,15 @@ class ChannelApprover:
         self._channel = channel
 
     async def ask(self, tool_name: str, arguments: dict, tool_call_id: str) -> ApprovalRsp:
-        return await self._channel.call(
+        data = await self._channel.call(
             Approval(tool_name=tool_name, arguments=arguments, tool_call_id=tool_call_id)
+        )
+        # 真实通道（如 CLI）的 call 返回 JSON 反序列化后的 dict，需验证为模型；
+        # 测试 / 内存通道可能直接返回 ApprovalRsp 实例，原样透传。
+        return (
+            data
+            if isinstance(data, ApprovalRsp)
+            else ApprovalRsp.model_validate(data)
         )
 
 

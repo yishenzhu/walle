@@ -12,7 +12,10 @@ telemetry:
   console_export: false
 
 tool:
-  timeout: 30
+  timeout:
+    default: 30
+    overrides:
+      ask_user: null    # None = 豁免超时（等人回答不设时限）；数值 = 覆盖全局
   approval:
     rules:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
