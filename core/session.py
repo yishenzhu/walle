@@ -7,6 +7,7 @@ Session 持有会话状态（历史 / kernel / agent），传输（CLIConn）是
 kernel/messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
 transport。真正销毁走 close()（registry 显式调用）。
 """
+import time
 from typing import Any, Callable
 
 from .agent import Agent
@@ -31,8 +32,11 @@ class Session:
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
+        created_at: float | None = None,
     ) -> None:
         self.id = session_id
+        # 创建时间内聚在 Session（注册表/连接仅读取展示）
+        self.created_at = created_at if created_at is not None else time.time()
         # factory 接收 agent 名（缺省 = default）：会话内可随时按名切换 agent
         self._agent_factory = agent_factory
         self._agent = agent_factory()
@@ -116,7 +120,6 @@ class SessionRegistry:
         self._storage = storage
         self._db_path = db_path
         self._sessions: dict[str, Session] = {}
-        self._created_at: dict[str, float] = {}
 
     def create(self, conn: Any) -> Session:
         """用注入的构造参数新建会话，绑定 conn 为 transport 并注册。
@@ -140,29 +143,23 @@ class SessionRegistry:
         """注册新会话。同 id 已存在则报错（重连走 attach，不重建）。"""
         if session.id in self._sessions:
             raise ValueError(f"session '{session.id}' already registered")
-        import time
-
         self._sessions[session.id] = session
-        self._created_at[session.id] = time.time()
 
     def get(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
 
     def remove(self, session_id: str) -> Session | None:
         """从注册表移除（不 close，调用方决定是否销毁）。"""
-        self._created_at.pop(session_id, None)
         return self._sessions.pop(session_id, None)
 
     def list(self) -> list[dict]:
         """列出全部会话：id、attached 状态、创建时间。"""
-        import time as _time
-
         return [
             {
                 "session_id": sid,
                 "attached": s.attached,
-                "created_at": self._created_at.get(sid, 0.0),
-                "age_seconds": _time.time() - self._created_at.get(sid, _time.time()),
+                "created_at": s.created_at,
+                "age_seconds": time.time() - s.created_at,
             }
             for sid, s in self._sessions.items()
         ]
@@ -175,4 +172,3 @@ class SessionRegistry:
             except Exception:
                 pass
         self._sessions.clear()
-        self._created_at.clear()
