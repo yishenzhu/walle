@@ -12,6 +12,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
+import readline
 
 from ..schemas import NotificationUnion, ServiceUnion, UserInput
 
@@ -59,14 +60,21 @@ class CLIConn:
 
     # ── Channel 协议 ──────────────────────────────────
     async def notify(self, n: NotificationUnion) -> None:
-        await self.send({"type": "notify", "data": n.model_dump(mode="json")})
+        # 连接即会话：补全 chat_id（上层构造事件时不带，由本连接注入身份）
+        await self.send(
+            {"type": "notify", "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(mode="json")}
+        )
 
     async def call(self, s: ServiceUnion) -> Any:
         req_id = f"req-{uuid.uuid4().hex}"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
         await self.send(
-            {"type": "call", "id": req_id, "data": s.model_dump(mode="json")}
+            {
+                "type": "call",
+                "id": req_id,
+                "data": s.model_copy(update={"chat_id": self.chat_id}).model_dump(mode="json"),
+            }
         )
         try:
             return await fut
@@ -87,19 +95,49 @@ class CLIConn:
 
     # ── 读循环 ────────────────────────────────────────
     async def run(self, on_input: Callable[[str], Awaitable[None]]) -> None:
-        """读帧：input → on_input（本连接消息）；reply → resolve 对应 request。"""
-        while line := await self.read_line():
-            if not line.strip():
-                break
+        """读帧：input → on_input（本连接消息）；reply → resolve 对应 request。
+
+        input 不直接 await on_input，而是入队由独立 worker 串行消费：读循环
+        保持活跃，agent 运行期间 reply 帧（审批 / 提问的回复）仍能被读取。
+        否则 on_input（含完整 agent run）会占住读循环，reply 无人处理，
+        双向交互工具（ask_user / 审批）会死锁——agent 等 reply，读循环等 agent。
+        """
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        worker = asyncio.create_task(self._consume(on_input, queue))
+        try:
+            while line := await self.read_line():
+                if not line.strip():
+                    break
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = msg.get("type")
+                if t == "input":
+                    queue.put_nowait(msg.get("content") or "")
+                elif t == "reply":
+                    self.resolve(msg.get("id", ""), msg.get("data"))
+        finally:
+            worker.cancel()
             try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = msg.get("type")
-            if t == "input":
-                await on_input(msg.get("content") or "")
-            elif t == "reply":
-                self.resolve(msg.get("id", ""), msg.get("data"))
+                await worker
+            except asyncio.CancelledError:
+                pass   # 连接断开：中断仍在处理的 input
+
+    async def _consume(
+        self,
+        on_input: Callable[[str], Awaitable[None]],
+        queue: asyncio.Queue[str],
+    ) -> None:
+        """串行消费 input 帧；单条消息处理失败仅记录，不影响后续消息。"""
+        while True:
+            content = await queue.get()
+            try:
+                await on_input(content)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"input handling failed: {exc}")
 
 
 class CLIChannel:
@@ -255,23 +293,53 @@ class CLIClient:
                     writer, {"type": "reply", "id": msg.get("id"), "data": reply}
                 )
 
+    @staticmethod
+    def _format_arguments(arguments: dict) -> str:
+        """格式化工具参数：短参数单行展示，长参数多行缩进并截断。"""
+        text = json.dumps(arguments, ensure_ascii=False)
+        if len(text) <= 120:
+            return text
+        lines = json.dumps(arguments, ensure_ascii=False, indent=2).splitlines()
+        shown = lines[:12]
+        if len(lines) > 12:
+            shown.append(f"...（其余 {len(lines) - 12} 行省略）")
+        return "\n".join(shown)
+
     async def _handle_call(self, data: dict) -> dict:
         """处理 call 载荷（Inquiry / Approval），返回 reply 数据。"""
         if data.get("type") == "inquiry":
-            print(f"  [提问] {data.get('question')}")
-            for i, opt in enumerate(data.get("options") or [], 1):
-                print(f"    {i}. {opt}")
+            print(f"  {CYAN}┌─ ❓ 提问 ─────────────────────────────────────{RESET}")
+            print(f"  {CYAN}│{RESET} {data.get('question')}")
+            options = data.get("options") or []
+            if options:
+                print(f"  {CYAN}│{RESET} 选项:")
+                for i, opt in enumerate(options, 1):
+                    print(f"  {CYAN}│{RESET}   {GREEN}{i}.{RESET} {opt}")
+            print(f"  {CYAN}└──────────────────────────────────────────────{RESET}")
             return {"content": (await asyncio.to_thread(input, "  回答: ")).strip()}
         if data.get("type") == "approval":
-            print(f"  [审批请求] 允许执行: {data.get('tool_name')}({data.get('arguments')})?")
+            tool_name = data.get("tool_name")
+            args_text = self._format_arguments(data.get("arguments") or {})
+            print(f"  {CYAN}┌─ 🔐 审批请求 ─────────────────────────────────{RESET}")
+            print(f"  {CYAN}│{RESET} 工具: {tool_name}")
+            print(f"  {CYAN}│{RESET} 参数:")
+            for ln in args_text.splitlines():
+                print(f"  {CYAN}│{RESET}   {ln}")
+            print(f"  {CYAN}└──────────────────────────────────────────────{RESET}")
             while True:
-                answer = (await asyncio.to_thread(input, "  允许? (y/n): ")).strip().lower()
+                answer = (
+                    await asyncio.to_thread(
+                        input, f"  {GREEN}允许执行?{RESET} (y=是 / n=否): "
+                    )
+                ).strip().lower()
                 if answer in ("y", "yes"):
                     return {"approved": True}
                 if answer in ("n", "no"):
-                    reason = (await asyncio.to_thread(input, "  拒绝原因(可选): ")).strip()
+                    reason = (
+                        await asyncio.to_thread(input, f"  {RED}拒绝原因(可选){RESET}: ")
+                    ).strip()
                     return {"approved": False, "reason": reason or None}
-                print("  请输入 y/n")
+                print(f"  {RED}请输入 y 或 n{RESET}")
         return {}
 
     @staticmethod
