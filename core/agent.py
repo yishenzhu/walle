@@ -1,10 +1,33 @@
 from __future__ import annotations
 
+import fnmatch
+from pathlib import Path
 from typing import TypeVar, Generic, Any, Callable
+
+import frontmatter
 from pydantic import BaseModel, Field, model_validator
 from ..tools import Tool
 
 TContext = TypeVar("TContext")
+
+
+class ToolFilter(BaseModel):
+    """工具筛选配置：allow/deny glob 列表，deny 优先于 allow。
+
+    allow 默认 ["*"]（全放行）；给出显式模式时仅保留命中 allow
+    且未命中 deny 的工具。模式为 fnmatch 风格（支持 mcp_obsidian*）。
+    """
+
+    allow: list[str] = Field(default_factory=lambda: ["*"])
+    deny: list[str] = Field(default_factory=list)
+
+    def includes(self, name: str) -> bool:
+        if any(fnmatch.fnmatchcase(name, pat) for pat in self.deny):
+            return False
+        return any(fnmatch.fnmatchcase(name, pat) for pat in self.allow)
+
+    def apply(self, tools: list[Tool]) -> list[Tool]:
+        return [t for t in tools if self.includes(t.name)]
 
 
 class Handoff(BaseModel):
@@ -41,8 +64,44 @@ class Agent(BaseModel, Generic[TContext]):
     output_type: type[BaseModel] | None = None
     # 工具源：返回该 Agent 当前全部工具（运行时添加的工具由此实时反映）
     tools: Callable[[], list[Tool]] | None = None
+    # 工具筛选配置：从 tools 源中按名字过滤（allow/deny glob，deny 优先）
+    tool_filter: ToolFilter = Field(default_factory=ToolFilter)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @classmethod
+    def load(
+        cls,
+        path: str | Path,
+        tools: Callable[[], list[Tool]] | None = None,
+    ) -> "Agent":
+        """从 frontmatter 文件（.md）加载 Agent。
+
+        frontmatter 支持：name / description / temperature /
+        tools(allow, deny)。markdown 正文即 instruction。
+        name 必须等于文件名（不含 .md）。
+        """
+        path = Path(path)
+        post = frontmatter.load(path)
+        meta = post.metadata
+        name = meta.get("name")
+        if name != path.stem:
+            raise ValueError(
+                f"agent name '{name}' not match file name '{path.stem}'"
+            )
+        instruction = post.content.strip() or None
+        return cls(
+            name=name,
+            description=meta.get("description"),
+            instruction=instruction,
+            temperature=meta.get("temperature"),
+            tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
+            tools=tools,
+        )
+
+    def available_tools(self) -> list[Tool]:
+        """当前可用的工具：实时取 tools 源并应用 tool_filter 筛选。"""
+        return self.tool_filter.apply(self.tools() if self.tools else [])
 
     def _validate_as_tool(self) -> None:
         if self.name is None or self.description is None:
