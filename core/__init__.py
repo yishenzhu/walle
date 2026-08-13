@@ -16,4 +16,5 @@ from .runner import (
 )
 from .session import (
     Session,
+    SessionRegistry,
 )
