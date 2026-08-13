@@ -2,7 +2,7 @@
 
 > 一个从零构建的 AI Agent 框架 —— 工具调用 · 多智能体 · MCP · 自我进化 · 全链路可观测
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev)
 [![MCP](https://img.shields.io/badge/MCP-Protocol-0A9F77?logo=modelcontextprotocol)](https://modelcontextprotocol.io)
 [![OpenTelemetry](https://img.shields.io/badge/Observability-OpenTelemetry-425CC7?logo=opentelemetry)](https://opentelemetry.io)
@@ -73,6 +73,9 @@ sequenceDiagram
             R->>T: 并发执行
             T->>T: 审批检查 → 执行
             T-->>R: 结果
+            alt 含 Handoff
+                R->>R: 切换 Agent，继续循环
+            end
         else 无 tool_calls
             R-->>S: 最终结果
         end
@@ -103,7 +106,7 @@ sequenceDiagram
 
 ### 前置条件
 
-- **Python ≥ 3.11**
+- **Python ≥ 3.12**（pyproject.toml 要求）
 - **Docker + Docker Compose**（可选，用于可观测性栈）
 
 ### 安装
@@ -168,15 +171,24 @@ telemetry:
   console_export: false
 
 tool:
-  timeout: 30                       # 工具执行超时（秒），null 禁用
+  timeout:
+    default: 30                       # 全局默认超时（秒）
+    overrides:
+      ask_user: null                  # None = 豁免超时（等人回答不设时限）
   approval:
     rules:
-      - [allow, mcp_obsidian*]        # MCP 工具自动放行
-      - [ask, jupyter]                # 代码执行默认需人工确认
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
+      - [ask, jupyter]                # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
+      - [allow, grilling]             # 技能工具自动放行
     default: ask                      # 默认需人工审批
+
+session:
+  storage: "sqlite"                   # sqlite | memory
+  db_path: "data/session.db"          # sqlite 存储路径（相对项目根）
+
+# MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）
 ```
 
 #### 审批规则
@@ -190,6 +202,8 @@ tool:
 | `ask` | 人工确认（默认） |
 
 示例匹配：`bash`（全部 bash）、`bash(cmd=rm -rf *)`（特定参数）、`ask_user`（工具名）。
+
+工具超时：全局 `tool.timeout.default` 生效，`tool.timeout.overrides` 按工具名覆盖（`None` 豁免超时，如 `ask_user` 等人回答）。
 
 ### `.agent/` — 运行时持久化
 
@@ -231,7 +245,7 @@ tools:
 
 - **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
-- **会话内切换**：同一会话可在运行中按名切换 Agent（历史/kernel 保留）
+- **会话内切换**：API `Session.set_agent(name)` 按名切换（历史/kernel 保留）；未指定时用默认 agent
 
 ---
 
@@ -324,7 +338,7 @@ writer = Agent(
 )
 ```
 
-代码方式灵活，但角色/工具组合固定时更推荐 **frontmatter 定义**（见上文）：每个 Agent 一个 `.md` 文件，启动按名加载、会话内可切换，无需改代码。
+代码方式灵活，但角色/工具组合固定时更推荐 **frontmatter 定义**（见上文）：每个 Agent 一个 `.md` 文件，启动按名加载、会话内可切换（`Session.set_agent`），无需改代码。
 
 ---
 
@@ -374,6 +388,7 @@ walle/
 │   └── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
+├── tests/                     # 测试（pytest + pytest-asyncio）
 ├── observability/             # 可观测性栈
 │   ├── docker-compose.yaml    #   OTel + Tempo + Mimir + Grafana
 │   └── *.yaml                 #   各服务配置
@@ -392,7 +407,7 @@ walle/
 
 | 类别 | 技术 |
 |------|------|
-| 语言 | Python 3.11+ |
+| 语言 | Python 3.12+ |
 | LLM SDK | OpenAI Python SDK（兼容任意 OpenAI API 格式模型） |
 | 数据模型 | Pydantic v2 |
 | 工具协议 | MCP (Model Context Protocol) |
