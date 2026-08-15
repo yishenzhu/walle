@@ -138,7 +138,8 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh --test          # 运行测试
 ```
 
-启动后可用 `python -m walle.channel.cli` 连接对话（JSON-line 协议多会话）。
+启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
+`PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。
 
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史/kernel），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
@@ -323,18 +324,23 @@ async def weather(city: str) -> str:
 
 ```python
 from walle.core import Agent, Handoff
+from walle.tools import Tool
+
+# 工具源：返回工具列表的 callable（运行期新增的 define_tool / add_mcp 工具实时反映）
+def all_tools() -> list[Tool]:
+    return [search_tool, write_tool]
 
 researcher = Agent(
     name="researcher",
     description="负责信息检索与调研",
-    tools=[search_tool],
+    tools=all_tools,
     instruction="你是调研助手...",
 )
 
 writer = Agent(
     name="writer",
     description="负责撰写报告",
-    tools=[write_tool],
+    tools=all_tools,
     instruction="你是写作助手...",
     handoffs=[Handoff(target=researcher)],  # writer 可移交给 researcher
 )
@@ -367,7 +373,9 @@ walle/
 │   ├── defined.py             #   模型定义工具（校验/持久化）
 │   └── builtin/               #   内置工具
 │       ├── bash.py            #     Bash 执行
+│       ├── python.py          #     jupyter 代码执行（CodeAct）
 │       ├── ask_user.py        #     向用户提问
+│       ├── job.py             #     后台作业（background / job_result）
 │       └── skill.py           #     Skill 加载器
 
 ├── messages/                  # 消息存储
@@ -386,10 +394,16 @@ walle/
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化
 │   ├── metrics.py             #   指标定义
-│   ├── provider.py            #   LLM Provider
-│   └── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
+│   ├── provider.py            #   LLM Provider（create/stream/set_model）
+│   ├── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
+│   └── sqlite_store.py        #   SQLite 存储工具
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
+├── eval/                      # 评测套件（自建任务 + τ-bench 适配）
+│   ├── tasks/                 #   任务定义（YAML）
+│   ├── harness.py             #   无头执行器
+│   ├── run.py                 #   评测入口
+│   └── bench/                 #   τ-bench 公开基准适配
 ├── tests/                     # 测试（pytest + pytest-asyncio）
 ├── observability/             # 可观测性栈
 │   ├── docker-compose.yaml    #   OTel + Tempo + Mimir + Grafana
