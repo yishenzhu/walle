@@ -22,6 +22,10 @@ class OpenAIProvider:
         old, self.model = self.model, model
         return old
 
+    async def close(self) -> None:
+        """显式关闭底层 client（释放连接池；线程内使用后必须调用）。"""
+        await self._client.close()
+
     async def create(self, **kwargs):
         """批量补全：内部填充 model，返回 Completion（含 usage）。"""
         return await self._client.chat.completions.create(model=self.model, **kwargs)

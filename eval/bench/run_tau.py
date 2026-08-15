@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -59,6 +60,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--price-prompt", type=float, default=0.0, help="输入单价 USD/M token")
     p.add_argument("--price-completion", type=float, default=0.0, help="输出单价 USD/M token")
     p.add_argument("--resume", action="store_true", help="从上次中断处续跑（读已有 detail）")
+    p.add_argument("--concurrency", type=int, default=1,
+                   help="并发用例数（线程池；每用例独立 env/provider，默认 1）")
     return p.parse_args(argv)
 
 
@@ -161,6 +164,9 @@ async def run_tau_case(
         error = f"{type(e).__name__}: {e}"
     finally:
         await walle_env.kernel.close()
+        # 线程内必须显式关闭 client，否则 httpx 连接在事件循环关闭后
+        # 才尝试 aclose，报 "Event loop is closed"
+        await agent_provider.close()
     elapsed = time.monotonic() - start
 
     reward = state["reward"]
@@ -205,20 +211,27 @@ def main(argv: list[str] | None = None) -> int:
     from tau_bench.envs.retail import MockRetailDomainEnv
 
     user_model = args.user_model or model
-    # 构造期用 human strategy：litellm 的 LLM 策略构造时会立即发起 API 调用，
-    # 构造后再替换为走同一网关的 WalleUserSimulationEnv
-    env = MockRetailDomainEnv(
-        user_strategy="human",
-        user_model=user_model,
-        user_provider="openai",
-        task_split=args.split,
-    )
-    env.user = WalleUserSimulationEnv(api_key=api_key, base_url=base_url, model=user_model)
 
-    tools, state = build_tau_tools(env)
-    tools_src = lambda: tools
+    def build_env() -> tuple:
+        """每用例独立环境（并发安全）：env + 工具集 + state + provider。
 
-    indices = list(range(args.start, len(env.tasks)))
+        构造期用 human strategy：litellm 的 LLM 策略构造时会立即发起 API 调用，
+        构造后替换为走同一网关的 WalleUserSimulationEnv。
+        """
+        e = MockRetailDomainEnv(
+            user_strategy="human",
+            user_model=user_model,
+            user_provider="openai",
+            task_split=args.split,
+        )
+        e.user = WalleUserSimulationEnv(api_key=api_key, base_url=base_url, model=user_model)
+        tools_i, state_i = build_tau_tools(e)
+        provider_i = OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
+        return e, lambda: tools_i, state_i, provider_i
+
+    # 探路 env：仅取任务列表 / 任务描述（并发跑时不共享）
+    probe_env = build_env()[0]
+    indices = list(range(args.start, len(probe_env.tasks)))
     if args.limit > 0:
         indices = indices[: args.limit]
     done = load_done_indices(args.outdir) if args.resume else set()
@@ -226,9 +239,9 @@ def main(argv: list[str] | None = None) -> int:
     if done:
         print(f"resume: 跳过已完成的 {len(done)} 个用例，剩余 {len(indices)}")
     print(f"tau-bench env={args.env} split={args.split} tasks={len(indices)} "
-          f"agent_model={model} user_model={user_model}")
+          f"agent_model={model} user_model={user_model} "
+          f"concurrency={args.concurrency}")
 
-    provider = OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
     pricing = Pricing(
         prompt_per_m=args.price_prompt, completion_per_m=args.price_completion
     )
@@ -249,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             results.append(
                 TaskResult(
                     task=make_task_spec(
-                        idx, env.tasks[idx].instruction[:120], env_name(env)
+                        idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)
                     ),
                     success=row["success"],
                     detail=row.get("detail", []),
@@ -284,20 +297,57 @@ def main(argv: list[str] | None = None) -> int:
         save_results_json(partial, pricing, meta, args.outdir / "results.json")
         save_results_detail(partial, args.outdir / "results_detail.json")
 
-    for i, idx in enumerate(indices, 1):
-        print(f"[{i}/{len(indices)}] task {idx} ...", end="", flush=True)
-        # 每个用例独立事件循环（kernel 隔离）
-        res = asyncio.run(
-            run_tau_case(env, idx, provider, tools_src, state, args.max_turns)
-        )
-        results.append(res)
-        write_artifacts(results)
-        mark = "PASS" if res.success else "FAIL"
-        print(
-            f" {mark} turns={res.turns} tokens={res.tokens}"
-            f" tools={len(res.tool_calls)} {res.elapsed:.0f}s"
-            + (f"  {res.error}" if res.error else "")
-        )
+    print_lock = threading.Lock()
+
+    def run_one(idx: int) -> TaskResult:
+        """线程内跑单个用例：独立 env/provider/kernel，互不共享。"""
+        e, tools_src_i, state_i, provider_i = build_env()
+        try:
+            return asyncio.run(
+                run_tau_case(e, idx, provider_i, tools_src_i, state_i, args.max_turns)
+            )
+        except Exception as exc:  # 线程级兜底：不因单用例异常中断整批
+            return TaskResult(
+                task=make_task_spec(idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)),
+                success=False,
+                detail=[f"thread error: {type(exc).__name__}: {exc}"],
+                error=f"{type(exc).__name__}: {exc}",
+                tool_calls=[],
+            )
+
+    done_count = 0
+    if args.concurrency <= 1:
+        for i, idx in enumerate(indices, 1):
+            print(f"[{i}/{len(indices)}] task {idx} ...", end="", flush=True)
+            res = run_one(idx)
+            results.append(res)
+            write_artifacts(results)
+            mark = "PASS" if res.success else "FAIL"
+            with print_lock:
+                print(
+                    f" {mark} turns={res.turns} tokens={res.tokens}"
+                    f" tools={len(res.tool_calls)} {res.elapsed:.0f}s"
+                    + (f"  {res.error}" if res.error else "")
+                )
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+            futures = {pool.submit(run_one, idx): idx for idx in indices}
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                res = fut.result()
+                results.append(res)
+                write_artifacts(results)
+                done_count += 1
+                mark = "PASS" if res.success else "FAIL"
+                with print_lock:
+                    print(
+                        f"[{done_count}/{len(indices)}] task {idx} ... {mark}"
+                        f" turns={res.turns} tokens={res.tokens}"
+                        f" tools={len(res.tool_calls)} {res.elapsed:.0f}s"
+                        + (f"  {res.error}" if res.error else "")
+                    )
 
     # 最终报告（带趋势对比；续跑时 detail 已是最新，跳过重复写）
     if not args.resume:

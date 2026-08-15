@@ -487,6 +487,23 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau              # 全量
 PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split dev
 ```
 
-报告输出到 `eval/report/tau/`（复用自建套件的报告管线）。
+报告输出到 `eval/report/tau/`（复用自建套件的报告管线）。支持 `--concurrency N`
+线程池并发（每用例独立 env/provider/kernel）与 `--resume` 断点续跑（每完成一个
+用例即写盘）。
+
+### 结果（retail test 全量 115 用例，deepseek-v4-flash）
+
+| 指标 | 值 |
+|---|---|
+| 成功率 | **97/115 (84.3%)** |
+| 平均轮次 | 10.8 |
+| 平均 token/用例 | 73,602 |
+| 平均耗时/用例 | 72.9s |
+| 工具调用（总/错误） | 924 / 11 |
+
+> 与 τ-bench 论文官方 GPT-4o retail test 基线（80%+ 区间）同量级；
+> 用户模拟器与 agent 同模型（deepseek-v4-flash），若用更强模型模拟用户，
+> 分数通常还有提升空间。失败用例集中在模型任务判断（如提前结束对话），
+> 工具错误 11 次均被模型自愈重试。
 > 单任务执行日志可直接观察：`--task <name> --repeat 3` 用于稳定性测量。
 
