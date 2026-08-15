@@ -1,0 +1,11 @@
+name: jupyter_second_largest
+domain: codeact
+prompt: 用 jupyter 工具对列表 [5, 3, 9, 1, 7, 2] 排序，输出第二大的数。
+tools:
+  - jupyter
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "7"
+  tool_trace:
+    - jupyter

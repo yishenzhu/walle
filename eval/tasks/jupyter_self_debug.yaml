@@ -1,0 +1,11 @@
+name: jupyter_self_debug
+domain: codeact
+prompt: 用 jupyter 工具先执行一段会报错的代码（例如访问未定义变量 missing_var），观察返回的报错信息，然后修正代码，最终输出 2 ** 10 的结果。
+tools:
+  - jupyter
+max_turns: 6
+ground_truth:
+  type: numeric
+  value: "1024"
+  tool_trace:
+    - jupyter

@@ -1,0 +1,11 @@
+# Project notes
+
+## TODO
+- implement auth
+- write tests
+- fix bug #42
+- deploy to prod
+
+## Done
+- setup CI
+- add logging

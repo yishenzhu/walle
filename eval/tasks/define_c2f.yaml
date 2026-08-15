@@ -1,0 +1,14 @@
+name: define_c2f
+domain: define_tool
+prompt: '用 define_tool 工具定义一个名为 c2f 的工具：输入摄氏温度 c（float），返回华氏温度，公式为 c * 9 / 5 + 32。代码必须是顶层 async def c2f(c: float) 并带有 docstring。定义成功后，调用 c2f(100) 并输出结果。'
+tools:
+  - define_tool
+  - c2f
+max_turns: 8
+ground_truth:
+  type: numeric
+  value: "212"
+  tolerance: 0.5
+  tool_trace:
+    - define_tool
+    - c2f

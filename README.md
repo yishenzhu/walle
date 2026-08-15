@@ -418,3 +418,49 @@ walle/
 | 配置 | YAML + Pydantic |
 | 异步 | asyncio |
 
+---
+
+## 🧪 评测
+
+`eval/` 是自建的能力评测套件：无头执行（真实 LLM + 内置工具，无人工交互），
+按域覆盖核心引擎能力，自动评分并生成报告。
+
+### 任务域（20 任务）
+
+| 域 | 任务数 | 覆盖能力 |
+|---|---|---|
+| codeact | 6 | Jupyter kernel 计算 / 跨调用状态保留 / 报错自愈 |
+| bash | 5 | shell 统计 / 文件读写 |
+| combined | 3 | bash + jupyter 多工具流水线 |
+| define_tool | 2 | 模型运行期定义工具并立即使用 |
+| background | 2 | 后台作业派发 → job_result 取回 |
+| handoff | 2 | 多智能体链式移交 |
+
+### 运行
+
+```bash
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run             # 全量 20 任务
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --smoke     # 冒烟（1 任务）
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --domain codeact
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --repeat 3  # 每任务 3 次取均值
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上次报告（不调 LLM）
+```
+
+输出到 `eval/report/`：`report.md`（总体/分域/明细/失败详情，含与上次的趋势对比）、
+`results.csv`、`results.json`（趋势对比用）、`results_detail.json`（逐任务完整明细，
+供 `--render-only` 重渲染）。评分规则：最终输出 exact/contains/numeric/regex 判定 +
+期望工具调用序列（顺序敏感子序列）双检。全部任务级失败（如 provider 故障）时不会覆盖已有报告。
+
+### 结果（2026-08-15，deepseek-v4-flash，temperature=0）
+
+| 指标 | 值 |
+|---|---|
+| 成功率 | 20/20 (100%) |
+| 平均轮次 | 2.7 |
+| 平均 token/任务 | 2,041 |
+| 平均耗时/任务 | 7.7s |
+| 工具调用（总/错误） | 36 / 2 |
+
+> 自建套件为回归基线，公开基准（τ-bench / BFCL）验证见后续计划。
+> 单任务执行日志可直接观察：`--task <name> --repeat 3` 用于稳定性测量。
+

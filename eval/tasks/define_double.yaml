@@ -1,0 +1,13 @@
+name: define_double
+domain: define_tool
+prompt: '用 define_tool 工具定义一个名为 double 的工具：接收整数 n，返回 n 的两倍。代码必须是顶层 async def double(n: int) 并带有 docstring（docstring 会作为工具描述）。定义成功后，调用 double(21) 并输出返回值。'
+tools:
+  - define_tool
+  - double
+max_turns: 8
+ground_truth:
+  type: numeric
+  value: "42"
+  tool_trace:
+    - define_tool
+    - double

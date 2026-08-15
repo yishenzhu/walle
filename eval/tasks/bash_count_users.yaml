@@ -1,0 +1,11 @@
+name: bash_count_users
+domain: bash
+prompt: 用 bash 工具统计 eval/data/access.log 中 "GET /api/users" 请求的行数，输出数字。
+tools:
+  - bash
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "4"
+  tool_trace:
+    - bash

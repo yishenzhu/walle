@@ -1,0 +1,13 @@
+name: combine_verify
+domain: combined
+prompt: 第一步：用 bash 工具计算 2 的 8 次方并输出（例如 echo $((2**8))）。第二步：用 jupyter 工具把第一步得到的结果加 100。最终输出最终数字。
+tools:
+  - bash
+  - jupyter
+max_turns: 6
+ground_truth:
+  type: numeric
+  value: "356"
+  tool_trace:
+    - bash
+    - jupyter

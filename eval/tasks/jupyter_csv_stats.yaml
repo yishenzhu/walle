@@ -1,0 +1,12 @@
+name: jupyter_csv_stats
+domain: codeact
+prompt: 用 jupyter 工具读取 eval/data/sales.csv（csv 模块或 pandas 均可），按 region 分组计算 amount 总和，输出 amount 总和最大的 region 名称和对应金额。
+tools:
+  - jupyter
+max_turns: 6
+ground_truth:
+  type: contains
+  value: "north"
+  tolerance: 0.01
+  tool_trace:
+    - jupyter

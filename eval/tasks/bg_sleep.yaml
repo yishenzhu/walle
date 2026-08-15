@@ -1,0 +1,14 @@
+name: bg_sleep
+domain: background
+prompt: '用 background 工具把 jupyter 工具放到后台执行：background 的 tool_name 传 "jupyter"，args 传 {"code": "import time; time.sleep(2); 40 + 2"}。然后用 job_result 工具查询该后台作业并取回结果。最终输出最终数字。'
+tools:
+  - background
+  - job_result
+  - jupyter
+max_turns: 8
+ground_truth:
+  type: numeric
+  value: "42"
+  tool_trace:
+    - background
+    - job_result

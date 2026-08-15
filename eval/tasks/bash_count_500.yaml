@@ -1,0 +1,11 @@
+name: bash_count_500
+domain: bash
+prompt: 用 bash 工具统计 eval/data/access.log 中 HTTP 状态码为 500 的行数，输出数字。
+tools:
+  - bash
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "2"
+  tool_trace:
+    - bash

@@ -1,0 +1,11 @@
+name: jupyter_sum
+domain: codeact
+prompt: 用 jupyter 工具计算 1234 * 5678，并输出最终结果数字。
+tools:
+  - jupyter
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "7006652"
+  tool_trace:
+    - jupyter

@@ -1,0 +1,23 @@
+name: handoff_calc
+domain: handoff
+prompt: 计算 15 * 14 的结果，请把任务移交给计算助手（researcher）处理。
+agents:
+  - name: coordinator
+    description: 调度助手，负责把任务移交给计算助手
+    instruction: 你是调度助手。收到任务后调用 transfer_to_researcher 把任务移交给计算助手，不要自己计算。
+    tools:
+      - transfer_to_researcher
+    handoffs:
+      - researcher
+  - name: researcher
+    description: 计算助手
+    instruction: 你是计算助手。用 jupyter 工具完成计算任务，并在最终回复中输出最终数字。
+    tools:
+      - jupyter
+max_turns: 8
+ground_truth:
+  type: numeric
+  value: "210"
+  tool_trace:
+    - transfer_to_researcher
+    - jupyter

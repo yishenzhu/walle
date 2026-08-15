@@ -1,0 +1,10 @@
+2025-01-01 10:00:01 GET /api/users 200 12ms
+2025-01-01 10:00:02 GET /api/orders 500 340ms
+2025-01-01 10:00:03 POST /api/orders 201 45ms
+2025-01-01 10:00:04 GET /api/users 200 11ms
+2025-01-01 10:00:05 GET /api/orders 200 98ms
+2025-01-01 10:00:06 DELETE /api/orders 204 22ms
+2025-01-01 10:00:07 GET /api/users 500 800ms
+2025-01-01 10:00:08 POST /api/orders 201 51ms
+2025-01-01 10:00:09 GET /api/users 200 13ms
+2025-01-01 10:00:10 GET /api/orders 200 102ms

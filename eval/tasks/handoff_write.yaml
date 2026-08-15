@@ -1,0 +1,21 @@
+name: handoff_write
+domain: handoff
+prompt: 请把任务移交给写作助手（writer）：写一句关于春天的句子，不超过 20 字。
+agents:
+  - name: coordinator
+    description: 调度助手，负责把任务移交给写作助手
+    instruction: 你是调度助手。收到任务后调用 transfer_to_writer 把任务移交给写作助手，不要自己写作。
+    tools:
+      - transfer_to_writer
+    handoffs:
+      - writer
+  - name: writer
+    description: 写作助手
+    instruction: 你是写作助手。直接输出一句关于春天的短句（不超过 20 字），不需要调用任何工具。
+    tools: []
+max_turns: 8
+ground_truth:
+  type: contains
+  value: "春"
+  tool_trace:
+    - transfer_to_writer

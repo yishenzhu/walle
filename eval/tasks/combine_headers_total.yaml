@@ -1,0 +1,13 @@
+name: combine_headers_total
+domain: combined
+prompt: 第一步：用 bash 工具查看 eval/data/sales.csv 的前 3 行（例如 head 命令）。第二步：用 jupyter 工具计算所有 amount 的总和。最终输出总和数字。
+tools:
+  - bash
+  - jupyter
+max_turns: 6
+ground_truth:
+  type: numeric
+  value: "780"
+  tool_trace:
+    - bash
+    - jupyter

@@ -1,0 +1,11 @@
+name: jupyter_string_count
+domain: codeact
+prompt: 用 jupyter 工具统计字符串 "hello hello walle hello world" 中 "hello" 出现的次数，输出次数数字。
+tools:
+  - jupyter
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "3"
+  tool_trace:
+    - jupyter

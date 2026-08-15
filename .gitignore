@@ -7,3 +7,7 @@ data/
 .env
 conf.yaml
 /tmp
+# eval 运行产物（报告 / define_tool 隔离目录 / 任务输出）
+eval/report/
+eval/.agent-tools/
+eval/data/out/

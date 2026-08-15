@@ -1,0 +1,13 @@
+name: combine_extract_count
+domain: combined
+prompt: 第一步：用 bash 工具把 eval/data/access.log 中状态码为 500 的行提取到 eval/data/out/errors.txt（先创建目录）。第二步：用 jupyter 工具统计 errors.txt 的行数。最终输出行数数字。
+tools:
+  - bash
+  - jupyter
+max_turns: 6
+ground_truth:
+  type: numeric
+  value: "2"
+  tool_trace:
+    - bash
+    - jupyter

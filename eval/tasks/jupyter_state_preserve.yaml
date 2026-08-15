@@ -1,0 +1,12 @@
+name: jupyter_state_preserve
+domain: codeact
+prompt: 分两步使用 jupyter 工具（两次独立调用）：第一步执行代码 "x = 42" 定义变量；第二步再调用一次 jupyter 计算 x * 2。最终输出第二步的计算结果。
+tools:
+  - jupyter
+max_turns: 5
+ground_truth:
+  type: numeric
+  value: "84"
+  tool_trace:
+    - jupyter
+    - jupyter

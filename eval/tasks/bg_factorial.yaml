@@ -1,0 +1,14 @@
+name: bg_factorial
+domain: background
+prompt: '用 background 工具把 jupyter 工具放到后台执行：background 的 tool_name 传 "jupyter"，args 传 {"code": "import math; math.factorial(10)"}。然后用 job_result 工具取回结果。最终输出最终数字。'
+tools:
+  - background
+  - job_result
+  - jupyter
+max_turns: 8
+ground_truth:
+  type: numeric
+  value: "3628800"
+  tool_trace:
+    - background
+    - job_result

@@ -1,0 +1,9 @@
+region,product,amount
+east,apple,120
+east,banana,80
+west,apple,100
+west,banana,60
+north,apple,150
+north,banana,90
+south,apple,70
+south,banana,110

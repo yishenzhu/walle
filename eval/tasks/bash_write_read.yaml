@@ -1,0 +1,12 @@
+name: bash_write_read
+domain: bash
+prompt: 用 bash 工具把字符串 "walle-eval" 写入文件 eval/data/out/hello.txt（先创建目录），再用 bash 读取该文件并输出其内容。
+tools:
+  - bash
+max_turns: 6
+ground_truth:
+  type: contains
+  value: "walle-eval"
+  tool_trace:
+    - bash
+    - bash
