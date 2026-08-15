@@ -11,3 +11,9 @@ conf.yaml
 eval/report/
 eval/.agent-tools/
 eval/data/out/
+
+# eval 数据 fixture 例外（data/ 全局忽略，但这些必须入库）
+!eval/data/
+!eval/data/*.csv
+!eval/data/*.log
+!eval/data/*.txt
