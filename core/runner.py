@@ -100,7 +100,7 @@ class Runner:
                 ctx = ToolContext(kernel=kernel, channel=channel, jobs=env.jobs)
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
-                    agent, model, messages, tools, provider, ctx
+                    agent, messages, tools, provider, ctx
                 )
                 # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
                 await self._executor.launch_pending(ctx, tools)
@@ -152,15 +152,13 @@ class Runner:
     async def _run_turn_streamed(
         self,
         agent: Agent[Any],
-        model: str,
         messages: list,
         tools: dict[str, Tool],
         provider,
         ctx: ToolContext,
     ):
         tool_results: list = []
-        async with provider.client.chat.completions.stream(
-            model=model,
+        async with provider.stream(
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
             **self.model_params(agent),
@@ -183,15 +181,13 @@ class Runner:
     async def _run_turn(
         self,
         agent: Agent[Any],
-        model: str,
         messages: list,
         tools: dict[str, Tool],
         provider,
         ctx: ToolContext,
     ):
         tool_results: list = []
-        completion = await provider.client.chat.completions.create(
-            model=model,
+        completion = await provider.create(
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
             **self.model_params(agent),

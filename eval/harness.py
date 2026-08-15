@@ -58,27 +58,31 @@ class TaskResult:
 
 
 class TrackedProvider:
-    """包装真实 provider：拦截 completions 累计 token 用量。
+    """包装真实 provider：拦截 create 累计 token 用量。
 
     框架的 InMemoryMessages 不保存 usage（生产由 SQLite 记），评测在
     provider 层计数，不依赖消息存储。
     """
 
     def __init__(self, provider: OpenAIProvider):
+        self._provider = provider
         self.model = provider.model
-        self.client = provider.client
         self.usage = Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
         self.calls = 0
-        original = provider.client.chat.completions.create
+        original = provider.create
 
-        async def create(**kwargs: Any) -> Any:
+        async def _tracked(**kwargs: Any) -> Any:
             resp = await original(**kwargs)
             self.calls += 1
             if resp.usage is not None:
                 self.usage.add(Usage.model_validate(resp.usage))
             return resp
 
-        provider.client.chat.completions.create = create
+        provider.create = _tracked
+
+    async def create(self, **kwargs: Any) -> Any:
+        """转发到被包装 provider（其 create 已被打桩计数）。"""
+        return await self._provider.create(**kwargs)
 
 
 class RecordingExecutor(ToolExecutor):

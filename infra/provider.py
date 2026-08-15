@@ -4,11 +4,31 @@ from typing import Self
 
 
 class OpenAIProvider:
+    """OpenAI 兼容 Provider：封装底层 client，对外只暴露 create / stream / model。
+
+    - `create` / `stream` 内部填充 model，调用方不需要感知模型参数
+    - `set_model()` 运行时切换模型（会话中途切换，下一轮立即生效）
+    - 底层 client 私有（`_client`），不对外暴露
+    """
+
     _default: Self | None = None
 
     def __init__(self, api_key: str, base_url: str, model: str):
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
+
+    def set_model(self, model: str) -> str:
+        """运行时切换模型，返回切换前的模型名。"""
+        old, self.model = self.model, model
+        return old
+
+    async def create(self, **kwargs):
+        """批量补全：内部填充 model，返回 Completion（含 usage）。"""
+        return await self._client.chat.completions.create(model=self.model, **kwargs)
+
+    def stream(self, **kwargs):
+        """流式补全：内部填充 model，返回 AsyncStream（async with 消费）。"""
+        return self._client.chat.completions.stream(model=self.model, **kwargs)
 
     @classmethod
     def get_default(cls):
