@@ -469,7 +469,7 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上�
 
 [τ-bench](https://github.com/sierra-research/tau-bench)（Sierra）零售客服基准：
 状态机环境 + LLM 用户模拟，reward 由数据库状态 hash 与输出匹配**确定性计算**，
-数字可直接对标论文（GPT-4o retail test ~80%+ 区间）。
+数字可直接对标论文基线。
 
 ### 接入方式
 
@@ -501,7 +501,6 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split
 | 平均耗时/用例 | 72.9s |
 | 工具调用（总/错误） | 924 / 11 |
 
-> 与 τ-bench 论文官方 GPT-4o retail test 基线（80%+ 区间）同量级；
 > 用户模拟器与 agent 同模型（deepseek-v4-flash），若用更强模型模拟用户，
 > 分数通常还有提升空间。失败用例集中在模型任务判断（如提前结束对话），
 > 工具错误 11 次均被模型自愈重试。
