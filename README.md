@@ -461,6 +461,32 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上�
 | 平均耗时/任务 | 7.7s |
 | 工具调用（总/错误） | 36 / 2 |
 
-> 自建套件为回归基线，公开基准（τ-bench / BFCL）验证见后续计划。
+> 自建套件为回归基线（可复现、进 CI）；公开基准见下节（能力对标）。
+
+---
+
+## 🏆 公开基准：τ-bench
+
+[τ-bench](https://github.com/sierra-research/tau-bench)（Sierra）零售客服基准：
+状态机环境 + LLM 用户模拟，reward 由数据库状态 hash 与输出匹配**确定性计算**，
+数字可直接对标论文（GPT-4o retail test ~80%+ 区间）。
+
+### 接入方式
+
+`eval/bench/` 只借 τ-bench 的**数据集 + 状态机环境 + 评分**，不借它的 agent 协议
+与 LLM 调用：整个环境（工具执行 + 用户模拟）折叠成 Walle 工具集，由 **Walle Runner
+驱动 ReAct 循环**；用户模拟器走同一网关（litellm 默认端点不可达，自实现
+`WalleUserSimulationEnv`）。模型纯文本输出按官方协议兜底为 respond 继续对话。
+
+```bash
+# 安装（PyPI 未发布，需 GitHub；代理环境先下 tarball）
+pip install "tau-bench @ git+https://github.com/sierra-research/tau-bench.git"
+
+PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --limit 5     # 小规模验证
+PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau              # 全量 retail test（115 用例）
+PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split dev
+```
+
+报告输出到 `eval/report/tau/`（复用自建套件的报告管线）。
 > 单任务执行日志可直接观察：`--task <name> --repeat 3` 用于稳定性测量。
 
