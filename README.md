@@ -243,7 +243,7 @@ tools:
 | `name` | string | 必填，必须等于文件名 |
 | `description` | string | 可选，Agent 描述 |
 | `temperature` | float | 可选，采样温度 |
-| `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `["*"]` 全放行） |
+| `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `[]` 禁用全部，需显式授权） |
 | `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
 
 - **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具

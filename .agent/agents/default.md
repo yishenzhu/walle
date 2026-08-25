@@ -2,8 +2,7 @@
 name: default
 description: 通用助手（默认 agent）
 tools:
-  allow:
-    - "*"
+  allow: ["*"]
 ---
 
 You are a helpful assistant.

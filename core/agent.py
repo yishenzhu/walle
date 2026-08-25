@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import importlib.util
 from typing import TypeVar, Generic, Any, Callable
 
 import frontmatter
@@ -14,11 +15,11 @@ TContext = TypeVar("TContext")
 class ToolFilter(BaseModel):
     """工具筛选配置：allow/deny glob 列表，deny 优先于 allow。
 
-    allow 默认 ["*"]（全放行）；给出显式模式时仅保留命中 allow
+    allow 默认 []（禁用全部）；给出显式模式时仅保留命中 allow
     且未命中 deny 的工具。模式为 fnmatch 风格（支持 mcp_obsidian*）。
     """
 
-    allow: list[str] = Field(default_factory=lambda: ["*"])
+    allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
     def includes(self, name: str) -> bool:
@@ -78,7 +79,7 @@ class Agent(BaseModel, Generic[TContext]):
         """按 agent 名从 frontmatter 加载 Agent（.agent/agents/<name>.md）。
 
         frontmatter 支持：name / description / temperature /
-        tools(allow, deny)。markdown 正文即 instruction。
+        tools(allow, deny) / output_model。markdown 正文即 instruction。
         未提供 name 时加载 default；文件不存在或 name 与文件名不符时抛 ValueError。
         """
         name = name or "default"
@@ -97,9 +98,32 @@ class Agent(BaseModel, Generic[TContext]):
             description=meta.get("description"),
             instruction=instruction,
             temperature=meta.get("temperature"),
+            output_type=cls._load_model(meta.get("output_model")),
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
             tools=tools,
         )
+
+    @staticmethod
+    def _load_model(model_name: str | None) -> type[BaseModel] | None:
+        """从 .agent/agents/models.py 加载名为 model_name 的 BaseModel 子类。
+
+        model_name 与类名一致。未提供则返回 None；文件缺失、加载失败、
+        类缺失或非 BaseModel 均抛 ValueError。
+        """
+        if not model_name:
+            return None
+        path = DOT_AGENT / "agents" / "models.py"
+        if not path.exists():
+            raise ValueError(f"output models file not found: {path}")
+        spec = importlib.util.spec_from_file_location("models", path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"无法加载输出模型文件: {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        model_cls = getattr(mod, model_name, None)
+        if model_cls is None or not issubclass(model_cls, BaseModel):
+            raise ValueError(f"输出模型 {model_name} 缺失或不是 BaseModel 子类")
+        return model_cls
 
     def available_tools(self) -> list[Tool]:
         """当前可用的工具：实时取 tools 源并应用 tool_filter 筛选。"""

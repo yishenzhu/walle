@@ -6,6 +6,7 @@
 - 集成：Runner 两轮模型驱动（第一轮派发 background、第二轮 job_result 取回）
 - Session close 取消未完成作业
 """
+
 import asyncio
 import json
 
@@ -13,6 +14,7 @@ import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Runner, Session, SessionEnv, ToolExecutor
+from ..core.agent import ToolFilter
 from ..infra import OpenAIProvider, PyKernel
 from ..messages import InMemoryMessages
 from ..schemas import ToolStart, ToolResult
@@ -29,9 +31,11 @@ from .conftest import (
 
 
 def allow_executor() -> ToolExecutor:
-    return ToolExecutor(ToolConfig(
-        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-    ))
+    return ToolExecutor(
+        ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+        )
+    )
 
 
 def make_tool(name: str, result: str = "ok", delay: float = 0.0) -> Tool:
@@ -69,6 +73,7 @@ async def wait_job(jobs: dict, job_id: str, target: JobStatus, timeout: float = 
 
 
 # ── 单元级：background / job_result ─────────────────────────────────────────
+
 
 class TestBackgroundDispatch:
     async def test_background_registers_pending(self):
@@ -123,6 +128,7 @@ class TestBackgroundDispatch:
 
 # ── executor：launch_pending / run_job ──────────────────────────────────────
 
+
 class TestLaunchPending:
     async def test_launch_pending_sets_running_and_task(self):
         executor = allow_executor()
@@ -130,7 +136,9 @@ class TestLaunchPending:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="slow", args={})
-            await executor.launch_pending(ctx, {"slow": make_tool("slow", "s-done", delay=0.05)})
+            await executor.launch_pending(
+                ctx, {"slow": make_tool("slow", "s-done", delay=0.05)}
+            )
             job = ctx.jobs[rsp.job_id]
             assert job.status == JobStatus.RUNNING
             assert job.task is not None
@@ -149,12 +157,15 @@ class TestLaunchPending:
             rsp = await background(tool_name="echo", args={})
             await executor.launch_pending(ctx, {"echo": make_tool("echo", "hi")})
             await wait_job(ctx.jobs, rsp.job_id, JobStatus.DONE)
-            assert not any(isinstance(e, (ToolStart, ToolResult)) for e in channel.events)
+            assert not any(
+                isinstance(e, (ToolStart, ToolResult)) for e in channel.events
+            )
         finally:
             tool_context.reset(token)
 
     async def test_job_error_returned_as_result(self):
         """工具失败不抛异常：execute_tool 转成 "Error: ..." 字符串结果，job 为 DONE。"""
+
         async def boom(args):
             raise RuntimeError("kaboom")
 
@@ -163,11 +174,17 @@ class TestLaunchPending:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="boom", args={})
-            await executor.launch_pending(ctx, {
-                "boom": Tool(name="boom", description="boom",
-                             parameters={"type": "object", "properties": {}},
-                             fn=boom),
-            })
+            await executor.launch_pending(
+                ctx,
+                {
+                    "boom": Tool(
+                        name="boom",
+                        description="boom",
+                        parameters={"type": "object", "properties": {}},
+                        fn=boom,
+                    ),
+                },
+            )
             await wait_job(ctx.jobs, rsp.job_id, JobStatus.DONE)
             assert ctx.jobs[rsp.job_id].result == "Error: kaboom"
             q = await job_result(rsp.job_id)
@@ -193,6 +210,7 @@ class TestLaunchPending:
 
 
 # ── 集成：Runner 两轮模型驱动（派发 → 取回）────────────────────────────────
+
 
 @pytest.fixture
 def provider():
@@ -222,13 +240,21 @@ class TestRunnerIntegration:
                 Tool.from_function(job_result),
             ]
 
-        agent = Agent(instruction="You are helpful.", tools=agent_tools)
+        agent = Agent(
+            instruction="You are helpful.",
+            tools=agent_tools,
+            tool_filter=ToolFilter(allow=["*"]),
+        )
 
         # 第一轮：模型调 background（工具执行完需再给一个文本响应结束本轮）
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(tool_calls=[
-                tool_call("background", '{"tool_name": "slow", "args": {}}'),
-            ])),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        tool_call("background", '{"tool_name": "slow", "args": {}}'),
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="Started.")),
         )
         await runner.run(agent, "run it in background", env=env)
@@ -241,9 +267,13 @@ class TestRunnerIntegration:
 
         # 第二轮：模型调 job_result 取回（结果一次性消费）
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(tool_calls=[
-                tool_call("job_result", json.dumps({"job_id": job_id})),
-            ])),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        tool_call("job_result", json.dumps({"job_id": job_id})),
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="All done.")),
         )
         result = await runner.run(agent, "fetch the result", env=env)
@@ -268,12 +298,20 @@ class TestRunnerIntegration:
                 Tool.from_function(job_result),
             ]
 
-        agent = Agent(instruction="You are helpful.", tools=agent_tools)
+        agent = Agent(
+            instruction="You are helpful.",
+            tools=agent_tools,
+            tool_filter=ToolFilter(allow=["*"]),
+        )
 
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(tool_calls=[
-                tool_call("background", '{"tool_name": "slow", "args": {}}'),
-            ])),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        tool_call("background", '{"tool_name": "slow", "args": {}}'),
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="Started.")),
         )
         await runner.run(agent, "start bg", env=env)
@@ -281,9 +319,13 @@ class TestRunnerIntegration:
 
         # 立即第二轮（后台可能还在跑）：返回 running
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(tool_calls=[
-                tool_call("job_result", json.dumps({"job_id": job_id})),
-            ])),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        tool_call("job_result", json.dumps({"job_id": job_id})),
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="ok.")),
         )
         await runner.run(agent, "check now", env=env)
@@ -296,6 +338,7 @@ class TestRunnerIntegration:
 
 # ── Session close 取消 ───────────────────────────────────────────────────────
 
+
 class TestSessionCloseCancels:
     async def test_session_close_cancels_pending_jobs(self, tmp_path):
         executor = allow_executor()
@@ -306,6 +349,7 @@ class TestSessionCloseCancels:
             runner=runner,
             db_path=str(tmp_path / "s.db"),
         )
+
         # 派发一个永不完成的后台作业
         async def never(args):
             await asyncio.Event().wait()
@@ -314,11 +358,17 @@ class TestSessionCloseCancels:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="never", args={})
-            await executor.launch_pending(ctx, {
-                "never": Tool(name="never", description="never",
-                              parameters={"type": "object", "properties": {}},
-                              fn=never),
-            })
+            await executor.launch_pending(
+                ctx,
+                {
+                    "never": Tool(
+                        name="never",
+                        description="never",
+                        parameters={"type": "object", "properties": {}},
+                        fn=never,
+                    ),
+                },
+            )
             task = s.jobs[rsp.job_id].task
             assert not task.done()
         finally:

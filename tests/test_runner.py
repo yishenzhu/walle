@@ -1,8 +1,10 @@
 """Runner Agent 循环测试（mock LLM，不依赖真实 API）。"""
+
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Handoff, Runner, RunOptions, SessionEnv, ToolExecutor
+from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
 from ..tools import Tool
@@ -32,7 +34,9 @@ def channel():
 
 @pytest.fixture
 def allow_executor():
-    return ToolExecutor(ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW)))
+    return ToolExecutor(
+        ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+    )
 
 
 @pytest.fixture
@@ -113,9 +117,7 @@ class TestRunnerWithTools:
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="tc1", name="echo", arguments='{}')
-                    ]
+                    tool_calls=[FakeToolCall(id="tc1", name="echo", arguments="{}")]
                 )
             ),
             FakeCompletion(FakeMessage(content="I used echo")),
@@ -123,9 +125,7 @@ class TestRunnerWithTools:
 
         agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool("result!")])
 
-        result = await runner.run(
-            agent, "use echo", env=env
-        )
+        result = await runner.run(agent, "use echo", env=env)
 
         assert result.output == "I used echo"
         assert result.completed_turns == 2
@@ -137,15 +137,25 @@ class TestRunnerWithTools:
         async def fn_b(args):
             return "b"
 
-        tool_a = Tool(name="tool_a", description="a", parameters={"type": "object", "properties": {}}, fn=fn_a)
-        tool_b = Tool(name="tool_b", description="b", parameters={"type": "object", "properties": {}}, fn=fn_b)
+        tool_a = Tool(
+            name="tool_a",
+            description="a",
+            parameters={"type": "object", "properties": {}},
+            fn=fn_a,
+        )
+        tool_b = Tool(
+            name="tool_b",
+            description="b",
+            parameters={"type": "object", "properties": {}},
+            fn=fn_b,
+        )
 
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
                     tool_calls=[
-                        FakeToolCall(id="t1", name="tool_a", arguments='{}'),
-                        FakeToolCall(id="t2", name="tool_b", arguments='{}'),
+                        FakeToolCall(id="t1", name="tool_a", arguments="{}"),
+                        FakeToolCall(id="t2", name="tool_b", arguments="{}"),
                     ]
                 )
             ),
@@ -154,9 +164,7 @@ class TestRunnerWithTools:
 
         agent = Agent(instruction="helpful", tools=lambda: [tool_a, tool_b])
 
-        result = await runner.run(
-            agent, "use both", env=env
-        )
+        result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
         assert result.output == "done"
 
@@ -165,7 +173,7 @@ class TestRunnerWithTools:
             FakeCompletion(
                 FakeMessage(
                     tool_calls=[
-                        FakeToolCall(id="tc1", name="nonexistent", arguments='{}')
+                        FakeToolCall(id="tc1", name="nonexistent", arguments="{}")
                     ]
                 )
             ),
@@ -174,9 +182,7 @@ class TestRunnerWithTools:
 
         agent = Agent(instruction="helpful")
 
-        result = await runner.run(
-            agent, "use unknown", env=env
-        )
+        result = await runner.run(agent, "use unknown", env=env)
         assert result.completed_turns == 2
         assert result.output == "handled"
 
@@ -188,9 +194,7 @@ class TestRunnerMaxTurns:
         responses = [
             FakeCompletion(
                 FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id=f"tc{i}", name="echo", arguments='{}')
-                    ]
+                    tool_calls=[FakeToolCall(id=f"tc{i}", name="echo", arguments="{}")]
                 )
             )
             for i in range(3)
@@ -214,9 +218,7 @@ class TestRunnerMaxTurns:
         )
         agent = Agent(instruction="helpful")
 
-        result = await runner.run(
-            agent, "hi", env=env, options=RunOptions(max_turns=1)
-        )
+        result = await runner.run(agent, "hi", env=env, options=RunOptions(max_turns=1))
         assert result.completed_turns == 1
         assert result.max_turns == 1
 
@@ -229,7 +231,9 @@ class TestRunnerHandoff:
             FakeCompletion(
                 FakeMessage(
                     tool_calls=[
-                        FakeToolCall(id="tc1", name="transfer_to_researcher", arguments='{}')
+                        FakeToolCall(
+                            id="tc1", name="transfer_to_researcher", arguments="{}"
+                        )
                     ]
                 )
             ),
@@ -290,7 +294,11 @@ class TestRunnerBuildTools:
 
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
-        agent = Agent(instruction="helpful", tools=lambda: [tool])
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [tool],
+            tool_filter=ToolFilter(allow=["*"]),
+        )
         runner = Runner()
         tools = runner._build_tools(agent)
         assert "echo" in tools
@@ -312,6 +320,7 @@ class TestRunnerBuildTools:
         agent = Agent(
             instruction="helpful",
             tools=lambda: [dynamic],
+            tool_filter=ToolFilter(allow=["*"]),
         )
         runner = Runner()
         tools = runner._build_tools(agent)
@@ -340,13 +349,16 @@ class TestRunnerNoProvider:
 
     async def test_raises_without_provider(self):
         from ..infra import OpenAIProvider, PyKernel
+
         backup = OpenAIProvider._default
         OpenAIProvider._default = None
         try:
             agent = Agent(instruction="helpful")
             with pytest.raises(RuntimeError, match="no invalid provider"):
                 await Runner().run(
-                    agent, "hi", env=SessionEnv(kernel=PyKernel(), messages=InMemoryMessages())
+                    agent,
+                    "hi",
+                    env=SessionEnv(kernel=PyKernel(), messages=InMemoryMessages()),
                 )
         finally:
             OpenAIProvider._default = backup
@@ -365,12 +377,19 @@ class TestRunnerKernel:
             ctx = tool_context.get()
             return await ctx.kernel.run("x = 5")
 
-        tool = Tool(name="py", description="run py", parameters={"type": "object", "properties": {}}, fn=py)
+        tool = Tool(
+            name="py",
+            description="run py",
+            parameters={"type": "object", "properties": {}},
+            fn=py,
+        )
 
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(
-                tool_calls=[FakeToolCall(id="tc1", name="py", arguments="{}")]
-            )),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[FakeToolCall(id="tc1", name="py", arguments="{}")]
+                )
+            ),
             FakeCompletion(FakeMessage(content="done")),
         )
         agent = Agent(instruction="helpful", tools=lambda: [tool])
@@ -389,7 +408,9 @@ class TestRunnerKernel:
         assert result.output == "done"
         await kernel.close()
 
-    async def test_runner_kernel_state_persists_across_turns(self, provider, channel, allow_executor):
+    async def test_runner_kernel_state_persists_across_turns(
+        self, provider, channel, allow_executor
+    ):
         """同一 kernel 跨多次 run 保留状态（会话级，由 Session 持有）。"""
         from ..infra import PyKernel
         from ..tools import tool_context
@@ -398,16 +419,29 @@ class TestRunnerKernel:
             ctx = tool_context.get()
             return await ctx.kernel.run(args["code"])
 
-        tool = Tool(name="py", description="run py", parameters={"type": "object", "properties": {"code": {"type": "string"}}}, fn=py)
+        tool = Tool(
+            name="py",
+            description="run py",
+            parameters={"type": "object", "properties": {"code": {"type": "string"}}},
+            fn=py,
+        )
 
         provider.client.chat.completions.set_responses(
-            FakeCompletion(FakeMessage(
-                tool_calls=[FakeToolCall(id="t1", name="py", arguments='{"code": "y = 10"}')]
-            )),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(id="t1", name="py", arguments='{"code": "y = 10"}')
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="ok")),
-            FakeCompletion(FakeMessage(
-                tool_calls=[FakeToolCall(id="t2", name="py", arguments='{"code": "y * 2"}')]
-            )),
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(id="t2", name="py", arguments='{"code": "y * 2"}')
+                    ]
+                )
+            ),
             FakeCompletion(FakeMessage(content="done")),
         )
         agent = Agent(instruction="helpful", tools=lambda: [tool])
@@ -415,11 +449,13 @@ class TestRunnerKernel:
         runner = Runner(executor=allow_executor)
         kernel = PyKernel()
         r1 = await runner.run(
-            agent, "set",
+            agent,
+            "set",
             env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
         )
         r2 = await runner.run(
-            agent, "get",
+            agent,
+            "get",
             env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
         )
         assert r1.output == "ok"
