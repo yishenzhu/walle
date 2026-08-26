@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import fnmatch
-import importlib.util
+import functools
+from pathlib import Path
 from typing import TypeVar, Generic, Any, Callable
 
 import frontmatter
-from pydantic import BaseModel, Field, model_validator
+import yaml
+from pydantic import BaseModel, Field, create_model, model_validator
 from ..conf import DOT_AGENT
 from ..tools import Tool
 
 TContext = TypeVar("TContext")
+
+# 简写类型名 → Python 类型
+TYPE_MAP = {
+    "str": str,
+    "int": int,
+    "float": float,
+    "bool": bool,
+    "any": Any,
+    "object": dict,
+    "array": list,
+}
 
 
 class ToolFilter(BaseModel):
@@ -75,15 +88,16 @@ class Agent(BaseModel, Generic[TContext]):
         cls,
         name: str | None = None,
         tools: Callable[[], list[Tool]] | None = None,
-    ) -> "Agent":
-        """按 agent 名从 frontmatter 加载 Agent（.agent/agents/<name>.md）。
+        root: Path | None = None,
+    ) -> Agent:
+        """按名加载 Agent（.agent/agents/<name>.md）。
 
-        frontmatter 支持：name / description / temperature /
-        tools(allow, deny) / output_model。markdown 正文即 instruction。
-        未提供 name 时加载 default；文件不存在或 name 与文件名不符时抛 ValueError。
+        frontmatter 支持 name/description/temperature/tools/output_model，
+        正文即 instruction。root 缺省用 DOT_AGENT/agents。
         """
         name = name or "default"
-        path = DOT_AGENT / "agents" / f"{name}.md"
+        root = root or DOT_AGENT / "agents"
+        path = root / f"{name}.md"
         if not path.exists():
             raise ValueError(f"agent file not found: {path}")
         post = frontmatter.load(path)
@@ -93,37 +107,86 @@ class Agent(BaseModel, Generic[TContext]):
                 f"agent name '{meta.get('name')}' not match file name '{name}'"
             )
         instruction = post.content.strip() or None
+        output_model = meta.get("output_model")
+        models_path = root / "models.yaml"
+        output_type = cls._load_model(output_model, models_path) if output_model else None
         return cls(
             name=name,
             description=meta.get("description"),
             instruction=instruction,
             temperature=meta.get("temperature"),
-            output_type=cls._load_model(meta.get("output_model")),
+            output_type=output_type,
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
             tools=tools,
         )
 
     @staticmethod
-    def _load_model(model_name: str | None) -> type[BaseModel] | None:
-        """从 .agent/agents/models.py 加载名为 model_name 的 BaseModel 子类。
+    @functools.cache
+    def _load_model(model_name: str, path: Path) -> type[BaseModel] | None:
+        """从 path（models.yaml）加载名为 model_name 的输出模型，按参数缓存。
 
-        model_name 与类名一致。未提供则返回 None；文件缺失、加载失败、
-        类缺失或非 BaseModel 均抛 ValueError。
+        path 为模型文件完整路径。文件缺失或条目不存在抛 ValueError。
         """
-        if not model_name:
-            return None
-        path = DOT_AGENT / "agents" / "models.py"
         if not path.exists():
-            raise ValueError(f"output models file not found: {path}")
-        spec = importlib.util.spec_from_file_location("models", path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"无法加载输出模型文件: {path}")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        model_cls = getattr(mod, model_name, None)
-        if model_cls is None or not issubclass(model_cls, BaseModel):
-            raise ValueError(f"输出模型 {model_name} 缺失或不是 BaseModel 子类")
-        return model_cls
+            raise ValueError(f"models file not found: {path}")
+        registry = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        spec = registry.get(model_name)
+        if spec is None:
+            raise ValueError(f"输出模型 {model_name} 不存在于 {path}")
+        return Agent._build_model(model_name, spec)
+
+    @classmethod
+    def _build_model(cls, name: str, spec: dict, depth: int = 0) -> type[BaseModel]:
+        """把字段 dict 转成 Pydantic 模型。
+
+        简写（类型字符串）或完整 dict（type/desc/default/items）；array 用
+        items 定元素类型，object 嵌套递归，default 非 None 则字段可选。
+        """
+        max_depth = 32  # 防御自引用/过深嵌套导致死循环
+        if depth > max_depth:
+            raise ValueError(f"模型嵌套过深（>{max_depth}），疑似自引用：{name}")
+        fields = {}
+        for fname, fspec in spec.items():
+            if isinstance(fspec, dict):
+                ftype = fspec.get("type")
+                desc = fspec.get("desc")
+                default = fspec.get("default")
+                if ftype == "array":
+                    py_type = list[cls._build_type(fspec.get("items"))]
+                elif ftype == "object":
+                    py_type = cls._build_model(
+                        fname, fspec.get("properties", {}), depth + 1
+                    )
+                else:
+                    py_type = cls._build_type(ftype)
+                if default is not None:
+                    field_default = (
+                        Field(default=default, description=desc)
+                        if desc
+                        else Field(default=default)
+                    )
+                else:
+                    field_default = Field(description=desc) if desc else ...
+                fields[fname] = (py_type, field_default)
+            else:
+                py_type = cls._build_type(fspec)
+                fields[fname] = (py_type, ...)
+        return create_model(f"output_{name}", **fields)
+
+    @staticmethod
+    def _build_type(tspec: Any) -> Any:
+        """简写类型名 → Python 类型。
+
+        null（YAML 转为 None）→ type(None)；联合类型 list 暂不支持，抛错。
+        """
+        if tspec is None:
+            return type(None)
+        if isinstance(tspec, list):
+            raise ValueError(f"联合类型暂不支持: {tspec}")
+        m = TYPE_MAP.get(tspec)
+        if m is None:
+            raise ValueError(f"未知类型: {tspec}")
+        return m
 
     def available_tools(self) -> list[Tool]:
         """当前可用的工具：实时取 tools 源并应用 tool_filter 筛选。"""

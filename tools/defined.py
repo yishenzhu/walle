@@ -17,6 +17,7 @@ from pathlib import Path
 from pyflakes.api import check
 from pyflakes.reporter import Reporter
 
+from ..conf import DOT_AGENT
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,7 @@ class DefinedTool:
     """模型定义的代码工具：校验、持久化（.agent/tools/<name>/code.py）、加载。"""
 
     def __init__(self, root: Path | None = None):
-        if root is None:
-            from ..conf import DOT_AGENT
-
-            root = DOT_AGENT / "tools"
-        self._root = root
+        self._root = root or DOT_AGENT / "tools"
 
     @staticmethod
     def _validate_code(code: str, name: str) -> None:
@@ -47,12 +44,16 @@ class DefinedTool:
 
         # 契约：顶层必须定义 async def <name>，且必填 docstring（作为工具描述）
         top_async_fns = [
-            n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == name
+            n
+            for n in tree.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == name
         ]
         if not top_async_fns:
             raise ToolCodeError(f"代码中未定义顶层 async def {name}() 作为工具入口")
         if not ast.get_docstring(top_async_fns[0]):
-            raise ToolCodeError(f"async def {name}() 必须写 docstring（docstring 作为工具描述）")
+            raise ToolCodeError(
+                f"async def {name}() 必须写 docstring（docstring 作为工具描述）"
+            )
 
         # pyflakes 静态分析（未定义名/未使用导入等）
         messages: list[str] = []

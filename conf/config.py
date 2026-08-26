@@ -25,7 +25,7 @@ class MCPConfig(BaseModel):
     cwd: str | None = None
     url: str | None = None
     headers: dict[str, str] | None = None
-    timeout: int | None = None   # 连接超时（秒），None 用 httpx 默认
+    timeout: int | None = None  # 连接超时（秒），None 用 httpx 默认
     enabled: bool = True
 
 
@@ -88,7 +88,7 @@ class ToolConfig(BaseModel):
 class SessionConfig(BaseModel):
     """会话持久化配置：历史存储后端与 db 路径。"""
 
-    storage: str = "sqlite"           # sqlite | memory
+    storage: str = "sqlite"  # sqlite | memory
     db_path: str = "data/session.db"  # sqlite 存储路径（相对项目根）
 
 

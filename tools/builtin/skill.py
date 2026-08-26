@@ -17,7 +17,6 @@ class SkillMeta(BaseModel):
 
 class Skill:
     FILENAME = "SKILL.md"
-    ROOT_DIR = DOT_AGENT / "skills"
 
     def __init__(self, dir: Path):
         self._dir = dir
@@ -47,8 +46,8 @@ class Skill:
         return Tool.from_function(fn, self.name, self.description)
 
     @classmethod
-    def load(cls, root_dir: Path | None = None) -> list[Tool]:
-        root = root_dir or cls.ROOT_DIR
+    def load(cls, root: Path | None = None) -> list[Tool]:
+        root = root or DOT_AGENT / "skills"
         if not root.exists():
             return []
 

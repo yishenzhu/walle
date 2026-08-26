@@ -13,28 +13,18 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
-from ..conf import MCPConfig
+from ..conf import DOT_AGENT, MCPConfig
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
-
-_MCP_FILENAME = "mcp.yaml"
 
 
 class MCP:
     """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端管理。"""
 
-    def __init__(self, root: Path | None = None):
-        if root is None:
-            from ..conf import DOT_AGENT
-
-            root = DOT_AGENT
-        self._root = root
+    def __init__(self, path: Path | None = None):
+        self._path = path or DOT_AGENT / "mcp.yaml"
         self._clients: list[MCPClient] = []
-
-    @property
-    def path(self) -> Path:
-        return self._root / _MCP_FILENAME
 
     @property
     def clients(self) -> list[MCPClient]:
@@ -45,8 +35,8 @@ class MCP:
         configs = self.load_all()
         configs[name] = conf
 
-        self._root.mkdir(parents=True, exist_ok=True)
-        p = self.path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        p = self._path
         p.write_text(
             yaml.safe_dump(
                 {k: v.model_dump(exclude_none=True) for k, v in configs.items()},
@@ -58,13 +48,13 @@ class MCP:
         return p
 
     def load_all(self) -> dict[str, MCPConfig]:
-        if not self.path.exists():
+        if not self._path.exists():
             return {}
         try:
-            data = yaml.safe_load(self.path.read_text(encoding="utf-8")) or {}
+            data = yaml.safe_load(self._path.read_text(encoding="utf-8")) or {}
             return {k: MCPConfig.model_validate(v) for k, v in data.items()}
         except Exception as e:
-            logger.warning(f"mcp config load failed ({self.path}): {e}")
+            logger.warning(f"mcp config load failed ({self._path}): {e}")
             return {}
 
     def has(self, name: str) -> bool:

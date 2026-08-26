@@ -245,8 +245,10 @@ tools:
 | `temperature` | float | 可选，采样温度 |
 | `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `[]` 禁用全部，需显式授权） |
 | `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
+| `output_model` | string | 可选，引用 `.agent/agents/models.yaml` 中同名定义，作为结构化输出模型 |
 
 - **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具
+- **输出模型**：`output_model: summary` 会在启动时从 `.agent/agents/models.yaml` 构建 Pydantic 模型，作为 `response_format` 约束；模型定义见 `models.yaml` 内注释
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史/kernel 保留）；未指定时用默认 agent
 

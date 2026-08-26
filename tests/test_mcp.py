@@ -17,11 +17,14 @@ class _FakeClient:
 
 
 def test_roundtrip(tmp_path):
-    store = MCP(tmp_path)
+    store = MCP(tmp_path / "mcp.yaml")
     store.save("obsidian", MCPConfig(url="http://127.0.0.1:27123/mcp"))
     store.save(
         "fs",
-        MCPConfig(command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]),
+        MCPConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        ),
     )
 
     # 单文件保存，两个 server 在同一个 mcp.yaml
@@ -30,16 +33,20 @@ def test_roundtrip(tmp_path):
     assert set(loaded) == {"obsidian", "fs"}
     assert loaded["obsidian"].url == "http://127.0.0.1:27123/mcp"
     assert loaded["fs"].command == "npx"
-    assert loaded["fs"].args == ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    assert loaded["fs"].args == [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/tmp",
+    ]
 
 
 def test_load_all_empty(tmp_path):
-    assert MCP(tmp_path).load_all() == {}
+    assert MCP(tmp_path / "mcp.yaml").load_all() == {}
 
 
 def test_unusual_name_allowed(tmp_path):
     """单文件存储无文件系统暴露，特殊字符名（中文等）允许。"""
-    store = MCP(tmp_path)
+    store = MCP(tmp_path / "mcp.yaml")
     store.save("obsidian 库", MCPConfig(url="http://x"))
     assert "obsidian 库" in store.load_all()
 
@@ -80,7 +87,8 @@ class TestAddMcpServer:
         async def main():
             reg = await self._registry()
             out = await reg.add_mcp(
-                "dead", MCPConfig(url="http://127.0.0.1:1")  # 未监听端口，快速连接拒绝
+                "dead",
+                MCPConfig(url="http://127.0.0.1:1"),  # 未监听端口，快速连接拒绝
             )
             assert "连接失败" in out
             assert not (tmp_path / "mcp.yaml").exists()

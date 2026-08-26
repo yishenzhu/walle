@@ -1,4 +1,5 @@
 """Tool 与 ToolRegistry 测试。"""
+
 import pytest
 
 from ..tools import Tool, ToolRegistry

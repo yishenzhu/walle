@@ -1,0 +1,14 @@
+# 输出模型注册表：agent 的 frontmatter 用 output_model: <名称> 引用。
+# 每个条目是一个字段定义 dict，支持 JSON Schema 风格：
+#   - 简写: title: str          —— 必填、无描述、无默认值
+#   - 完整: title: {type: str, desc: 标题, default: ""}
+#   - 类型: str, int, float, bool, any, object, array
+#   - array 配 items; object 嵌套递归; desc 缺省无; default 非 None 则字段可选
+summary:
+  title:
+    type: str
+    desc: 标题
+  points:
+    type: array
+    items: str
+    desc: 要点列表
