@@ -1,3 +1,4 @@
+from .event_bus import Event, EventBus, Handler
 from .logger import setup_logger, LogConfig
 from .telemetry import setup_telemetry, tracer, meter
 from .metrics import (

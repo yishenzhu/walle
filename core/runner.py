@@ -8,7 +8,7 @@ from .agent import Agent, TContext, Handoff
 from .executor import ToolExecutor
 from ..channel import Channel
 from ..messages import Messages, InMemoryMessages
-from ..infra import OpenAIProvider, tracer, AGENT_ITERATIONS, HANDOFF
+from ..infra import Event, EventBus, OpenAIProvider, tracer, AGENT_ITERATIONS, HANDOFF
 from ..schemas import (
     AssistantMessage,
     SystemMessage,
@@ -41,7 +41,8 @@ class SessionEnv:
 
     messages: Messages  # 会话历史（必填）
     provider: OpenAIProvider = None  # 模型接入（None 用 Runner 默认）
-    channel: Channel = None  # 会话 channel 端点
+    channel: Channel = None  # 会话 channel 端点（仅交互，不承担会话身份）
+    session_id: str | None = None  # 会话身份（内聚在 env，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
 
 
@@ -56,16 +57,18 @@ class RunResult(BaseModel):
 
 
 class Runner:
-    """Agent 执行器：持有默认 provider / 工具执行器，env 未提供时复用。"""
+    """Agent 执行器：持有默认 provider / 工具执行器 / 事件总线，env 未提供时复用。"""
 
     def __init__(
         self,
         provider: OpenAIProvider | None = None,
         executor: ToolExecutor | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         # 默认实例（复用，避免每次 run 新建）
         self._provider = provider or OpenAIProvider.get_default()
         self._executor = executor or ToolExecutor()
+        self._bus = bus or EventBus()
 
     async def run(
         self,
@@ -82,6 +85,9 @@ class Runner:
         streamed = options.streamed
         await history.add([UserMessage(content=input)])
 
+        session_id = env.session_id
+        await self._bus.emit(Event.AGENT_START, agent=agent.name, session_id=session_id)
+
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("streamed", streamed)
             turn = 0
@@ -94,8 +100,10 @@ class Runner:
                 messages = await self._build_messages(agent, history)
                 tools = self._build_tools(agent)
 
+                await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
+
                 # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用）
-                ctx = ToolContext(channel=channel, jobs=env.jobs)
+                ctx = ToolContext(channel=channel, jobs=env.jobs, bus=self._bus)
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
                     agent, messages, tools, provider, ctx
@@ -129,6 +137,9 @@ class Runner:
                     AGENT_ITERATIONS.record(turn)
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
+                    await self._bus.emit(Event.TURN_END, turn=turn, agent=agent.name)
+                    await self._bus.emit(Event.AGENT_END, agent=agent.name)
+                    await self._bus.emit(Event.SESSION_END, session_id=session_id)
                     return RunResult(
                         input=input,
                         last_agent=agent,
@@ -137,9 +148,13 @@ class Runner:
                         completed_turns=turn,
                     )
 
+                await self._bus.emit(Event.TURN_END, turn=turn, agent=agent.name)
+
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
+            await self._bus.emit(Event.AGENT_END, agent=agent.name)
+            await self._bus.emit(Event.SESSION_END, session_id=session_id)
             return RunResult(
                 input=input,
                 last_agent=agent,

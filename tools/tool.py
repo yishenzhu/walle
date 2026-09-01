@@ -1,3 +1,7 @@
+"""核心数据类型：工具（Tool）与工具执行上下文（ToolContext）。"""
+
+from __future__ import annotations
+
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -10,6 +14,7 @@ from mcp.server.fastmcp.tools import Tool as MCPTool
 from pydantic import BaseModel
 
 from ..channel import Channel
+from ..infra import EventBus
 
 
 class JobStatus(StrEnum):
@@ -43,6 +48,8 @@ class ToolContext:
     channel: Channel | None = None
     # 后台作业表：跨轮存活（Session 持有并传入），job_id → Job
     jobs: dict[str, Job] = field(default_factory=dict)
+    # 进程级事件总线：工具执行钩子（before/after）屏障来源
+    bus: EventBus | None = None
 
     def add_pending(self, tool_name: str, args: dict[str, Any] | None = None) -> str:
         """登记一个待启动的后台作业（executor 在本轮工具跑完后拉起）。"""

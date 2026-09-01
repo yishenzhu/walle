@@ -359,3 +359,79 @@ class TestRunnerNoProvider:
                 )
         finally:
             OpenAIProvider._default = backup
+
+
+class TestRunnerToolHooks:
+    """Runner 贯通 bus 到工具层（before/after 钩子）。"""
+
+    async def test_tool_blocked_by_before_hook(self, provider, env):
+        from ..core import Event, EventBus
+
+        async def block(**ctx_):
+            return False
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_START, block)
+
+        runner = Runner(
+            executor=ToolExecutor(
+                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+            ),
+            bus=bus,
+        )
+
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[FakeToolCall(id="tc1", name="echo", arguments="{}")]
+                )
+            ),
+            FakeCompletion(FakeMessage(content="done")),
+        )
+
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [make_echo_tool()],
+            tool_filter=ToolFilter(allow=["*"]),
+        )
+        result = await runner.run(agent, "use echo", env=env)
+
+        # 工具被拦下 → 无输出结果，但流程继续（工具结果为空导致轮次结束）
+        assert result.completed_turns == 2
+        assert result.output == "done"
+
+    async def test_tool_after_hook_notified(self, provider, env):
+        from ..core import Event, EventBus
+
+        seen: list[str] = []
+
+        async def record(**ctx_):
+            seen.append(ctx_["tool_name"])
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_END, record)
+
+        runner = Runner(
+            executor=ToolExecutor(
+                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+            ),
+            bus=bus,
+        )
+
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[FakeToolCall(id="tc1", name="echo", arguments="{}")]
+                )
+            ),
+            FakeCompletion(FakeMessage(content="done")),
+        )
+
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [make_echo_tool()],
+            tool_filter=ToolFilter(allow=["*"]),
+        )
+        await runner.run(agent, "use echo", env=env)
+
+        assert seen == ["echo"]

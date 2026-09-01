@@ -7,7 +7,18 @@ from .approval import (
     DenyApprover,
     TimeoutApprover,
 )
+from ..infra import Event, EventBus, Handler
+from .diagnostics import (
+    DiagnosticType,
+    ResourceDiagnostic,
+)
 from .executor import ToolExecutor
+from .extensions import (
+    Extension,
+    ExtensionAPI,
+    ExtensionRegistry,
+    ExtensionState,
+)
 from .runner import (
     Runner,
     RunResult,

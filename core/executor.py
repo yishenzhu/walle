@@ -10,6 +10,7 @@ from ..schemas import ToolResult, ToolStart
 from ..channel import Channel
 from .approval import ApprovalPolicy, Approver, ChannelApprover
 from ..conf import ApprovalDecision, ToolConfig
+from ..infra import Event
 from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
 from ..tools import Tool, ToolContext, tool_context, Job, JobStatus
 
@@ -20,7 +21,7 @@ class ToolExecutor:
     """工具执行器：无状态，审批/通知渠道均来自每次 execute 的 ToolContext。"""
 
     def __init__(self, config: ToolConfig | None = None):
-        cfg = config or ToolConfig()   # ToolConfig 自带默认构造（approval + timeout）
+        cfg = config or ToolConfig()  # ToolConfig 自带默认构造（approval + timeout）
         self._approval_policy = ApprovalPolicy(cfg.approval)
         self._timeout_policy = cfg.timeout
 
@@ -37,7 +38,7 @@ class ToolExecutor:
         if decision == ApprovalDecision.ALLOW:
             return None
         # ASK：审批渠道由调用方实例化 ChannelApprover(channel) 后传入
-        #（executor 无状态，每次 execute 现建）
+        # （executor 无状态，每次 execute 现建）
         if approver is None:
             return f"Tool '{name}' denied: no approval channel"
         response = await approver.ask(
@@ -112,10 +113,23 @@ class ToolExecutor:
         if denied:
             logger.info(denied)
             if notify and channel is not None:
-                await channel.notify(
-                    ToolResult(tool_call_id=tc_id, error=denied)
-                )
+                await channel.notify(ToolResult(tool_call_id=tc_id, error=denied))
             return tc_id, denied
+
+        # preflight 屏障：任一 before hook 返回 False 即阻止执行（不部分生效）
+        if ctx.bus is not None:
+            results = await ctx.bus.emit(
+                Event.TOOL_EXECUTION_START,
+                tool_name=name,
+                arguments=args,
+                tool_call_id=tc_id,
+            )
+            if any(r is False for r in results):
+                blocked = f"Tool '{name}' blocked by extension"
+                logger.info(blocked)
+                if notify and channel is not None:
+                    await channel.notify(ToolResult(tool_call_id=tc_id, error=blocked))
+                return tc_id, blocked
 
         attrs = {"tool.name": name}
         try:
@@ -149,6 +163,14 @@ class ToolExecutor:
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
             return tc_id, error
+        finally:
+            # after_tool_call 通知（非阻断，静默收集异常）
+            if ctx.bus is not None:
+                await ctx.bus.emit(
+                    Event.TOOL_EXECUTION_END,
+                    tool_name=name,
+                    tool_call_id=tc_id,
+                )
 
     async def execute_batch(
         self,
@@ -182,9 +204,7 @@ class ToolExecutor:
             if job.status != JobStatus.PENDING:
                 continue
             job.status = JobStatus.RUNNING
-            job.task = asyncio.create_task(
-                self.run_job(job_id, job, tools, ctx)
-            )
+            job.task = asyncio.create_task(self.run_job(job_id, job, tools, ctx))
 
     async def run_job(
         self,
@@ -198,9 +218,7 @@ class ToolExecutor:
         launch_pending 拉起（create_task）后由本方法跑完。
         """
         try:
-            _, result = await self.execute_named(
-                job.tool_name, job.args, tools, ctx
-            )
+            _, result = await self.execute_named(job.tool_name, job.args, tools, ctx)
             job.result = result
             job.status = JobStatus.DONE
         except asyncio.CancelledError:

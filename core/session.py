@@ -61,6 +61,7 @@ class Session:
             provider=self._provider,
             channel=self._transport,
             messages=self._messages,
+            session_id=self.id,
             jobs=self._jobs,
         )
 
