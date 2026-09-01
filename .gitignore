@@ -17,3 +17,4 @@ eval/data/out/
 !eval/data/*.csv
 !eval/data/*.log
 !eval/data/*.txt
+datasets/
