@@ -1,4 +1,5 @@
 """Session 存储持久化 + attach/detach 生命周期测试。"""
+
 import pytest
 
 from ..core import Session, SessionRegistry, Runner, Agent, ToolExecutor
@@ -11,12 +12,18 @@ from .conftest import FakeChannel, FakeProvider
 
 def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"):
     """构造一个不依赖真实 LLM 的 Session（agent_factory 为最小 Agent）。"""
-    runner = Runner(executor=ToolExecutor(ToolConfig(
-        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-    )))
+    runner = Runner(
+        executor=ToolExecutor(
+            ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+            )
+        )
+    )
     return Session(
         session_id=session_id,
-        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
+        agent_factory=lambda _name=None: Agent(
+            instruction="You are a helpful assistant."
+        ),
         runner=runner,
         transport=transport or FakeChannel(),
         storage=storage,
@@ -27,10 +34,16 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
 def make_registry(db_path: str) -> SessionRegistry:
     """构造带 Session 构造参数的 registry（register 测试用）。"""
     return SessionRegistry(
-        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
-        runner=Runner(executor=ToolExecutor(ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        ))),
+        agent_factory=lambda _name=None: Agent(
+            instruction="You are a helpful assistant."
+        ),
+        runner=Runner(
+            executor=ToolExecutor(
+                ToolConfig(
+                    approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+                )
+            )
+        ),
         db_path=db_path,
     )
 
@@ -91,14 +104,13 @@ class TestSessionStorage:
 
 class TestSessionLifecycle:
     async def test_attach_detach(self, tmp_path):
-        """attach 绑定 transport；detach 解除但不销毁 kernel/messages。"""
+        """attach 绑定 transport；detach 解除但不销毁 messages。"""
         s = make_session("life", str(tmp_path / "s.db"))
         assert s.attached is True
 
         s.detach()
         assert s.attached is False
-        # detach 后状态仍在（kernel 未关、消息可读）
-        assert s._kernel is not None
+        # detach 后状态仍在（消息可读）
         await s._messages.add([UserMessage(content="after-detach")])
         msgs = await s._messages.get()
         assert len(msgs) == 1

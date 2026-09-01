@@ -20,7 +20,6 @@ from ..schemas import (
     ToolResult,
 )
 from ..tools import ToolContext, Tool, Job
-from ..infra import PyKernel
 
 
 logger = logging.getLogger(__name__)
@@ -33,18 +32,17 @@ class RunOptions:
     """单次 run 的可选行为配置（怎么做），与会话环境（SessionEnv）分离。"""
 
     max_turns: int = DEFAULT_MAX_TURNS
-    streamed: bool = False      # 流式输出（delta 通知）
+    streamed: bool = False  # 流式输出（delta 通知）
 
 
 @dataclass
 class SessionEnv:
     """会话级环境与状态：Session 唯一持有，每次 run 原样传入。"""
 
-    kernel: PyKernel                  # 会话级有状态解释器（必填）
-    messages: Messages                # 会话历史（必填）
-    provider: OpenAIProvider = None         # 模型接入（None 用 Runner 默认）
-    channel: Channel = None          # 会话 channel 端点
-    jobs: dict[str, Job] = field(default_factory=dict)   # 后台作业表（跨轮存活）
+    messages: Messages  # 会话历史（必填）
+    provider: OpenAIProvider = None  # 模型接入（None 用 Runner 默认）
+    channel: Channel = None  # 会话 channel 端点
+    jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
 
 
 class RunResult(BaseModel):
@@ -80,7 +78,7 @@ class Runner:
         provider = env.provider or self._provider
         if provider is None:
             raise RuntimeError("no invalid provider")
-        channel, history, kernel = env.channel, env.messages, env.kernel
+        channel, history = env.channel, env.messages
         streamed = options.streamed
         await history.add([UserMessage(content=input)])
 
@@ -97,7 +95,7 @@ class Runner:
                 tools = self._build_tools(agent)
 
                 # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用）
-                ctx = ToolContext(kernel=kernel, channel=channel, jobs=env.jobs)
+                ctx = ToolContext(channel=channel, jobs=env.jobs)
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
                     agent, messages, tools, provider, ctx

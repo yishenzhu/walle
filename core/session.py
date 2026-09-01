@@ -1,12 +1,13 @@
-"""会话实体：持久状态（历史 / kernel / agent）+ 可切换的传输端点。
+"""会话实体：持久状态（历史 / agent）+ 可切换的传输端点。
 
-Session 持有会话状态（历史 / kernel / agent），传输（CLIConn）是其 Channel
+Session 持有会话状态（历史 / agent），传输（CLIConn）是其 Channel
 端点——chat_id 补全由连接负责（身份内聚在连接）。
 
 生命周期：transport 可切换（attach/detach）。连接断开时 detach 保留
-kernel/messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
+messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
 transport。真正销毁走 close()（registry 显式调用）。
 """
+
 import asyncio
 import time
 from typing import Any, Callable
@@ -14,10 +15,12 @@ from typing import Any, Callable
 from .agent import Agent
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
-from ..infra import OpenAIProvider, PyKernel
+from ..infra import OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import UserInput
 from ..tools import Job
+
+
 class Session:
     """单会话实体：会话状态 + 驱动 Runner，transport 是其 Channel 端点。
 
@@ -44,13 +47,12 @@ class Session:
         self._agent = agent_factory()
         self._runner = runner
         self._provider = provider
-        # 会话状态：历史 + kernel（每会话隔离）
+        # 会话状态：历史（每会话隔离）
         # 历史持久化：默认 SQLite（跨连接/重启保留），可配置切回内存
         if storage == "memory":
             self._messages: Messages = InMemoryMessages()
         else:
             self._messages = SQLiteMessages(db_path=db_path, session_id=session_id)
-        self._kernel = PyKernel()
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
         # 执行环境打包：channel 随 attach/detach 切换
@@ -58,7 +60,6 @@ class Session:
         self._env = SessionEnv(
             provider=self._provider,
             channel=self._transport,
-            kernel=self._kernel,
             messages=self._messages,
             jobs=self._jobs,
         )
@@ -76,7 +77,7 @@ class Session:
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（factory 重新加载 frontmatter）；缺省用 default。
 
-        历史/kernel 保留，仅换 agent 配置——同一会话可随时切换。
+        历史保留，仅换 agent 配置——同一会话可随时切换。
         """
         self._agent = self._agent_factory(name)
 
@@ -86,7 +87,7 @@ class Session:
         self._env.channel = transport
 
     def detach(self) -> None:
-        """解除 transport：保留 kernel/messages 状态，会话仍可被 attach 恢复。"""
+        """解除 transport：保留 messages 状态，会话仍可被 attach 恢复。"""
         self._transport = None
         self._env.channel = None
 
@@ -101,15 +102,17 @@ class Session:
         )
 
     async def close(self) -> None:
-        """真正销毁：取消未完成的后台作业，关 kernel + 消息存储。"""
-        pending = [j.task for j in self._jobs.values()
-                   if j.task is not None and not j.task.done()]
+        """真正销毁：取消未完成的后台作业，关消息存储。"""
+        pending = [
+            j.task
+            for j in self._jobs.values()
+            if j.task is not None and not j.task.done()
+        ]
         for t in pending:
             t.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._jobs.clear()
-        await self._kernel.close()
         await self._messages.close()
 
 

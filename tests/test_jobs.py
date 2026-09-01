@@ -15,7 +15,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Runner, Session, SessionEnv, ToolExecutor
 from ..core.agent import ToolFilter
-from ..infra import OpenAIProvider, PyKernel
+from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import ToolStart, ToolResult
 from ..tools import JobStatus, Tool, ToolContext, tool_context
@@ -228,7 +228,6 @@ class TestRunnerIntegration:
         channel = FakeChannel()
         env = SessionEnv(
             channel=channel,
-            kernel=PyKernel(),
             messages=InMemoryMessages(),
             jobs={},
         )
@@ -286,7 +285,6 @@ class TestRunnerIntegration:
         runner = Runner(executor=executor)
         env = SessionEnv(
             channel=FakeChannel(),
-            kernel=PyKernel(),
             messages=InMemoryMessages(),
             jobs={},
         )

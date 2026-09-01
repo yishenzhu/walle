@@ -11,13 +11,13 @@ agents:
       - researcher
   - name: researcher
     description: 计算助手
-    instruction: 你是计算助手。用 jupyter 工具完成计算任务，并在最终回复中输出最终数字。
+    instruction: 你是计算助手。用 bash 工具完成计算任务（例如 echo $((15*14))），并在最终回复中输出最终数字。
     tools:
-      - jupyter
+      - bash
 max_turns: 8
 ground_truth:
   type: numeric
   value: "210"
   tool_trace:
     - transfer_to_researcher
-    - jupyter
+    - bash

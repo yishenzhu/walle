@@ -47,12 +47,9 @@ def runner(allow_executor):
 
 @pytest.fixture
 def env(channel):
-    """默认会话环境：独立 kernel + 历史（每测试隔离）。"""
-    from ..infra import PyKernel
-
+    """默认会话环境：历史（每测试隔离）。"""
     return SessionEnv(
         channel=channel,
-        kernel=PyKernel(),
         messages=InMemoryMessages(),
     )
 
@@ -348,7 +345,7 @@ class TestRunnerNoProvider:
     """无 Provider 时 run 应报错（默认 provider 缺失）。"""
 
     async def test_raises_without_provider(self):
-        from ..infra import OpenAIProvider, PyKernel
+        from ..infra import OpenAIProvider
 
         backup = OpenAIProvider._default
         OpenAIProvider._default = None
@@ -358,106 +355,7 @@ class TestRunnerNoProvider:
                 await Runner().run(
                     agent,
                     "hi",
-                    env=SessionEnv(kernel=PyKernel(), messages=InMemoryMessages()),
+                    env=SessionEnv(messages=InMemoryMessages()),
                 )
         finally:
             OpenAIProvider._default = backup
-
-
-class TestRunnerKernel:
-    """Runner 完全无状态：kernel 由调用方传入 run，工具经其执行。"""
-
-    async def test_run_uses_passed_kernel(self, provider, channel, allow_executor):
-        """run 传入的 kernel 被工具执行使用（同一 kernel 跨 run 状态保留）。"""
-        from ..infra import PyKernel
-        from ..tools import ToolContext, tool_context
-
-        async def py(args):
-            # 通过 tool_context 上下文变量拿 kernel 并执行
-            ctx = tool_context.get()
-            return await ctx.kernel.run("x = 5")
-
-        tool = Tool(
-            name="py",
-            description="run py",
-            parameters={"type": "object", "properties": {}},
-            fn=py,
-        )
-
-        provider.client.chat.completions.set_responses(
-            FakeCompletion(
-                FakeMessage(
-                    tool_calls=[FakeToolCall(id="tc1", name="py", arguments="{}")]
-                )
-            ),
-            FakeCompletion(FakeMessage(content="done")),
-        )
-        agent = Agent(instruction="helpful", tools=lambda: [tool])
-
-        runner = Runner(executor=allow_executor)
-        kernel = PyKernel()
-        result = await runner.run(
-            agent,
-            "run",
-            env=SessionEnv(
-                channel=channel,
-                kernel=kernel,
-                messages=InMemoryMessages(),
-            ),
-        )
-        assert result.output == "done"
-        await kernel.close()
-
-    async def test_runner_kernel_state_persists_across_turns(
-        self, provider, channel, allow_executor
-    ):
-        """同一 kernel 跨多次 run 保留状态（会话级，由 Session 持有）。"""
-        from ..infra import PyKernel
-        from ..tools import tool_context
-
-        async def py(args):
-            ctx = tool_context.get()
-            return await ctx.kernel.run(args["code"])
-
-        tool = Tool(
-            name="py",
-            description="run py",
-            parameters={"type": "object", "properties": {"code": {"type": "string"}}},
-            fn=py,
-        )
-
-        provider.client.chat.completions.set_responses(
-            FakeCompletion(
-                FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="t1", name="py", arguments='{"code": "y = 10"}')
-                    ]
-                )
-            ),
-            FakeCompletion(FakeMessage(content="ok")),
-            FakeCompletion(
-                FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="t2", name="py", arguments='{"code": "y * 2"}')
-                    ]
-                )
-            ),
-            FakeCompletion(FakeMessage(content="done")),
-        )
-        agent = Agent(instruction="helpful", tools=lambda: [tool])
-
-        runner = Runner(executor=allow_executor)
-        kernel = PyKernel()
-        r1 = await runner.run(
-            agent,
-            "set",
-            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
-        )
-        r2 = await runner.run(
-            agent,
-            "get",
-            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
-        )
-        assert r1.output == "ok"
-        assert r2.output == "done"
-        await kernel.close()

@@ -6,6 +6,7 @@
 连接断开 detach 保留（状态跨连接存活）。
 客户端：python -m walle.channel.cli [--attach <id>] [--list] 独立进程。
 """
+
 import asyncio
 import json
 import logging
@@ -63,7 +64,12 @@ class CLIConn:
     async def notify(self, n: NotificationUnion) -> None:
         # 本连接归属的会话身份：补全 chat_id（上层构造事件时不带，由本连接注入）
         await self.send(
-            {"type": "notify", "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(mode="json")}
+            {
+                "type": "notify",
+                "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                    mode="json"
+                ),
+            }
         )
 
     async def call(self, s: ServiceUnion) -> Any:
@@ -74,7 +80,9 @@ class CLIConn:
             {
                 "type": "call",
                 "id": req_id,
-                "data": s.model_copy(update={"chat_id": self.chat_id}).model_dump(mode="json"),
+                "data": s.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                    mode="json"
+                ),
             }
         )
         try:
@@ -123,7 +131,7 @@ class CLIConn:
             try:
                 await worker
             except asyncio.CancelledError:
-                pass   # 连接断开：中断仍在处理的 input
+                pass  # 连接断开：中断仍在处理的 input
 
     async def _consume(
         self,
@@ -147,7 +155,7 @@ class CLIChannel:
     握手 hello 帧：
       - 带 attach=true + chat_id → 从 registry 取已有会话 attach（resume）
       - 否则 → registry.create(conn) 新建会话（绑定本连接为 transport）
-    连接断开 → detach 保留会话（kernel/messages 状态跨连接存活），
+    连接断开 → detach 保留会话（messages 状态跨连接存活），
     会话留在 registry 供重连 attach。真正销毁走 registry 显式 remove+close。
     """
 
@@ -172,7 +180,7 @@ class CLIChannel:
 
     async def stop(self) -> None:
         if self._server is not None:
-            self._server.close()   # 3.12+：停止监听并等待挂起连接完成
+            self._server.close()  # 3.12+：停止监听并等待挂起连接完成
             self._server = None
 
     # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
@@ -227,12 +235,16 @@ class CLIChannel:
 
             await conn.send({"type": "welcome", "chat_id": chat_id})
             await conn.run(on_input)
-        except (json.JSONDecodeError, ConnectionError, asyncio.IncompleteReadError) as exc:
+        except (
+            json.JSONDecodeError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+        ) as exc:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:
             if session is not None:
                 try:
-                    # 断开只 detach（保留 kernel/messages 供重连），不 close
+                    # 断开只 detach（保留 messages 供重连），不 close
                     session.detach()
                 except Exception as exc:
                     logger.warning(f"session {chat_id} detach failed: {exc}")
@@ -240,10 +252,11 @@ class CLIChannel:
             try:
                 await writer.wait_closed()
             except OSError:
-                pass   # 对端已断开：wait_closed 可能抛 BrokenPipeError，属预期
+                pass  # 对端已断开：wait_closed 可能抛 BrokenPipeError，属预期
 
 
 # ── 客户端（独立进程）─────────────────────────────────
+
 
 class CLIClient:
     """CLI 客户端：连接服务端，stdin 发送 + socket 渲染回复（独立进程）。
@@ -262,7 +275,7 @@ class CLIClient:
         self._port = port
         self._chat_id = attach or f"cli-{uuid.uuid4().hex[:12]}"
         self._attach = bool(attach)
-        self._reply_done = asyncio.Event()   # 回复完成（delta_end）信号
+        self._reply_done = asyncio.Event()  # 回复完成（delta_end）信号
 
     @staticmethod
     def render_notification(data: dict) -> None:
@@ -273,7 +286,10 @@ class CLIClient:
         elif t == "delta_end":
             print()
         elif t == "tool_start":
-            print(f"  {CYAN}🔧 {data.get('tool_name')}{RESET} {data.get('arguments')}", flush=True)
+            print(
+                f"  {CYAN}🔧 {data.get('tool_name')}{RESET} {data.get('arguments')}",
+                flush=True,
+            )
         elif t == "tool_result":
             tc, err = data.get("tool_call_id"), data.get("error")
             if err:
@@ -286,13 +302,18 @@ class CLIClient:
     async def run(self) -> None:
         """连接服务端，握手（attach 或新建）后双循环收发。"""
         reader, writer = await asyncio.open_connection(self._host, self._port)
-        await self._send(writer, {
-            "type": "hello",
-            "chat_id": self._chat_id,
-            "attach": bool(self._attach),
-        })
+        await self._send(
+            writer,
+            {
+                "type": "hello",
+                "chat_id": self._chat_id,
+                "attach": bool(self._attach),
+            },
+        )
         mode = "恢复会话" if self._attach else "新会话"
-        print(f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C 退出）")
+        print(
+            f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C 退出）"
+        )
         try:
             await asyncio.gather(
                 self._read_stdin(writer),
@@ -309,7 +330,7 @@ class CLIClient:
             try:
                 content = (await asyncio.to_thread(input, "You> ")).strip()
             except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
-                return   # EOF / Ctrl+C / 取消：优雅退出，不打 traceback
+                return  # EOF / Ctrl+C / 取消：优雅退出，不打 traceback
             if content:
                 await self._send(
                     writer,
@@ -322,7 +343,7 @@ class CLIClient:
         """socket 帧：notify → 渲染；delta_end 置回复完成；call → 交互并回 reply。"""
         while line := await reader.readline():
             if not line:
-                self._reply_done.set()   # 断开：解除等待，避免挂起
+                self._reply_done.set()  # 断开：解除等待，避免挂起
                 return
             try:
                 msg = json.loads(line)
@@ -374,15 +395,21 @@ class CLIClient:
             print(f"  {CYAN}└──────────────────────────────────────────────{RESET}")
             while True:
                 answer = (
-                    await asyncio.to_thread(
-                        input, f"  {GREEN}允许执行?{RESET} (y=是 / n=否): "
+                    (
+                        await asyncio.to_thread(
+                            input, f"  {GREEN}允许执行?{RESET} (y=是 / n=否): "
+                        )
                     )
-                ).strip().lower()
+                    .strip()
+                    .lower()
+                )
                 if answer in ("y", "yes"):
                     return {"approved": True}
                 if answer in ("n", "no"):
                     reason = (
-                        await asyncio.to_thread(input, f"  {RED}拒绝原因(可选){RESET}: ")
+                        await asyncio.to_thread(
+                            input, f"  {RED}拒绝原因(可选){RESET}: "
+                        )
                     ).strip()
                     return {"approved": False, "reason": reason or None}
                 print(f"  {RED}请输入 y 或 n{RESET}")
@@ -440,4 +467,4 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print()   # Ctrl+C 优雅退出，不打印栈
+        print()  # Ctrl+C 优雅退出，不打印栈

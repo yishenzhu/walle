@@ -5,6 +5,7 @@
   否则 ask_user / 审批等双向交互会死锁）。
 - ChannelApprover.ask 接受真实通道返回的 dict（JSON 反序列化），验证为模型。
 """
+
 import asyncio
 import json
 
@@ -119,7 +120,10 @@ class _DictReplyChannel:
     "reply,expected",
     [
         ({"approved": True}, ApprovalRsp(approved=True)),
-        ({"approved": False, "reason": "dangerous"}, ApprovalRsp(approved=False, reason="dangerous")),
+        (
+            {"approved": False, "reason": "dangerous"},
+            ApprovalRsp(approved=False, reason="dangerous"),
+        ),
     ],
 )
 async def test_channel_approver_accepts_dict_reply(reply, expected):
@@ -157,10 +161,16 @@ class _TestServer:
 
     def __init__(self, db_path: str):
         self.registry = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
-            runner=Runner(executor=ToolExecutor(ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-            ))),
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            runner=Runner(
+                executor=ToolExecutor(
+                    ToolConfig(
+                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+                    )
+                )
+            ),
             db_path=db_path,
         )
         self.channel = CLIChannel(registry=self.registry)
@@ -218,10 +228,12 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         assert reg.get("sess-1").attached is False
 
         # 重连：attach 同一会话，attached 恢复
-        r2, w2 = await _connect(port, {"type": "hello", "chat_id": "sess-1", "attach": True})
+        r2, w2 = await _connect(
+            port, {"type": "hello", "chat_id": "sess-1", "attach": True}
+        )
         await _read_line(r2)  # welcome
         assert reg.get("sess-1").attached is True
-        # 仍是同一个 Session 实例（kernel/messages 保留）
+        # 仍是同一个 Session 实例（messages 保留）
         w2.close()
         await w2.wait_closed()
         await asyncio.sleep(0.05)
@@ -267,7 +279,9 @@ async def test_cli_attach_unknown_session_errors(tmp_path):
     reg = server.registry
     port = await server.start()
     try:
-        r, w = await _connect(port, {"type": "hello", "chat_id": "ghost", "attach": True})
+        r, w = await _connect(
+            port, {"type": "hello", "chat_id": "ghost", "attach": True}
+        )
         msg = await _read_line(r)
         assert msg["type"] == "error"
         assert "不存在" in msg["message"]
@@ -302,7 +316,7 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         msg = await _read_line(r3)
         sessions = {s["session_id"]: s for s in msg["sessions"]}
         assert set(sessions) == {"a", "b"}
-        assert sessions["a"]["attached"] is False   # 已断开
+        assert sessions["a"]["attached"] is False  # 已断开
         assert sessions["b"]["attached"] is True
         w3.close()
         await w3.wait_closed()

@@ -109,7 +109,9 @@ class Agent(BaseModel, Generic[TContext]):
         instruction = post.content.strip() or None
         output_model = meta.get("output_model")
         models_path = root / "models.yaml"
-        output_type = cls._load_model(output_model, models_path) if output_model else None
+        output_type = (
+            cls._load_model(output_model, models_path) if output_model else None
+        )
         return cls(
             name=name,
             description=meta.get("description"),
@@ -202,12 +204,11 @@ class Agent(BaseModel, Generic[TContext]):
 
         async def fn(input: str):
             from .runner import Runner, SessionEnv
-            from ..infra import PyKernel
             from ..messages import InMemoryMessages
 
-            # 嵌套 Runner 显式构造隔离环境（独立 kernel + 历史）：与父执行实体互不污染
+            # 嵌套 Runner 显式构造隔离环境（独立历史）：与父执行实体互不污染
             runner = Runner()
-            env = SessionEnv(kernel=PyKernel(), messages=InMemoryMessages())
+            env = SessionEnv(messages=InMemoryMessages())
             result = await runner.run(agent, input, env=env)
             return result.output
 

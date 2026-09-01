@@ -10,5 +10,4 @@ from .metrics import (
     COMPRESS_DURATION,
 )
 from .provider import OpenAIProvider
-from .jupyter import PyKernel
 from .sqlite_store import SQLiteStore

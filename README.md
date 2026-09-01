@@ -18,8 +18,7 @@
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
 | 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
-| 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
-| 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
+|  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
 | 🔄 **运行时自扩展** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
 
@@ -96,7 +95,7 @@ sequenceDiagram
 | 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
 | 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略（会话实体在 `core/session.py`） |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
-| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider、Jupyter kernel |
+| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -141,7 +140,7 @@ cp .env.example .env             # LLM API Key
 启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
 `PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。
 
-会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史/kernel），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
+会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
@@ -182,7 +181,6 @@ tool:
     rules:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
-      - [ask, jupyter]                # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
       - [allow, grilling]             # 技能工具自动放行
     default: ask                      # 默认需人工审批
@@ -235,7 +233,7 @@ tools:
     - bash
 ---
 
-你是一名资深编码助手。优先使用 python/jupyter 完成任务，禁止 bash 执行任意命令。
+你是一名资深编码助手。优先使用 python/bash 完成任务，禁止 bash 执行任意危险命令。
 ```
 
 | frontmatter 字段 | 类型 | 说明 |
@@ -250,7 +248,7 @@ tools:
 - **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具
 - **输出模型**：`output_model: summary` 会在启动时从 `.agent/agents/models.yaml` 构建 Pydantic 模型，作为 `response_format` 约束；模型定义见 `models.yaml` 内注释
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
-- **会话内切换**：API `Session.set_agent(name)` 按名切换（历史/kernel 保留）；未指定时用默认 agent
+- **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
 
@@ -264,7 +262,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（kernel / interact）
+    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs）
     return f"result: {query}"
 ```
 
@@ -375,7 +373,6 @@ walle/
 │   ├── defined.py             #   模型定义工具（校验/持久化）
 │   └── builtin/               #   内置工具
 │       ├── bash.py            #     Bash 执行
-│       ├── python.py          #     jupyter 代码执行（CodeAct）
 │       ├── ask_user.py        #     向用户提问
 │       ├── job.py             #     后台作业（background / job_result）
 │       └── skill.py           #     Skill 加载器
@@ -397,7 +394,6 @@ walle/
 │   ├── telemetry.py           #   OpenTelemetry 初始化
 │   ├── metrics.py             #   指标定义
 │   ├── provider.py            #   LLM Provider（create/stream/set_model）
-│   ├── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
 │   └── sqlite_store.py        #   SQLite 存储工具
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
@@ -441,13 +437,12 @@ walle/
 `eval/` 是自建的能力评测套件：无头执行（真实 LLM + 内置工具，无人工交互），
 按域覆盖核心引擎能力，自动评分并生成报告。
 
-### 任务域（20 任务）
+### 任务域（14 任务）
 
 | 域 | 任务数 | 覆盖能力 |
 |---|---|---|
-| codeact | 6 | Jupyter kernel 计算 / 跨调用状态保留 / 报错自愈 |
 | bash | 5 | shell 统计 / 文件读写 |
-| combined | 3 | bash + jupyter 多工具流水线 |
+| combined | 3 | bash 多工具流水线 |
 | define_tool | 2 | 模型运行期定义工具并立即使用 |
 | background | 2 | 后台作业派发 → job_result 取回 |
 | handoff | 2 | 多智能体链式移交 |
@@ -455,9 +450,9 @@ walle/
 ### 运行
 
 ```bash
-PYTHONPATH=.. .venv/bin/python -m walle.eval.run             # 全量 20 任务
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run             # 全量 14 任务
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --smoke     # 冒烟（1 任务）
-PYTHONPATH=.. .venv/bin/python -m walle.eval.run --domain codeact
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --domain bash
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --repeat 3  # 每任务 3 次取均值
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上次报告（不调 LLM）
 ```
@@ -471,7 +466,7 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上�
 
 | 指标 | 值 |
 |---|---|
-| 成功率 | 20/20 (100%) |
+| 成功率 | 14/14 (100%) |
 | 平均轮次 | 2.7 |
 | 平均 token/任务 | 2,041 |
 | 平均耗时/任务 | 7.7s |
@@ -504,7 +499,7 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split
 ```
 
 报告输出到 `eval/report/tau/`（复用自建套件的报告管线）。支持 `--concurrency N`
-线程池并发（每用例独立 env/provider/kernel）与 `--resume` 断点续跑（每完成一个
+线程池并发（每用例独立 env/provider）与 `--resume` 断点续跑（每完成一个
 用例即写盘）。
 
 ### 结果（retail test 全量 115 用例，deepseek-v4-flash）

@@ -19,11 +19,11 @@ from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionEnv
 from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ..infra import OpenAIProvider, PyKernel
+from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import Usage
 from ..tools import Tool
-from ..tools.builtin import background, bash, job_result, jupyter
+from ..tools.builtin import background, bash, job_result
 from ..tools.defined import DefinedTool, ToolCodeError
 
 from .graders import grade
@@ -136,7 +136,6 @@ def build_tool_system() -> Callable[[], list[Tool]]:
         Tool.from_function(background),
         Tool.from_function(job_result),
         Tool.from_function(bash),
-        Tool.from_function(jupyter),
         Tool.from_function(define_tool, name="define_tool"),
     ]
 
@@ -192,7 +191,6 @@ async def run_task(
     env = SessionEnv(
         provider=tracked,
         channel=None,
-        kernel=PyKernel(),
         messages=InMemoryMessages(),
         jobs={},
     )
@@ -216,8 +214,6 @@ async def run_task(
         error = f"timeout after {task.timeout:.0f}s"
     except Exception as e:  # provider / 引擎级错误
         error = f"{type(e).__name__}: {e}"
-    finally:
-        await env.kernel.close()
 
     elapsed = time.monotonic() - start
     tool_names = [c["name"] for c in executor.calls]
