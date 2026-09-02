@@ -5,6 +5,7 @@
   否则 ask_user / 审批等双向交互会死锁）。
 - ChannelApprover.ask 接受真实通道返回的 dict（JSON 反序列化），验证为模型。
 """
+
 import asyncio
 import json
 
@@ -68,6 +69,42 @@ async def test_conn_run_processes_reply_while_input_in_flight():
         await server.wait_closed()
 
 
+async def test_conn_run_notifies_error_on_input_failure():
+    """on_input 抛异常：串行 worker 捕获后主动向客户端发 error 帧。
+
+    客户端在发送 input 后会等回复完成（delta_end）再提示下一行；处理失败时
+    必须通知（error 帧），否则客户端永远等不到回复信号而"卡住"。
+    """
+    notifications: list[dict] = []
+
+    async def handle_client(reader, writer):
+        conn = CLIConn("err-conn", reader, writer)
+
+        async def on_input(content):
+            raise RuntimeError("boom")
+
+        await conn.run(on_input)
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        await writer.drain()
+
+        line = await asyncio.wait_for(reader.readline(), timeout=2)
+        msg = json.loads(line)
+        assert msg["type"] == "notify"
+        assert msg["data"]["type"] == "error"
+        assert "boom" in msg["data"]["message"]
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+
 async def test_conn_run_processes_consecutive_inputs():
     """input 帧串行处理：按到达顺序执行 on_input，不并发乱序。"""
     seen: list[str] = []
@@ -119,7 +156,10 @@ class _DictReplyChannel:
     "reply,expected",
     [
         ({"approved": True}, ApprovalRsp(approved=True)),
-        ({"approved": False, "reason": "dangerous"}, ApprovalRsp(approved=False, reason="dangerous")),
+        (
+            {"approved": False, "reason": "dangerous"},
+            ApprovalRsp(approved=False, reason="dangerous"),
+        ),
     ],
 )
 async def test_channel_approver_accepts_dict_reply(reply, expected):
@@ -157,10 +197,16 @@ class _TestServer:
 
     def __init__(self, db_path: str):
         self.registry = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
-            runner=Runner(executor=ToolExecutor(ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-            ))),
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            runner=Runner(
+                executor=ToolExecutor(
+                    ToolConfig(
+                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+                    )
+                )
+            ),
             db_path=db_path,
         )
         self.channel = CLIChannel(registry=self.registry)
@@ -218,7 +264,9 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         assert reg.get("sess-1").attached is False
 
         # 重连：attach 同一会话，attached 恢复
-        r2, w2 = await _connect(port, {"type": "hello", "chat_id": "sess-1", "attach": True})
+        r2, w2 = await _connect(
+            port, {"type": "hello", "chat_id": "sess-1", "attach": True}
+        )
         await _read_line(r2)  # welcome
         assert reg.get("sess-1").attached is True
         # 仍是同一个 Session 实例（kernel/messages 保留）
@@ -267,7 +315,9 @@ async def test_cli_attach_unknown_session_errors(tmp_path):
     reg = server.registry
     port = await server.start()
     try:
-        r, w = await _connect(port, {"type": "hello", "chat_id": "ghost", "attach": True})
+        r, w = await _connect(
+            port, {"type": "hello", "chat_id": "ghost", "attach": True}
+        )
         msg = await _read_line(r)
         assert msg["type"] == "error"
         assert "不存在" in msg["message"]
@@ -302,7 +352,7 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         msg = await _read_line(r3)
         sessions = {s["session_id"]: s for s in msg["sessions"]}
         assert set(sessions) == {"a", "b"}
-        assert sessions["a"]["attached"] is False   # 已断开
+        assert sessions["a"]["attached"] is False  # 已断开
         assert sessions["b"]["attached"] is True
         w3.close()
         await w3.wait_closed()
