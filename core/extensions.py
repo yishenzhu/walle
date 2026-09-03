@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 class ExtensionState(StrEnum):
     LOADING = "loading"  # factory 执行完毕，待激活
     ACTIVE = "active"  # 已提交到 bus / registry
-    FAILED = "failed"  # factory 抛异常或激活冲突，已丢弃
+    FAILED = "failed"  # factory 抛异常或激活失败，已丢弃
+    UNLOADED = "unloaded"  # 已卸载（reload 前或手动卸载）
 
 
 @dataclass
@@ -43,6 +44,9 @@ class Extension:
     tools: list[Tool] = field(default_factory=list)
     state: ExtensionState = ExtensionState.LOADING
     error: str | None = None
+    # 激活成功后记录实际挂载，供 unload 精确摘除
+    mounted_tools: list[str] = field(default_factory=list)
+    mounted_handlers: list[tuple[Event, Handler]] = field(default_factory=list)
 
 
 class ExtensionAPI:
@@ -153,26 +157,75 @@ class ExtensionRegistry:
     async def activate(self) -> None:
         """第二阶段：把成功加载的 Extension 提交到 bus / registry。
 
-        冲突即抛错：工具重名时 registry.add_tool 整批 raise，扩展标记 FAILED，
-        handlers 未挂载（不部分生效），错误经由 diagnostics 可见。不静默
-        跳过、不降级——错误宁可暴露，不做 first-wins 仲裁。
+        工具同名 = 后到者覆盖（registry 语义），不视为冲突；真正失败只剩
+        factory 抛异常（load 阶段已标 FAILED）。挂载成功记录到 Extension，
+        供 unload/reload 精确摘除。
         """
         for ext in self._extensions:
-            if ext.state is not ExtensionState.LOADING:
+            if ext.state is ExtensionState.LOADING:
+                await self._activate_one(ext)
+
+    async def _activate_one(self, ext: Extension) -> None:
+        """激活单个扩展：注册工具 + 挂 handlers，成功记录挂载。"""
+        try:
+            if ext.tools:
+                self._registry.add_tool(*ext.tools)
+                ext.mounted_tools = [t.name for t in ext.tools]
+            for event, handlers in ext.handlers.items():
+                for handler in handlers:
+                    self._bus.on(event, handler)
+                    ext.mounted_handlers.append((event, handler))
+        except Exception as exc:  # noqa: BLE001 - 激活失败整体丢弃
+            ext.state = ExtensionState.FAILED
+            ext.error = str(exc)
+        else:
+            ext.state = ExtensionState.ACTIVE
+
+    def unload(self, name: str) -> None:
+        """卸载扩展：摘除其挂载的工具与事件监听器（幂等）。
+
+        工具摘除：仅当 registry 中该名字的工具仍是本扩展的实例时才删
+        （若已被后到扩展覆盖，不误删覆盖者）。事件按 handler 精确退订。
+        """
+        for ext in self._extensions:
+            if ext.name != name or ext.state is not ExtensionState.ACTIVE:
                 continue
-            try:
-                # 先注册 tools（add_tool 对重名整批抛错），失败即整体丢弃，
-                # 此时 handlers 未挂载，不会部分生效。
-                if ext.tools:
-                    self._registry.add_tool(*ext.tools)
-                for event, handlers in ext.handlers.items():
-                    for handler in handlers:
-                        self._bus.on(event, handler)
-            except Exception as exc:  # noqa: BLE001 - 激活冲突整体丢弃
-                ext.state = ExtensionState.FAILED
-                ext.error = str(exc)
-            else:
-                ext.state = ExtensionState.ACTIVE
+            for event, handler in ext.mounted_handlers:
+                self._bus.off(event, handler)
+            ext.mounted_handlers.clear()
+            current = {t.name: t for t in self._registry.all_tools()}
+            for tool in ext.tools:
+                if current.get(tool.name) is tool:  # 仍是我的实例才摘
+                    self._registry.remove_tool(tool.name)
+            ext.mounted_tools.clear()
+            ext.state = ExtensionState.UNLOADED
+            logger.info(f"extension unloaded: {name}")
+            return
+        logger.warning(f"unload skipped (not active): {name}")
+
+    async def reload(self, name: str) -> None:
+        """重载扩展：卸载后重跑 factory 再激活（替换旧扩展记录）。"""
+        self.unload(name)
+        factory = next((f for n, f in self._factories if n == name), None)
+        if factory is None:
+            raise KeyError(f"no such extension: {name}")
+
+        ext = Extension(name=name)
+        try:
+            await factory(ExtensionAPI(ext))
+        except Exception as exc:  # noqa: BLE001 - 重载失败标 FAILED
+            ext.state = ExtensionState.FAILED
+            ext.error = str(exc)
+        self._replace(ext)
+        await self._activate_one(ext)
+
+    def _replace(self, ext: Extension) -> None:
+        """用重载出的新 Extension 顶替同名旧记录（找不到则追加）。"""
+        for i, e in enumerate(self._extensions):
+            if e.name == ext.name:
+                self._extensions[i] = ext
+                return
+        self._extensions.append(ext)
 
     @property
     def diagnostics(self) -> list[ResourceDiagnostic]:

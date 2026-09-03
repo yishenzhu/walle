@@ -70,29 +70,29 @@ async def test_failing_factory_is_isolated():
     assert any(t.name == "good_tool" for t in registry.all_tools())
 
 
-async def test_activate_conflict_fails_whole_extension():
+async def test_activate_duplicate_tool_later_overrides():
+    """扩展与扩展同名工具：后激活者覆盖先激活者（后到者胜，均 ACTIVE）。"""
     bus = EventBus()
     registry = ToolRegistry()
-    registry.add_tool(make_tool("dup"))  # 预置同名工具（builtin 已注册）
     mgr = ExtensionRegistry(bus, registry)
+    second_tool = {"tool": None}
 
-    async def duplicate(api: ExtensionAPI):
-        api.register_tool(make_tool("dup"))  # 与预置名冲突 → 整体 FAILED
-        api.register_tool(make_tool("ok"))  # 即便是唯一工具，也不生效
-        api.on(Event.AGENT_START, lambda **kw: None)  # handler 不被挂载
+    async def first(api: ExtensionAPI):
+        api.register_tool(make_tool("dup"))
 
-    mgr.add("dup", duplicate)
+    async def second(api: ExtensionAPI):
+        tool = make_tool("dup")
+        second_tool["tool"] = tool  # 记录实例供断言
+        api.register_tool(tool)
+
+    mgr.add("first", first)
+    mgr.add("second", second)
     await mgr.load()
     await mgr.activate()
 
-    ext = mgr.extensions[0]
-    assert ext.state is ExtensionState.FAILED  # 冲突即抛错，不静默跳过
-    assert ext.error  # 错误信息可读
-    assert not bus.has(Event.AGENT_START)  # 未部分生效（handlers 未挂载）
-    assert len(registry.all_tools()) == 1  # 仍是预置 dup，无新增 ok
-
-    # 失败原因经 diagnostics 可见（ERROR 级）
-    assert any(d.message == ext.error for d in mgr.diagnostics)
+    assert {e.name for e in mgr.active} == {"first", "second"}
+    dups = [t for t in registry.all_tools() if t.name == "dup"]
+    assert dups == [second_tool["tool"]]  # 只剩后到者实例
 
 
 async def test_extension_tool_blocked_by_hook_end_to_end():
@@ -285,3 +285,86 @@ async def test_builtin_extensions_register_via_extension_system(tmp_path, monkey
     names = {t.name for t in registry.all_tools()}
     assert {"bash", "ask_user", "background", "job_result", "read"} <= names
     assert mgr.extensions[0].state is ExtensionState.ACTIVE
+
+
+# ── unload / reload：生命周期管理 ────────────────────────
+
+
+async def test_unload_removes_tools_and_handlers():
+    """卸载摘除扩展挂载的工具与事件监听器，状态置 UNLOADED。"""
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+    seen = []
+
+    async def ext(api: ExtensionAPI):
+        api.register_tool(make_tool("ext_tool"))
+        api.on(Event.AGENT_START, lambda **kw: seen.append(kw))
+
+    mgr.add("ext", ext)
+    await mgr.load()
+    await mgr.activate()
+    assert bus.has(Event.AGENT_START)
+    assert any(t.name == "ext_tool" for t in registry.all_tools())
+
+    mgr.unload("ext")
+    assert not bus.has(Event.AGENT_START)
+    assert not any(t.name == "ext_tool" for t in registry.all_tools())
+    assert mgr.extensions[0].state is ExtensionState.UNLOADED
+
+    mgr.unload("ext")  # 幂等：已卸载再卸不报错
+
+
+async def test_reload_swaps_to_new_version():
+    """reload 重跑 factory：新版工具与 handler 生效，旧挂载先摘除。"""
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+    state = {"desc": "v1"}
+
+    async def ext(api: ExtensionAPI):
+        tool = make_tool("dyn")
+        tool.description = f"dyn-{state['desc']}"
+        api.register_tool(tool)
+        api.on(Event.AGENT_START, lambda **kw: None)
+
+    mgr.add("ext", ext)
+    await mgr.load()
+    await mgr.activate()
+    first = next(t for t in registry.all_tools() if t.name == "dyn")
+    assert first.description == "dyn-v1"
+    assert bus.has(Event.AGENT_START)
+
+    state["desc"] = "v2"
+    await mgr.reload("ext")
+
+    second = next(t for t in registry.all_tools() if t.name == "dyn")
+    assert second.description == "dyn-v2"  # 新版生效
+    assert mgr.extensions[0].state is ExtensionState.ACTIVE
+    assert len([t for t in registry.all_tools() if t.name == "dyn"]) == 1  # 无旧版残留
+
+
+async def test_unload_covered_tool_keeps_later_owner():
+    """A 的工具被 B 覆盖后，卸载 A 不误删 B 的工具实例。"""
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+    b_tool = {"tool": None}
+
+    async def a(api: ExtensionAPI):
+        api.register_tool(make_tool("shared"))
+
+    async def b(api: ExtensionAPI):
+        tool = make_tool("shared")
+        b_tool["tool"] = tool
+        api.register_tool(tool)
+
+    mgr.add("a", a)
+    mgr.add("b", b)
+    await mgr.load()
+    await mgr.activate()
+
+    mgr.unload("a")  # a 的工具已被 b 覆盖 → 不摘除
+
+    shared = [t for t in registry.all_tools() if t.name == "shared"]
+    assert shared == [b_tool["tool"]]  # b 的实例仍在

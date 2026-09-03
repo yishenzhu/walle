@@ -17,21 +17,39 @@ logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
-    """扁平工具表：add_tool 注册（整批查重原子），all_tools 查询，close 收尾。"""
+    """工具表：同名后注册者覆盖先注册者，remove_tool 摘除，all_tools 查询。
+
+    内置工具、用户扩展、MCP 让位三者统一为"后到者胜"：扩展注册同名工具
+    即覆盖内置 / 其它扩展 / MCP 工具。unload/reload 用 remove_tool 摘除。
+    """
 
     def __init__(self):
         self._tools: list[Tool] = []
         self._mcp = MCP()
 
     def add_tool(self, *tools: Tool) -> None:
-        """注册一个或多个工具（先统一查重，保证原子性）。"""
-        existing = {t.name for t in self._tools}
-        for tool in tools:
-            if tool.name in existing:
-                raise ValueError(f"Duplicate tool name: {tool.name}")
+        """注册工具：同名时新工具顶替旧工具（后到者胜）。
+
+        同一批内工具名重复视为编程错误（抛 ValueError）；与已注册工具重名
+        则整批替换（pi 后到者胜语义：扩展可覆盖内置/其它扩展/MCP 工具）。
+        """
+        names = [t.name for t in tools]
+        if len(set(names)) != len(names):
+            raise ValueError(f"Duplicate tool name in batch: {names}")
+        new_names = set(names)
+        self._tools = [t for t in self._tools if t.name not in new_names]
         for tool in tools:
             self._tools.append(tool)
             logger.info(f"tool registered: {tool.name}")
+
+    def remove_tool(self, name: str) -> None:
+        """按名摘除一个工具（扩展卸载时用）。不存在则忽略。"""
+        before = len(self._tools)
+        self._tools = [t for t in self._tools if t.name != name]
+        if len(self._tools) < before:
+            logger.info(f"tool removed: {name}")
+        else:
+            logger.warning(f"tool not found: {name}")
 
     async def initialize(self, conf: Config) -> Self:
         """加载 MCP server（读 .agent/mcp.yaml 配置并连接）。"""
@@ -44,10 +62,13 @@ class ToolRegistry:
         return self
 
     def all_tools(self) -> list[Tool]:
-        """全部工具（扩展注册的本地工具 + MCP 远端工具）。"""
+        """全部工具（本地 + 未被本地占名的 MCP 远端工具）。"""
         tools = list(self._tools)
+        taken = {t.name for t in tools}
         for c in self._mcp.clients:
-            tools.extend(c.tools)
+            for t in c.tools:
+                if t.name not in taken:  # 本地已占名（含扩展覆盖）→ MCP 让位
+                    tools.append(t)
         return tools
 
     async def close(self) -> None:

@@ -84,19 +84,30 @@ class TestToolRegistry:
         """纯容器初始为空（内置工具由引导扩展注册，不属于 registry）。"""
         assert registry.all_tools() == []
 
-    async def test_add_tool_duplicate_raises(self):
+    async def test_add_tool_duplicate_replaces(self):
+        """同名后注册者覆盖先注册者（后到者胜）。"""
+        registry = ToolRegistry()
+        first = self._tool("x")
+        registry.add_tool(first)
+
+        second = self._tool("x")
+        registry.add_tool(second)
+
+        tools = [t for t in registry.all_tools() if t.name == "x"]
+        assert tools == [second]  # 旧实例被替换，只剩新实例
+
+    async def test_add_tool_same_batch_duplicate_raises(self):
+        """同一批内工具名重复是编程错误（整批抛错）。"""
+        registry = ToolRegistry()
+        with pytest.raises(ValueError, match="Duplicate tool name"):
+            registry.add_tool(self._tool("a"), self._tool("a"))
+
+    async def test_remove_tool(self):
         registry = ToolRegistry()
         registry.add_tool(self._tool("x"))
-        with pytest.raises(ValueError, match="Duplicate tool name"):
-            registry.add_tool(self._tool("x"))
-
-    async def test_add_tool_batch_atomic(self):
-        """整批注册：其中重名则整批抛错，不部分生效。"""
-        registry = ToolRegistry()
-        registry.add_tool(self._tool("a"))
-        with pytest.raises(ValueError):
-            registry.add_tool(self._tool("a"), self._tool("b"))
-        assert {t.name for t in registry.all_tools()} == {"a"}  # b 未部分注册
+        registry.remove_tool("x")
+        assert registry.all_tools() == []
+        registry.remove_tool("x")  # 不存在则忽略
 
     async def test_all_tools_returns_added(self):
         registry = ToolRegistry()

@@ -41,6 +41,14 @@ class EventBus:
             raise ValueError(f"unknown event: {event}")
         self._handlers[event].append(handler)
 
+    def off(self, event: Event, handler: Handler) -> None:
+        """退订一个监听器（扩展卸载时精确摘除）。不存在则忽略。"""
+        if event in self._handlers:
+            try:
+                self._handlers[event].remove(handler)
+            except ValueError:
+                pass
+
     async def emit(self, event: Event, **ctx: Any) -> list[Any]:
         """按注册顺序 await 全部监听器。
 
