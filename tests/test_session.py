@@ -276,8 +276,9 @@ class TestSessionIsolation:
 
         await reg.close()
 
-    async def test_shared_mcp_tools_visible_in_session(self, tmp_path):
-        """进程级共享 MCP 客户端：其远端工具出现在会话工具表（MCP 不每会话重连）。"""
+    async def test_mcp_extension_tools_visible_in_session(self, tmp_path):
+        """MCP 工具经扩展组装进会话：register_tools → 扩展声明 → 会话激活。"""
+        from ..core import ExtensionRegistry
         from ..tools import Tool
         from ..tools.mcp import MCPRegistry
 
@@ -295,8 +296,18 @@ class TestSessionIsolation:
             name = "remote"
             tools = [fake_tool]
 
-        shared_mcp = MCPRegistry()
-        shared_mcp._clients.append(FakeMcpClient())
+        mcp = MCPRegistry()
+        mcp._clients.append(FakeMcpClient())
+
+        # main 组装路径：MCPRegistry 注册成扩展声明
+        loader = ExtensionRegistry()
+
+        async def load_mcp_ext(api) -> None:
+            mcp.register_tools(api.register_tool)
+
+        loader.add("mcp", load_mcp_ext)
+        await loader.load()
+        mcp_ext = [e for e in loader.extensions if e.error is None]
 
         reg = SessionRegistry(
             agent_factory=lambda _name=None: Agent(
@@ -305,7 +316,7 @@ class TestSessionIsolation:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            mcp=shared_mcp,
+            extensions=mcp_ext,
             storage="memory",
             db_path=str(tmp_path / "s.db"),
         )
@@ -315,6 +326,6 @@ class TestSessionIsolation:
 
         s = reg.create(Conn())
         names = {t.name for t in s.tools.all_tools()}
-        assert "mcp_remote_search" in names  # MCP 工具经共享容器进会话
+        assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
 
         await reg.close()

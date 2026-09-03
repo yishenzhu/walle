@@ -22,7 +22,7 @@ from ..conf import ToolConfig
 from ..infra import EventBus, OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
-from ..tools import Job, MCPRegistry, ToolRegistry
+from ..tools import Job, ToolRegistry
 from .executor import ToolExecutor
 
 
@@ -30,8 +30,7 @@ class Session:
     """单会话运行时：自持 bus / 工具表 / 审批 / 扩展激活 / agent 循环。
 
     transport 由 attach() 注入（通常为某连接的 CLIConn），作为会话的
-    channel 端点直接使用（chat_id 补全在连接内完成）。mcp 为进程级共享
-    的 MCP 客户端容器（各会话工具表共享其远端工具视图）。
+    channel 端点直接使用（chat_id 补全在连接内完成）。
     """
 
     def __init__(
@@ -40,7 +39,6 @@ class Session:
         agent_factory: Callable[[str], Agent],
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
-        mcp: MCPRegistry | None = None,
         transport: Channel | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
@@ -53,7 +51,7 @@ class Session:
 
         # ── 会话级运行时（每会话独立，对齐 pi AgentSession）──
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
-        self._tools = ToolRegistry(mcp)  # 会话工具表（共享进程级 MCP 视图）
+        self._tools = ToolRegistry()  # 会话工具表
         self._tool_executor = ToolExecutor(tool_config or ToolConfig())  # 会话私有审批策略
         self._agent_runner = Runner(executor=self._tool_executor, bus=self._bus)
         self._ext_runner = ExtensionRunner(self._bus, self._tools)  # 会话级扩展激活
@@ -181,7 +179,6 @@ class SessionRegistry:
         agent_factory: Callable[[str], Agent],
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
-        mcp: MCPRegistry | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
@@ -189,7 +186,6 @@ class SessionRegistry:
         self._agent_factory = agent_factory
         self._tool_config = tool_config
         self._extensions = extensions or []  # 进程级扩展声明池
-        self._mcp = mcp  # 进程级共享 MCP 客户端容器
         self._provider = provider
         self._storage = storage
         self._db_path = db_path
@@ -211,7 +207,6 @@ class SessionRegistry:
             agent_factory=self._agent_factory,
             tool_config=self._tool_config,
             extensions=extensions,
-            mcp=self._mcp,
             provider=self._provider,
             storage=self._storage,
             db_path=self._db_path,

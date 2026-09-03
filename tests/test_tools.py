@@ -65,23 +65,12 @@ class TestToolRegistry:
         return Tool(name=name, description=name, parameters={"type": "object"}, fn=fn)
 
     @pytest.fixture
-    async def registry(self, tmp_path, monkeypatch):
-        """已连接 MCP 的空 ToolRegistry（无任何本地工具）。"""
-        from ..conf import Config, LogConfig
-        from ..tools import mcp as mcp_mod
+    def registry(self):
+        """空 ToolRegistry（无任何本地工具）。"""
+        return ToolRegistry()
 
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
-        monkeypatch.setattr(mcp_mod, "DOT_AGENT", tmp_path)  # MCP 模块内值绑定
-        conf = Config(
-            log=LogConfig(level="INFO", path="x.log", backup_count=1),
-        )
-        reg = ToolRegistry()
-        await reg.initialize(conf)
-        yield reg
-        await reg.close()
-
-    async def test_empty_registry_has_no_local_tools(self, registry):
-        """纯容器初始为空（内置工具由引导扩展注册，不属于 registry）。"""
+    def test_empty_registry_has_no_local_tools(self, registry):
+        """纯容器初始为空（内置工具由扩展系统激活进会话后才有）。"""
         assert registry.all_tools() == []
 
     async def test_add_tool_duplicate_replaces(self):
@@ -119,7 +108,3 @@ class TestToolRegistry:
         registry.add_tool(Tool.from_function(custom_tool))
         names = {t.name for t in registry.all_tools()}
         assert "custom_tool" in names
-
-    async def test_mcp_empty(self, registry):
-        """空 mcp.yaml：无 MCP 远端工具。"""
-        assert registry.all_tools() == []

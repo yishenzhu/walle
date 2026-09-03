@@ -4,6 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 
 import httpx
@@ -92,6 +93,16 @@ class MCPRegistry:
         """关闭全部客户端。"""
         for c in self._clients:
             await c.close()
+
+    def register_tools(self, register: Callable[[Tool], None]) -> None:
+        """把全部已连接客户端的远端工具交给 register 回调（扩展注册接口）。
+
+        由 main 组装 MCP 扩展时调用：register = api.register_tool。避免本类
+        直接依赖扩展系统（tools 不反向依赖 core）。
+        """
+        for client in self._clients:
+            for tool in client.tools:
+                register(tool)
 
 
 class MCPClient:

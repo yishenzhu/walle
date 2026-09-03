@@ -9,8 +9,8 @@ from .core import (
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
-from .tools import MCPRegistry, Tool
-from .tools.builtin import ask_user, bash, background, job_result, read
+from .tools import MCPRegistry
+from .tools.extensions import load_builtin_extensions
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +25,19 @@ async def main() -> None:
     setup_telemetry(conf.telemetry)
     OpenAIProvider.load_env()
 
-    # 进程级共享 MCP 客户端容器：连接一次，各会话工具表共享远端工具视图
+    # 进程级共享 MCP 客户端：连接一次，组装成"mcp"扩展进扩展池
     mcp = MCPRegistry()
     await mcp.connect()
 
-    # 进程级扩展加载器：内置工具 + .agent/extensions/ 用户扩展。
+    # 进程级扩展加载器：内置工具扩展 + MCP 扩展 + .agent/extensions/ 用户扩展。
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
     extensions = ExtensionRegistry()
-    async def builtin_ext(api) -> None:
-        for fn in (bash, ask_user, background, job_result, read):
-            api.register_tool(Tool.from_function(fn))
+    extensions.add("builtin", load_builtin_extensions)
 
-    extensions.add("builtin", builtin_ext)
+    async def load_mcp_ext(api) -> None:
+        mcp.register_tools(api.register_tool)
+
+    extensions.add("mcp", load_mcp_ext)
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,
@@ -50,7 +51,6 @@ async def main() -> None:
         agent_factory=lambda name=None: Agent.load(name),  # 工具源由 Session 绑定会话表
         tool_config=conf.tool,
         extensions=loaded,
-        mcp=mcp,
         storage=conf.session.storage,
         db_path=conf.session.db_path,
     )
