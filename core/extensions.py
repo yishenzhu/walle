@@ -21,7 +21,6 @@ from .diagnostics import (
 )
 from ..conf import auto_path
 from ..infra import Event, EventBus, Handler, Tool
-from ..tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -184,16 +183,36 @@ class ExtensionRegistry:
 class ExtensionRunner:
     """会话级扩展激活层（对齐 pi：每会话绑定一份 runner）。
 
-    一个会话一个实例：把选中的扩展挂载到"本会话的 bus + 工具表"，
-    命令进本会话命令表。激活记录 per-session 保存（同一扩展可被多个
-    会话激活，不能污染 Extension 声明上的挂载字段）。
+    一个会话一个实例：持有本会话的 bus、工具表、命令表——扩展激活的
+    tools/handlers/commands 全挂到这里。工具表与会话工具源合一：Session
+    把本 runner 的 all_tools 直接绑给 Agent。激活记录 per-session 保存
+    （同一扩展可被多个会话激活，不污染 Extension 声明）。
     """
 
-    def __init__(self, bus: EventBus, tools: ToolRegistry) -> None:
+    def __init__(self, bus: EventBus) -> None:
         self._bus = bus
-        self._tools = tools  # 宿主（会话）的工具表，扩展工具挂到这里
+        self._tools: list[Tool] = []  # 会话工具表（扩展激活落点）
         self._commands: dict[str, Command] = {}
         self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
+
+    # ── 工具表（add/remove/query，替代 ToolRegistry）──────
+    def register_tool(self, *tools: Tool) -> None:
+        """注册工具：同名后到者覆盖先到者。同批重名视为编程错误。"""
+        names = [t.name for t in tools]
+        if len(set(names)) != len(names):
+            raise ValueError(f"Duplicate tool name in batch: {names}")
+        new_names = set(names)
+        self._tools = [t for t in self._tools if t.name not in new_names]
+        for tool in tools:
+            self._tools.append(tool)
+
+    def remove_tool(self, name: str) -> None:
+        """按名摘除工具（扩展卸载时用）。不存在则忽略。"""
+        self._tools = [t for t in self._tools if t.name != name]
+
+    def all_tools(self) -> list[Tool]:
+        """本会话全部工具（Agent 工具源）。"""
+        return list(self._tools)
 
     def activate(self, *extensions: Extension) -> None:
         """把选中的扩展挂载到本会话（工具同名后到覆盖；事件挂本会话 bus）。"""
@@ -203,7 +222,7 @@ class ExtensionRunner:
             mount = ExtensionMount()
             try:
                 if ext.tools:
-                    self._tools.add_tool(*ext.tools)
+                    self.register_tool(*ext.tools)
                     mount.tools = list(ext.tools)
                 for event, handlers in ext.handlers.items():
                     for handler in handlers:
@@ -226,10 +245,10 @@ class ExtensionRunner:
 
     def rollback(self, mount: ExtensionMount) -> None:
         """摘除一次激活的全部副作用（失败回滚或主动卸载共用）。"""
-        current = {t.name: t for t in self._tools.all_tools()}
+        current = {t.name: t for t in self._tools}
         for tool in mount.tools:
             if current.get(tool.name) is tool:  # 仍是本挂载的实例才摘
-                self._tools.remove_tool(tool.name)
+                self.remove_tool(tool.name)
         for event, handler in mount.handlers:
             self._bus.off(event, handler)
         for name in mount.commands:

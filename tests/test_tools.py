@@ -1,10 +1,9 @@
-"""Tool 与 ToolRegistry 测试。"""
+"""Tool 测试。"""
 
 import pytest
 
-from ..infra import Tool
-from ..tools import ToolRegistry
-from ..infra import ToolContext, tool_context
+from ..core import ExtensionRunner
+from ..infra import EventBus, Tool, ToolContext, tool_context
 
 
 class TestTool:
@@ -55,8 +54,8 @@ class TestTool:
         assert result == 3
 
 
-class TestToolRegistry:
-    """ToolRegistry = 纯工具容器：注册 / 查重 / 查询，不认识具体工具。"""
+class TestRunnerToolTable:
+    """会话工具表由 ExtensionRunner 持有：注册 / 覆盖 / 摘除 / 查询。"""
 
     @staticmethod
     def _tool(name: str) -> Tool:
@@ -66,46 +65,39 @@ class TestToolRegistry:
         return Tool(name=name, description=name, parameters={"type": "object"}, fn=fn)
 
     @pytest.fixture
-    def registry(self):
-        """空 ToolRegistry（无任何本地工具）。"""
-        return ToolRegistry()
+    def runner(self):
+        return ExtensionRunner(EventBus())
 
-    def test_empty_registry_has_no_local_tools(self, registry):
-        """纯容器初始为空（内置工具由扩展系统激活进会话后才有）。"""
-        assert registry.all_tools() == []
+    def test_empty_tool_table(self, runner):
+        assert runner.all_tools() == []
 
-    async def test_add_tool_duplicate_replaces(self):
+    def test_register_duplicate_replaces(self, runner):
         """同名后注册者覆盖先注册者（后到者胜）。"""
-        registry = ToolRegistry()
         first = self._tool("x")
-        registry.add_tool(first)
+        runner.register_tool(first)
 
         second = self._tool("x")
-        registry.add_tool(second)
+        runner.register_tool(second)
 
-        tools = [t for t in registry.all_tools() if t.name == "x"]
+        tools = [t for t in runner.all_tools() if t.name == "x"]
         assert tools == [second]  # 旧实例被替换，只剩新实例
 
-    async def test_add_tool_same_batch_duplicate_raises(self):
+    def test_register_same_batch_duplicate_raises(self, runner):
         """同一批内工具名重复是编程错误（整批抛错）。"""
-        registry = ToolRegistry()
         with pytest.raises(ValueError, match="Duplicate tool name"):
-            registry.add_tool(self._tool("a"), self._tool("a"))
+            runner.register_tool(self._tool("a"), self._tool("a"))
 
-    async def test_remove_tool(self):
-        registry = ToolRegistry()
-        registry.add_tool(self._tool("x"))
-        registry.remove_tool("x")
-        assert registry.all_tools() == []
-        registry.remove_tool("x")  # 不存在则忽略
+    def test_remove_tool(self, runner):
+        runner.register_tool(self._tool("x"))
+        runner.remove_tool("x")
+        assert runner.all_tools() == []
+        runner.remove_tool("x")  # 不存在则忽略
 
-    async def test_all_tools_returns_added(self):
-        registry = ToolRegistry()
-
+    def test_all_tools_returns_registered(self, runner):
         async def custom_tool(x: str) -> str:
             """custom"""
             return x
 
-        registry.add_tool(Tool.from_function(custom_tool))
-        names = {t.name for t in registry.all_tools()}
+        runner.register_tool(Tool.from_function(custom_tool))
+        names = {t.name for t in runner.all_tools()}
         assert "custom_tool" in names

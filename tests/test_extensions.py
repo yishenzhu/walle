@@ -19,7 +19,6 @@ from ..core import (
     HookVerdict,
 )
 from ..infra import Tool
-from ..tools import ToolRegistry
 
 
 def make_tool(name: str) -> Tool:
@@ -50,8 +49,7 @@ async def test_load_produces_declarations():
 async def test_load_and_activate_registers_handlers_and_tools():
     """声明经 ExtensionRunner 激活：工具/事件挂到会话 bus/工具表。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
     seen = []
 
@@ -64,7 +62,7 @@ async def test_load_and_activate_registers_handlers_and_tools():
 
     runner.activate(mgr.extensions[0])
     assert bus.has(Event.AGENT_START)  # handler 已挂载
-    assert any(t.name == "ext_tool" for t in tools.all_tools())
+    assert any(t.name == "ext_tool" for t in runner.all_tools())
 
 
 async def test_failing_factory_is_isolated():
@@ -87,9 +85,7 @@ async def test_failing_factory_is_isolated():
 
 async def test_activate_duplicate_tool_later_overrides():
     """同一会话激活两个扩展注册同名工具：后激活者覆盖（后到者胜）。"""
-    bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(EventBus())
     mgr = ExtensionRegistry()
     second_tool = {"tool": None}
 
@@ -109,7 +105,7 @@ async def test_activate_duplicate_tool_later_overrides():
     runner.activate(mgr.extensions[1])  # second → 覆盖
 
     assert runner.active_names == {"first", "second"}
-    dups = [t for t in tools.all_tools() if t.name == "dup"]
+    dups = [t for t in runner.all_tools() if t.name == "dup"]
     assert dups == [second_tool["tool"]]  # 只剩后到者实例
 
 
@@ -131,7 +127,6 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
     FakeProvider.set_default(provider)
     try:
         bus = EventBus()
-        tools = ToolRegistry()
         blocked: dict = {}
 
         async def guard(**ctx_):
@@ -141,7 +136,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
         bus.on(Event.TOOL_EXECUTION_START, guard)
 
         loader = ExtensionRegistry()
-        ext_runner = ExtensionRunner(bus, tools)
+        ext_runner = ExtensionRunner(bus)
 
         async def ext(api: ExtensionAPI):
             api.register_tool(make_tool("guard_tool"))  # 扩展持有的工具
@@ -153,7 +148,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
 
         # 用会话工具表构造 agent
         def toolkit():
-            return tools.all_tools()
+            return ext_runner.all_tools()
 
         agent = Agent(
             instruction="helpful",
@@ -281,15 +276,14 @@ async def test_builtin_extensions_register_via_extension_system(tmp_path, monkey
             api.register_tool(Tool.from_function(fn))
 
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
     mgr.add("builtin", builtin_ext)
 
     await mgr.load()
     runner.activate(*mgr.extensions)
 
-    names = {t.name for t in tools.all_tools()}
+    names = {t.name for t in runner.all_tools()}
     assert {"bash", "ask_user", "background", "job_result", "read"} <= names
 
 
@@ -299,8 +293,7 @@ async def test_builtin_extensions_register_via_extension_system(tmp_path, monkey
 async def test_unload_removes_tools_and_handlers():
     """卸载摘除扩展在会话中的挂载（工具/事件）。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
     seen = []
 
@@ -312,11 +305,11 @@ async def test_unload_removes_tools_and_handlers():
     await mgr.load()
     runner.activate(mgr.extensions[0])
     assert bus.has(Event.AGENT_START)
-    assert any(t.name == "ext_tool" for t in tools.all_tools())
+    assert any(t.name == "ext_tool" for t in runner.all_tools())
 
     runner.unload("ext")
     assert not bus.has(Event.AGENT_START)
-    assert not any(t.name == "ext_tool" for t in tools.all_tools())
+    assert not any(t.name == "ext_tool" for t in runner.all_tools())
     assert runner.active_names == set()
 
     runner.unload("ext")  # 幂等：已卸载再卸不报错
@@ -325,8 +318,7 @@ async def test_unload_removes_tools_and_handlers():
 async def test_reactivate_swaps_to_new_version():
     """同扩展换新声明重激活：先摘旧挂载再挂新的，无残留。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
     state = {"desc": "v1"}
 
@@ -339,7 +331,7 @@ async def test_reactivate_swaps_to_new_version():
     mgr.add("ext", ext)
     await mgr.load()
     runner.activate(mgr.extensions[0])
-    first = next(t for t in tools.all_tools() if t.name == "dyn")
+    first = next(t for t in runner.all_tools() if t.name == "dyn")
     assert first.description == "dyn-v1"
     assert bus.has(Event.AGENT_START)
 
@@ -350,16 +342,15 @@ async def test_reactivate_swaps_to_new_version():
     await mgr2.load()
     runner.activate(mgr2.extensions[0])  # 自动先卸载旧的再激活新的
 
-    second = next(t for t in tools.all_tools() if t.name == "dyn")
+    second = next(t for t in runner.all_tools() if t.name == "dyn")
     assert second.description == "dyn-v2"  # 新版生效
-    assert len([t for t in tools.all_tools() if t.name == "dyn"]) == 1  # 无旧版残留
+    assert len([t for t in runner.all_tools() if t.name == "dyn"]) == 1  # 无旧版残留
 
 
 async def test_unload_covered_tool_keeps_later_owner():
     """A 的工具被 B 覆盖后，卸载 A 不误删 B 的工具实例。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
     b_tool = {"tool": None}
 
@@ -380,7 +371,7 @@ async def test_unload_covered_tool_keeps_later_owner():
 
     runner.unload("a")  # a 的工具已被 b 覆盖 → 不摘除
 
-    shared = [t for t in tools.all_tools() if t.name == "shared"]
+    shared = [t for t in runner.all_tools() if t.name == "shared"]
     assert shared == [b_tool["tool"]]  # b 的实例仍在
 
 
@@ -390,8 +381,7 @@ async def test_unload_covered_tool_keeps_later_owner():
 async def test_register_command_and_dispatch():
     """扩展注册斜杠命令，dispatch 命中返回回复、未命中回退 None。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
@@ -414,8 +404,7 @@ async def test_register_command_and_dispatch():
 async def test_unload_removes_command():
     """卸载扩展摘除其命令。"""
     bus = EventBus()
-    tools = ToolRegistry()
-    runner = ExtensionRunner(bus, tools)
+    runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
@@ -450,8 +439,8 @@ async def test_session_context_activates_into_own_bus_and_registry():
     from ..core import ExtensionRunner
 
     # 两个"会话"各自独立 bus + registry
-    bus1, reg1 = EventBus(), ToolRegistry()
-    bus2, reg2 = EventBus(), ToolRegistry()
+    bus1 = EventBus()
+    bus2 = EventBus()
 
     async def factory(api: ExtensionAPI):
         api.register_tool(make_tool("ext_tool"))
@@ -462,21 +451,21 @@ async def test_session_context_activates_into_own_bus_and_registry():
     await _load_extensions(loader, factory)
     ext = loader.extensions[0]
 
-    ctx1 = ExtensionRunner(bus1, reg1)
-    ctx2 = ExtensionRunner(bus2, reg2)
+    ctx1 = ExtensionRunner(bus1)
+    ctx2 = ExtensionRunner(bus2)
     ctx1.activate(ext)
     ctx2.activate(ext)
 
     assert bus1.has(Event.AGENT_START) and bus2.has(Event.AGENT_START)
-    assert any(t.name == "ext_tool" for t in reg1.all_tools())
-    assert any(t.name == "ext_tool" for t in reg2.all_tools())
+    assert any(t.name == "ext_tool" for t in ctx1.all_tools())
+    assert any(t.name == "ext_tool" for t in ctx2.all_tools())
 
     # 卸载 ctx1 不影响 ctx2
     ctx1.unload("demo")
     assert not bus1.has(Event.AGENT_START)
     assert bus2.has(Event.AGENT_START)
-    assert reg1.all_tools() == []
-    assert any(t.name == "ext_tool" for t in reg2.all_tools())
+    assert ctx1.all_tools() == []
+    assert any(t.name == "ext_tool" for t in ctx2.all_tools())
 
 
 async def test_session_context_command_is_per_session():
@@ -493,8 +482,8 @@ async def test_session_context_command_is_per_session():
     await _load_extensions(loader, factory)
     ext = loader.extensions[0]
 
-    ctx1 = ExtensionRunner(EventBus(), ToolRegistry())
-    ctx2 = ExtensionRunner(EventBus(), ToolRegistry())
+    ctx1 = ExtensionRunner(EventBus())
+    ctx2 = ExtensionRunner(EventBus())
     ctx1.activate(ext)
     ctx2.activate(ext)
     assert await ctx1.dispatch("/greet w") == "hi w"
@@ -516,10 +505,9 @@ async def test_session_context_reactivate_replaces():
     await _load_extensions(loader, factory)
     ext = loader.extensions[0]
 
-    bus, reg = EventBus(), ToolRegistry()
-    ctx = ExtensionRunner(bus, reg)
+    ctx = ExtensionRunner(EventBus())
     ctx.activate(ext)
     ctx.activate(ext)  # 再次激活 → 先摘旧的
 
-    tools = [t for t in reg.all_tools() if t.name == "t"]
+    tools = [t for t in ctx.all_tools() if t.name == "t"]
     assert len(tools) == 1  # 无重复残留

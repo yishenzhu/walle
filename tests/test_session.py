@@ -262,8 +262,8 @@ class TestSessionIsolation:
         s1 = reg.create(Conn("s1"))  # 默认：全部扩展
         s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
 
-        names1 = {t.name for t in s1.tools.all_tools()}
-        names2 = {t.name for t in s2.tools.all_tools()}
+        names1 = {t.name for t in s1.tools}
+        names2 = {t.name for t in s2.tools}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
         assert names2 == {"tool_a"}  # 会话 2 只有 ext_a
 
@@ -325,7 +325,7 @@ class TestSessionIsolation:
             chat_id = "mcp-1"
 
         s = reg.create(Conn())
-        names = {t.name for t in s.tools.all_tools()}
+        names = {t.name for t in s.tools}
         assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
 
         await reg.close()

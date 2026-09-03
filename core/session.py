@@ -19,10 +19,9 @@ from .extensions import Extension, ExtensionRegistry, ExtensionRunner
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
 from ..conf import ToolConfig
-from ..infra import EventBus, Job, OpenAIProvider
+from ..infra import EventBus, Job, OpenAIProvider, Tool
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
-from ..tools import ToolRegistry
 from .executor import ToolExecutor
 
 
@@ -51,10 +50,9 @@ class Session:
 
         # ── 会话级运行时（每会话独立，对齐 pi AgentSession）──
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
-        self._tools = ToolRegistry()  # 会话工具表
         self._tool_executor = ToolExecutor(tool_config or ToolConfig())  # 会话私有审批策略
         self._agent_runner = Runner(executor=self._tool_executor, bus=self._bus)
-        self._ext_runner = ExtensionRunner(self._bus, self._tools)  # 会话级扩展激活
+        self._ext_runner = ExtensionRunner(self._bus)  # 会话级扩展激活（含工具表/命令表）
         if extensions:
             self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
 
@@ -82,7 +80,7 @@ class Session:
     def _build_agent(self, name: str | None = None) -> Agent:
         """按名构造 agent，并把工具源绑定到本会话的工具表。"""
         agent = self._agent_builder(name)
-        agent.tools = self._tools.all_tools  # 本会话工具表
+        agent.tools = self._ext_runner.all_tools  # 本会话工具表
         return agent
 
     @property
@@ -91,9 +89,9 @@ class Session:
         return self._jobs
 
     @property
-    def tools(self) -> ToolRegistry:
-        """本会话的工具表（扩展激活后内置 + 选中扩展的工具在此）。"""
-        return self._tools
+    def tools(self) -> list[Tool]:
+        """本会话的工具（扩展激活后内置 + 选中扩展的工具在此）。"""
+        return self._ext_runner.all_tools()
 
     @property
     def tool_executor(self) -> ToolExecutor:
