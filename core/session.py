@@ -22,7 +22,7 @@ from ..conf import ToolConfig
 from ..infra import EventBus, OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
-from ..tools import Job, MCP, ToolRegistry
+from ..tools import Job, MCPRegistry, ToolRegistry
 from .executor import ToolExecutor
 
 
@@ -40,7 +40,7 @@ class Session:
         agent_factory: Callable[[str], Agent],
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
-        mcp: MCP | None = None,
+        mcp: MCPRegistry | None = None,
         transport: Channel | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
@@ -181,7 +181,7 @@ class SessionRegistry:
         agent_factory: Callable[[str], Agent],
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
-        mcp: MCP | None = None,
+        mcp: MCPRegistry | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",

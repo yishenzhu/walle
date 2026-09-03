@@ -19,8 +19,8 @@ from .tool import Tool
 logger = logging.getLogger(__name__)
 
 
-class MCP:
-    """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端管理。"""
+class MCPRegistry:
+    """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端注册管理。"""
 
     def __init__(self, path: Path | None = None):
         self._path = path or DOT_AGENT / "mcp.yaml"

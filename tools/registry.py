@@ -11,7 +11,7 @@ from typing import Self
 
 from ..conf import Config
 from .tool import Tool
-from .mcp import MCP
+from .mcp import MCPRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,9 @@ class ToolRegistry:
     其远端工具视图）；缺省自建（测试用，不自动连接）。
     """
 
-    def __init__(self, mcp: MCP | None = None):
+    def __init__(self, mcp: MCPRegistry | None = None):
         self._tools: list[Tool] = []
-        self._mcp = mcp or MCP()
+        self._mcp = mcp or MCPRegistry()
 
     def add_tool(self, *tools: Tool) -> None:
         """注册工具：同名时新工具顶替旧工具（后到者胜）。

@@ -9,7 +9,7 @@ from .core import (
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
-from .tools import MCP, Tool
+from .tools import MCPRegistry, Tool
 from .tools.builtin import ask_user, bash, background, job_result, read
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ async def main() -> None:
     OpenAIProvider.load_env()
 
     # 进程级共享 MCP 客户端容器：连接一次，各会话工具表共享远端工具视图
-    mcp = MCP()
+    mcp = MCPRegistry()
     await mcp.connect()
 
     # 进程级扩展加载器：内置工具 + .agent/extensions/ 用户扩展。

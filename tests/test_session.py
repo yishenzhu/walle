@@ -279,7 +279,7 @@ class TestSessionIsolation:
     async def test_shared_mcp_tools_visible_in_session(self, tmp_path):
         """进程级共享 MCP 客户端：其远端工具出现在会话工具表（MCP 不每会话重连）。"""
         from ..tools import Tool
-        from ..tools.mcp import MCP
+        from ..tools.mcp import MCPRegistry
 
         async def fake_fn(args):
             return "mcp-result"
@@ -295,7 +295,7 @@ class TestSessionIsolation:
             name = "remote"
             tools = [fake_tool]
 
-        shared_mcp = MCP()
+        shared_mcp = MCPRegistry()
         shared_mcp._clients.append(FakeMcpClient())
 
         reg = SessionRegistry(

@@ -1,11 +1,11 @@
 import asyncio
 
 from ..conf import MCPConfig
-from ..tools.mcp import MCP
+from ..tools.mcp import MCPRegistry
 
 
 def test_roundtrip(tmp_path):
-    store = MCP(tmp_path / "mcp.yaml")
+    store = MCPRegistry(tmp_path / "mcp.yaml")
     store.save("obsidian", MCPConfig(url="http://127.0.0.1:27123/mcp"))
     store.save(
         "fs",
@@ -29,11 +29,11 @@ def test_roundtrip(tmp_path):
 
 
 def test_load_all_empty(tmp_path):
-    assert MCP(tmp_path / "mcp.yaml").load_all() == {}
+    assert MCPRegistry(tmp_path / "mcp.yaml").load_all() == {}
 
 
 def test_unusual_name_allowed(tmp_path):
     """单文件存储无文件系统暴露，特殊字符名（中文等）允许。"""
-    store = MCP(tmp_path / "mcp.yaml")
+    store = MCPRegistry(tmp_path / "mcp.yaml")
     store.save("obsidian 库", MCPConfig(url="http://x"))
     assert "obsidian 库" in store.load_all()
