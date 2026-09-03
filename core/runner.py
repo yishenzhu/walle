@@ -19,7 +19,7 @@ from ..schemas import (
     DeltaEnd,
     ToolResult,
 )
-from ..tools import ToolContext, Tool, Job
+from ..infra import Job, Tool, ToolContext
 
 
 logger = logging.getLogger(__name__)

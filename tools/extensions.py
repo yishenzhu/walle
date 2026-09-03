@@ -4,7 +4,7 @@
 技能(Skill)不是工具，由 Agent 拼 system prompt、模型用 read 加载，不在此注册。
 """
 
-from .tool import Tool
+from ..infra import Tool
 from .builtin import ask_user, bash, background, job_result, read
 
 

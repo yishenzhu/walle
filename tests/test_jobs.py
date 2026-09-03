@@ -18,7 +18,7 @@ from ..core.agent import ToolFilter
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import ToolStart, ToolResult
-from ..tools import JobStatus, Tool, ToolContext, tool_context
+from ..infra import JobStatus, Tool, ToolContext, tool_context
 from ..tools.builtin import background, job_result
 
 from .conftest import (

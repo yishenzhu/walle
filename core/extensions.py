@@ -20,8 +20,8 @@ from .diagnostics import (
     ResourceDiagnostic,
 )
 from ..conf import auto_path
-from ..infra import Event, EventBus, Handler
-from ..tools import Tool, ToolRegistry
+from ..infra import Event, EventBus, Handler, Tool
+from ..tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

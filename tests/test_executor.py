@@ -6,7 +6,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
 from ..schemas import ApprovalRsp
-from ..tools import Tool, ToolContext
+from ..infra import Tool, ToolContext
 
 from .conftest import FakeChannel, FakeToolCall, FakeProvider
 

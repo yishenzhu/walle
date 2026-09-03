@@ -212,7 +212,7 @@ class TestSessionIsolation:
 
     async def _registry(self, tmp_path) -> SessionRegistry:
         from ..core import ExtensionAPI, ExtensionRegistry
-        from ..tools import Tool
+        from ..infra import Tool
 
         loader = ExtensionRegistry()
 
@@ -279,7 +279,7 @@ class TestSessionIsolation:
     async def test_mcp_extension_tools_visible_in_session(self, tmp_path):
         """MCP 工具经扩展组装进会话：register_tools → 扩展声明 → 会话激活。"""
         from ..core import ExtensionRegistry
-        from ..tools import Tool
+        from ..infra import Tool
         from ..tools.mcp import MCPRegistry
 
         async def fake_fn(args):

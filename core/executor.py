@@ -11,9 +11,8 @@ from ..schemas import ToolResult, ToolStart
 from ..channel import Channel
 from .approval import ApprovalPolicy, Approver, ChannelApprover
 from ..conf import ApprovalDecision, ToolConfig
-from ..infra import Event
-from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
-from ..tools import Tool, ToolContext, tool_context, Job, JobStatus
+from ..infra import Event, TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
+from ..infra import Job, JobStatus, Tool, ToolContext, tool_context
 
 logger = logging.getLogger(__name__)
 

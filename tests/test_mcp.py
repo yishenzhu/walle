@@ -41,7 +41,7 @@ def test_unusual_name_allowed(tmp_path):
 
 def test_register_tools_yields_client_tools():
     """register_tools 把已连接客户端的工具逐个交给注册回调（扩展组装接口）。"""
-    from ..tools import Tool
+    from ..infra import Tool
 
     async def fake_fn(args):
         return "x"

@@ -11,10 +11,9 @@ from enum import StrEnum
 from typing import Any
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
-from pydantic import BaseModel
 
 from ..channel import Channel
-from ..infra import EventBus
+from .event_bus import EventBus
 
 
 class JobStatus(StrEnum):
@@ -63,13 +62,17 @@ class ToolContext:
 tool_context: ContextVar[ToolContext | None] = ContextVar("tool_context", default=None)
 
 
-class Tool(BaseModel):
+@dataclass
+class Tool:
+    """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。
+
+    纯数据 + 行为，不需要 pydantic 序列化（schema 由 formatted_schema 生成）。
+    """
+
     name: str
     description: str
     parameters: dict[str, Any]
     fn: Callable[[dict[str, Any]], Awaitable[Any]]
-
-    model_config = {"arbitrary_types_allowed": True}
 
     async def run(self, args: dict[str, Any]) -> Any:
         return await self.fn(args)

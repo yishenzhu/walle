@@ -15,7 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import DOT_AGENT, MCPConfig
-from .tool import Tool
+from ..infra import Tool
 
 logger = logging.getLogger(__name__)
 

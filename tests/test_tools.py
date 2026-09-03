@@ -2,8 +2,9 @@
 
 import pytest
 
-from ..tools import Tool, ToolRegistry
-from ..tools.tool import ToolContext, tool_context
+from ..infra import Tool
+from ..tools import ToolRegistry
+from ..infra import ToolContext, tool_context
 
 
 class TestTool:

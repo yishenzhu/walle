@@ -18,7 +18,8 @@ from ..core import (
     ExtensionState,
     HookVerdict,
 )
-from ..tools import Tool, ToolRegistry
+from ..infra import Tool
+from ..tools import ToolRegistry
 
 
 def make_tool(name: str) -> Tool:
@@ -202,7 +203,7 @@ def _write_extension(root, name: str, body: str):
 
 EXT_ASYNC = """
 from walle.core import ExtensionAPI
-from walle.tools import Tool
+from walle.infra import Tool
 
 async def load_extension(api: ExtensionAPI):
     api.register_tool(Tool(name="%s", description="%s",
@@ -268,7 +269,7 @@ async def test_discover_missing_entry_fails_isolated(tmp_path):
 
 async def test_builtin_extensions_register_via_extension_system(tmp_path, monkeypatch):
     """内置工具作为引导扩展经 loader+runner 注册，落在会话工具表。"""
-    from ..tools import Tool
+    from ..infra import Tool
     from ..tools import mcp as mcp_mod
     from ..tools.builtin import ask_user, bash, background, job_result, read
 

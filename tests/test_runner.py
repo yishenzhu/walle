@@ -7,7 +7,7 @@ from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionEnv, 
 from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
-from ..tools import Tool
+from ..infra import Tool
 
 from .conftest import (
     FakeChannel,

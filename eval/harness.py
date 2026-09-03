@@ -22,7 +22,7 @@ from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import Usage
-from ..tools import Tool
+from ..infra import Tool
 from ..tools.builtin import background, bash, job_result
 from ..tools.defined import DefinedTool, ToolCodeError
 

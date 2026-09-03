@@ -19,10 +19,10 @@ from .extensions import Extension, ExtensionRegistry, ExtensionRunner
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
 from ..conf import ToolConfig
-from ..infra import EventBus, OpenAIProvider
+from ..infra import EventBus, Job, OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
-from ..tools import Job, ToolRegistry
+from ..tools import ToolRegistry
 from .executor import ToolExecutor
 
 

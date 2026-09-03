@@ -12,7 +12,7 @@ from ..core import Agent, EventBus, Runner, RunOptions, SessionEnv, ToolExecutor
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..messages import InMemoryMessages
 from ..schemas import UserMessage
-from ..tools import Tool
+from ..infra import Tool
 
 from .conftest import (
     FakeChannel,

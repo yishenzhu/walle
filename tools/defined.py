@@ -18,7 +18,7 @@ from pyflakes.api import check
 from pyflakes.reporter import Reporter
 
 from ..conf import DOT_AGENT
-from .tool import Tool
+from ..infra import Tool
 
 logger = logging.getLogger(__name__)
 

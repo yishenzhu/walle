@@ -9,7 +9,7 @@ import frontmatter
 import yaml
 from pydantic import BaseModel, Field, create_model, model_validator
 from ..conf import DOT_AGENT
-from ..tools import Tool
+from ..infra import Tool
 
 TContext = TypeVar("TContext")
 

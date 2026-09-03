@@ -8,7 +8,7 @@ add_tool）进入本容器。本类不认识任何具体工具，也不持有 MC
 
 import logging
 
-from .tool import Tool
+from ..infra import Tool
 
 logger = logging.getLogger(__name__)
 

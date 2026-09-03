@@ -16,7 +16,7 @@ from openai import OpenAI
 from tau_bench.envs.base import Env
 from tau_bench.types import RESPOND_ACTION_NAME, Action
 
-from ...tools import Tool
+from ...infra import Tool
 
 from ..spec import GroundTruth, TaskSpec
 
