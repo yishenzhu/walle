@@ -14,6 +14,7 @@ from .diagnostics import (
 )
 from .executor import HookVerdict, ToolExecutor
 from .extensions import (
+    Command,
     Extension,
     ExtensionAPI,
     ExtensionRegistry,

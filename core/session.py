@@ -10,14 +10,15 @@ transport。真正销毁走 close()（registry 显式调用）。
 
 import asyncio
 import time
-from typing import Any, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from .agent import Agent
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
 from ..infra import OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
-from ..schemas import UserInput
+from ..schemas import Delta, DeltaEnd, UserInput
 from ..tools import Job
 
 
@@ -38,6 +39,7 @@ class Session:
         storage: str = "sqlite",
         db_path: str = "data/session.db",
         created_at: float | None = None,
+        dispatch_command: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self.id = session_id
         # 创建时间内聚在 Session（注册表/连接仅读取展示）
@@ -47,6 +49,8 @@ class Session:
         self._agent = agent_factory()
         self._runner = runner
         self._provider = provider
+        # 斜杠命令分发（来自扩展系统）：命中则不经 agent，未命中回退
+        self._dispatch_command = dispatch_command
         # 会话状态：历史（每会话隔离）
         # 历史持久化：默认 SQLite（跨连接/重启保留），可配置切回内存
         if storage == "memory":
@@ -95,9 +99,17 @@ class Session:
     async def handle(self, user_input: UserInput) -> None:
         if self._transport is None:
             raise RuntimeError(f"session '{self.id}' is detached, attach first")
+        content = user_input.content or ""
+        # 斜杠命令：命中则不经 agent，直接回复；未命中回退给 agent
+        if self._dispatch_command is not None:
+            reply = await self._dispatch_command(content)
+            if reply is not None:
+                await self._transport.notify(Delta(delta=reply))
+                await self._transport.notify(DeltaEnd())
+                return
         await self._runner.run(
             self._agent,
-            user_input.content,
+            content,
             env=self._env,
             options=RunOptions(streamed=True),
         )
@@ -134,12 +146,14 @@ class SessionRegistry:
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
+        dispatch_command: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._agent_factory = agent_factory
         self._runner = runner
         self._provider = provider
         self._storage = storage
         self._db_path = db_path
+        self._dispatch_command = dispatch_command
         self._sessions: dict[str, Session] = {}
 
     def create(self, conn: Any) -> Session:
@@ -155,6 +169,7 @@ class SessionRegistry:
             provider=self._provider,
             storage=self._storage,
             db_path=self._db_path,
+            dispatch_command=self._dispatch_command,
         )
         session.attach(conn)
         self.register(session)

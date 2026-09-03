@@ -171,3 +171,41 @@ class TestSessionRegistry:
         reg.register(s2)
         await reg.close()
         assert reg.list() == []
+
+
+class TestSessionCommandDispatch:
+    async def test_command_reply_bypasses_runner(self, tmp_path):
+        """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
+        from ..schemas import UserInput
+
+        async def dispatch(text: str) -> str | None:
+            if text.startswith("/ping"):
+                return "pong"
+            return None  # 未命中回退 agent
+
+        ch = FakeChannel()
+        s = Session(
+            session_id="cmd-1",
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            runner=Runner(
+                executor=ToolExecutor(
+                    ToolConfig(
+                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+                    )
+                )
+            ),
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+            dispatch_command=dispatch,
+        )
+
+        # 命中命令：无 provider 也正常（不经 runner），回复被推送
+        await s.handle(UserInput(content="/ping"))
+        types = [type(e).__name__ for e in ch.events]
+        assert types == ["Delta", "DeltaEnd"]  # 只有回复推送，无 agent 输出
+        assert ch.events[0].delta == "pong"
+
+        await s.close()

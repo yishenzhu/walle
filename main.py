@@ -56,6 +56,7 @@ async def main() -> None:
         runner=Runner(executor=ToolExecutor(conf.tool), bus=bus),  # 审批来自 conf.yaml
         storage=conf.session.storage,  # 会话历史跨连接/重启保留
         db_path=conf.session.db_path,
+        dispatch_command=extensions.dispatch,  # 斜杠命令直达扩展（未命中回退 agent）
     )
     channel = CLIChannel(registry=sessions)
     await channel.start()

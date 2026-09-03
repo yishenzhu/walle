@@ -368,3 +368,50 @@ async def test_unload_covered_tool_keeps_later_owner():
 
     shared = [t for t in registry.all_tools() if t.name == "shared"]
     assert shared == [b_tool["tool"]]  # b 的实例仍在
+
+
+# ── 命令扩展点：register_command / dispatch / 卸载摘除 ─────
+
+
+async def test_register_command_and_dispatch():
+    """扩展注册斜杠命令，dispatch 命中返回回复、未命中回退 None。"""
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+
+    async def ext(api: ExtensionAPI):
+        async def review(args: str) -> str:
+            return f"reviewing: {args or 'HEAD'}"
+
+        api.register_command("review", "审查当前分支", review)
+
+    mgr.add("cli", ext)
+    await mgr.load()
+    await mgr.activate()
+
+    assert "review" in mgr.commands
+    assert await mgr.dispatch("/review") == "reviewing: HEAD"
+    assert await mgr.dispatch("/review main") == "reviewing: main"
+    assert await mgr.dispatch("/nope") is None  # 未知命令回退 agent
+    assert await mgr.dispatch("普通消息") is None  # 非 / 开头回退 agent
+
+
+async def test_unload_removes_command():
+    """卸载扩展摘除其命令；被覆盖的命令不误删覆盖者。"""
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+
+    async def ext(api: ExtensionAPI):
+        async def h(args: str) -> str:
+            return "v1"
+
+        api.register_command("greet", "greet", h)
+
+    mgr.add("ext", ext)
+    await mgr.load()
+    await mgr.activate()
+
+    mgr.unload("ext")
+    assert mgr.commands == {}
+    assert await mgr.dispatch("/greet") is None

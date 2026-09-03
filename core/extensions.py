@@ -42,11 +42,21 @@ class Extension:
     name: str
     handlers: dict[Event, list[Handler]] = field(default_factory=dict)
     tools: list[Tool] = field(default_factory=list)
+    commands: dict[str, Command] = field(default_factory=dict)
     state: ExtensionState = ExtensionState.LOADING
     error: str | None = None
     # 激活成功后记录实际挂载，供 unload 精确摘除
     mounted_tools: list[str] = field(default_factory=list)
     mounted_handlers: list[tuple[Event, Handler]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Command:
+    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。"""
+
+    name: str
+    description: str
+    handler: Callable[[str], Awaitable[str]]
 
 
 class ExtensionAPI:
@@ -67,6 +77,10 @@ class ExtensionAPI:
         """注册一个工具（activate 时统一写入 registry）。"""
         self._ext.tools.append(tool)
 
+    def register_command(self, name: str, description: str, handler) -> None:
+        """注册斜杠命令 /<name>（handler 收 args 字符串，返回回复文本）。"""
+        self._ext.commands[name] = Command(name, description, handler)
+
 
 ExtensionFactory = Callable[[ExtensionAPI], Awaitable[None]]
 
@@ -81,6 +95,7 @@ class ExtensionRegistry:
     ) -> None:
         self._bus = bus
         self._registry = registry
+        self._commands: dict[str, Command] = {}
         self._factories: list[tuple[str, ExtensionFactory]] = []
         self._extensions: list[Extension] = []
 
@@ -166,7 +181,7 @@ class ExtensionRegistry:
                 await self._activate_one(ext)
 
     async def _activate_one(self, ext: Extension) -> None:
-        """激活单个扩展：注册工具 + 挂 handlers，成功记录挂载。"""
+        """激活单个扩展：注册工具 + 挂 handlers + 挂命令，成功记录挂载。"""
         try:
             if ext.tools:
                 self._registry.add_tool(*ext.tools)
@@ -175,6 +190,8 @@ class ExtensionRegistry:
                 for handler in handlers:
                     self._bus.on(event, handler)
                     ext.mounted_handlers.append((event, handler))
+            for name, cmd in ext.commands.items():
+                self._commands[name] = cmd
         except Exception as exc:  # noqa: BLE001 - 激活失败整体丢弃
             ext.state = ExtensionState.FAILED
             ext.error = str(exc)
@@ -182,10 +199,10 @@ class ExtensionRegistry:
             ext.state = ExtensionState.ACTIVE
 
     def unload(self, name: str) -> None:
-        """卸载扩展：摘除其挂载的工具与事件监听器（幂等）。
+        """卸载扩展：摘除其挂载的工具 / 事件监听器 / 命令（幂等）。
 
-        工具摘除：仅当 registry 中该名字的工具仍是本扩展的实例时才删
-        （若已被后到扩展覆盖，不误删覆盖者）。事件按 handler 精确退订。
+        摘除前检查当前持有者是否仍是本扩展：工具按实例比对、命令按对象
+        比对，避免误删后到覆盖者的注册。
         """
         for ext in self._extensions:
             if ext.name != name or ext.state is not ExtensionState.ACTIVE:
@@ -198,6 +215,9 @@ class ExtensionRegistry:
                 if current.get(tool.name) is tool:  # 仍是我的实例才摘
                     self._registry.remove_tool(tool.name)
             ext.mounted_tools.clear()
+            for cmd_name, cmd in ext.commands.items():
+                if self._commands.get(cmd_name) is cmd:  # 未被后到者覆盖才摘
+                    del self._commands[cmd_name]
             ext.state = ExtensionState.UNLOADED
             logger.info(f"extension unloaded: {name}")
             return
@@ -226,6 +246,21 @@ class ExtensionRegistry:
                 self._extensions[i] = ext
                 return
         self._extensions.append(ext)
+
+    async def dispatch(self, text: str) -> str | None:
+        """分发斜杠命令：命中 /<name> [args] 返回回复；未命中返回 None（回退 agent）。"""
+        if not text.startswith("/"):
+            return None
+        cmd_name, _, args = text[1:].partition(" ")
+        cmd = self._commands.get(cmd_name)
+        if cmd is None:
+            return None
+        return await cmd.handler(args.strip())
+
+    @property
+    def commands(self) -> dict[str, Command]:
+        """全部已激活命令（name → Command）。"""
+        return dict(self._commands)
 
     @property
     def diagnostics(self) -> list[ResourceDiagnostic]:
