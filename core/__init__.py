@@ -7,21 +7,21 @@ from .approval import (
     DenyApprover,
     TimeoutApprover,
 )
-from ..infra import Event, EventBus, Handler
-from .diagnostics import (
-    DiagnosticType,
-    ResourceDiagnostic,
-)
-from .executor import HookVerdict, ToolExecutor
-from .extensions import (
+from ..infra import (
     Command,
+    DiagnosticType,
+    Event,
+    EventBus,
     Extension,
     ExtensionAPI,
     ExtensionMount,
     ExtensionRegistry,
     ExtensionRunner,
     ExtensionState,
+    Handler,
+    ResourceDiagnostic,
 )
+from .executor import HookVerdict, ToolExecutor
 from .runner import (
     Runner,
     RunResult,

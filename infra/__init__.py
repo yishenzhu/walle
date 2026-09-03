@@ -1,5 +1,15 @@
 from .event_bus import Event, EventBus, Handler
 from .tool import Job, JobStatus, Tool, ToolContext, tool_context
+from .diagnostics import DiagnosticType, ResourceDiagnostic
+from .extension import (
+    Command,
+    Extension,
+    ExtensionAPI,
+    ExtensionMount,
+    ExtensionRegistry,
+    ExtensionRunner,
+    ExtensionState,
+)
 from .logger import setup_logger, LogConfig
 from .telemetry import setup_telemetry, tracer, meter
 from .metrics import (

@@ -15,11 +15,18 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .agent import Agent
-from .extensions import Extension, ExtensionRegistry, ExtensionRunner
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
 from ..conf import ToolConfig
-from ..infra import EventBus, Job, OpenAIProvider, Tool
+from ..infra import (
+    EventBus,
+    Extension,
+    ExtensionRegistry,
+    ExtensionRunner,
+    Job,
+    OpenAIProvider,
+    Tool,
+)
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
 from .executor import ToolExecutor
