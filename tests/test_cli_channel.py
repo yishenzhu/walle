@@ -150,7 +150,7 @@ async def test_channel_approver_passthrough_model_reply():
 
 # ── 轮3：attach/resume + 断开 detach 保留 + list 帧 ─────────────────────────
 
-from ..core import SessionRegistry, Session, Runner, Agent, ToolExecutor
+from ..core import SessionRegistry, Session, Agent
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..channel.cli import CLIChannel
 from ..schemas import UserMessage
@@ -164,12 +164,8 @@ class _TestServer:
             agent_factory=lambda _name=None: Agent(
                 instruction="You are a helpful assistant."
             ),
-            runner=Runner(
-                executor=ToolExecutor(
-                    ToolConfig(
-                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                    )
-                )
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),
             db_path=db_path,
         )

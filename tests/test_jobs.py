@@ -339,14 +339,15 @@ class TestRunnerIntegration:
 
 class TestSessionCloseCancels:
     async def test_session_close_cancels_pending_jobs(self, tmp_path):
-        executor = allow_executor()
-        runner = Runner(executor=executor)
         s = Session(
             session_id="jobs-1",
             agent_factory=lambda name=None: Agent(instruction="You are helpful."),
-            runner=runner,
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
             db_path=str(tmp_path / "s.db"),
         )
+        executor = s.tool_executor  # 本会话的工具执行器
 
         # 派发一个永不完成的后台作业
         async def never(args):

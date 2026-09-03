@@ -17,7 +17,9 @@ from .extensions import (
     Command,
     Extension,
     ExtensionAPI,
+    ExtensionMount,
     ExtensionRegistry,
+    ExtensionRunner,
     ExtensionState,
 )
 from .runner import (

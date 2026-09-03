@@ -1,11 +1,12 @@
-"""会话实体：持久状态（历史 / agent）+ 可切换的传输端点。
+"""会话实体：对齐 pi 的 AgentSession——每个会话自持一套运行时。
 
-Session 持有会话状态（历史 / agent），传输（CLIConn）是其 Channel
-端点——chat_id 补全由连接负责（身份内聚在连接）。
+会话 = 独立边界：自己的事件总线(bus)、工具表(tools)、审批策略
+(executor)、扩展激活(ExtensionRunner)、agent 循环(Runner)。扩展声明
+(ExtensionRegistry 加载的 Extension)跨会话共享，但"激活到哪个会话"
+由本会话的 ExtensionRunner 决定——不同会话可激活不同扩展组合。
 
 生命周期：transport 可切换（attach/detach）。连接断开时 detach 保留
-messages（状态跨连接存活，供重连恢复）；连接接入时 attach 换新
-transport。真正销毁走 close()（registry 显式调用）。
+messages（状态跨连接存活，供重连恢复）；真正销毁走 close()。
 """
 
 import asyncio
@@ -14,16 +15,19 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .agent import Agent
+from .extensions import Extension, ExtensionRegistry, ExtensionRunner
 from .runner import Runner, RunOptions, SessionEnv
 from ..channel import Channel
-from ..infra import OpenAIProvider
+from ..conf import ToolConfig
+from ..infra import EventBus, OpenAIProvider
 from ..messages import Messages, InMemoryMessages, SQLiteMessages
 from ..schemas import Delta, DeltaEnd, UserInput
-from ..tools import Job
+from ..tools import Job, ToolRegistry
+from .executor import ToolExecutor
 
 
 class Session:
-    """单会话实体：会话状态 + 驱动 Runner，transport 是其 Channel 端点。
+    """单会话运行时：自持 bus / 工具表 / 审批 / 扩展激活 / agent 循环。
 
     transport 由 attach() 注入（通常为某连接的 CLIConn），作为会话的
     channel 端点直接使用（chat_id 补全在连接内完成）。
@@ -33,26 +37,32 @@ class Session:
         self,
         session_id: str,
         agent_factory: Callable[[str], Agent],
-        runner: Runner,
+        tool_config: ToolConfig | None = None,
+        extensions: list[Extension] | None = None,
         transport: Channel | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
         created_at: float | None = None,
-        dispatch_command: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self.id = session_id
         # 创建时间内聚在 Session（注册表/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
-        # factory 接收 agent 名（缺省 = default）：会话内可随时按名切换 agent
-        self._agent_factory = agent_factory
-        self._agent = agent_factory()
-        self._runner = runner
+
+        # ── 会话级运行时（每会话独立，对齐 pi AgentSession）──
+        self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
+        self._tools = ToolRegistry()  # 会话私有工具表
+        self._tool_executor = ToolExecutor(tool_config or ToolConfig())  # 会话私有审批策略
+        self._agent_runner = Runner(executor=self._tool_executor, bus=self._bus)
+        self._ext_runner = ExtensionRunner(self._bus, self._tools)  # 会话级扩展激活
+        if extensions:
+            self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
+
+        # agent_factory 接收 agent 名（缺省 = default），工具源由会话覆写为会话工具表
+        self._agent_builder = agent_factory
+        self._agent = self._build_agent()
         self._provider = provider
-        # 斜杠命令分发（来自扩展系统）：命中则不经 agent，未命中回退
-        self._dispatch_command = dispatch_command
         # 会话状态：历史（每会话隔离）
-        # 历史持久化：默认 SQLite（跨连接/重启保留），可配置切回内存
         if storage == "memory":
             self._messages: Messages = InMemoryMessages()
         else:
@@ -69,22 +79,48 @@ class Session:
             jobs=self._jobs,
         )
 
+    def _build_agent(self, name: str | None = None) -> Agent:
+        """按名构造 agent，并把工具源绑定到本会话的工具表。"""
+        agent = self._agent_builder(name)
+        agent.tools = self._tools.all_tools  # 本会话工具表
+        return agent
+
     @property
     def jobs(self) -> dict[str, Job]:
         """后台作业表（供 registry 停机时统一取消）。"""
         return self._jobs
 
     @property
+    def tools(self) -> ToolRegistry:
+        """本会话的工具表（扩展激活后内置 + 选中扩展的工具在此）。"""
+        return self._tools
+
+    @property
+    def tool_executor(self) -> ToolExecutor:
+        """本会话的工具执行器（审批策略随会话）。"""
+        return self._tool_executor
+
+    @property
+    def agent_runner(self) -> Runner:
+        """本会话的 agent 循环执行器（持本会话 bus）。"""
+        return self._agent_runner
+
+    @property
     def attached(self) -> bool:
         """是否有活跃连接的 transport 绑定。"""
         return self._transport is not None
 
+    @property
+    def ext_runner(self) -> ExtensionRunner:
+        """本会话的扩展激活层（命令分发/动态激活扩展）。"""
+        return self._ext_runner
+
     def set_agent(self, name: str = "default") -> None:
-        """按名切换 agent（factory 重新加载 frontmatter）；缺省用 default。
+        """按名切换 agent（builder 重新加载 frontmatter）；缺省用 default。
 
         历史保留，仅换 agent 配置——同一会话可随时切换。
         """
-        self._agent = self._agent_factory(name)
+        self._agent = self._build_agent(name)
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点，环境随之更新。"""
@@ -101,13 +137,12 @@ class Session:
             raise RuntimeError(f"session '{self.id}' is detached, attach first")
         content = user_input.content or ""
         # 斜杠命令：命中则不经 agent，直接回复；未命中回退给 agent
-        if self._dispatch_command is not None:
-            reply = await self._dispatch_command(content)
-            if reply is not None:
-                await self._transport.notify(Delta(delta=reply))
-                await self._transport.notify(DeltaEnd())
-                return
-        await self._runner.run(
+        reply = await self._ext_runner.dispatch(content)
+        if reply is not None:
+            await self._transport.notify(Delta(delta=reply))
+            await self._transport.notify(DeltaEnd())
+            return
+        await self._agent_runner.run(
             self._agent,
             content,
             env=self._env,
@@ -135,41 +170,37 @@ class SessionRegistry:
     连接断开只 detach（保留状态），会话仍在 registry 中可被重连 attach；
     显式 remove/close 才真正销毁。附加元数据（创建时间等）供列表展示。
 
-    Session 构造参数（agent_factory / runner / 存储配置）由组装层直接注入，
-    create() 据此构造——注册表是会话的持有者，负责创建与登记。
+    会话运行时零件（agent_builder / tool_config / 扩展声明池）由组装层
+    注入，create() 据此构造每会话自持的运行时——注册表只负责创建登记。
     """
 
     def __init__(
         self,
         agent_factory: Callable[[str], Agent],
-        runner: Runner,
+        tool_config: ToolConfig | None = None,
+        extensions: list[Extension] | None = None,
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
-        dispatch_command: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._agent_factory = agent_factory
-        self._runner = runner
+        self._tool_config = tool_config
+        self._extensions = extensions or []  # 进程级扩展声明池
         self._provider = provider
         self._storage = storage
         self._db_path = db_path
-        self._dispatch_command = dispatch_command
         self._sessions: dict[str, Session] = {}
 
-    def create(self, conn: Any) -> Session:
-        """用注入的构造参数新建会话，绑定 conn 为 transport 并注册。
-
-        Session 初始用默认 agent（factory 内部业务），运行时可在会话内
-        按名切换（Session.set_agent）。
-        """
+    def create(self, conn: Any, extensions: list[Extension] | None = None) -> Session:
+        """新建会话并注册：默认激活扩展池全部；extensions 覆盖则按名单激活。"""
         session = Session(
             session_id=conn.chat_id,
             agent_factory=self._agent_factory,
-            runner=self._runner,
+            tool_config=self._tool_config,
+            extensions=extensions if extensions is not None else self._extensions,
             provider=self._provider,
             storage=self._storage,
             db_path=self._db_path,
-            dispatch_command=self._dispatch_command,
         )
         session.attach(conn)
         self.register(session)

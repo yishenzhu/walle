@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core import Session, SessionRegistry, Runner, Agent, ToolExecutor
+from ..core import Session, SessionRegistry, Agent
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..schemas import UserMessage
 from ..messages import SQLiteMessages, InMemoryMessages
@@ -12,19 +12,14 @@ from .conftest import FakeChannel, FakeProvider
 
 def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"):
     """构造一个不依赖真实 LLM 的 Session（agent_factory 为最小 Agent）。"""
-    runner = Runner(
-        executor=ToolExecutor(
-            ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-            )
-        )
-    )
     return Session(
         session_id=session_id,
         agent_factory=lambda _name=None: Agent(
             instruction="You are a helpful assistant."
         ),
-        runner=runner,
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+        ),
         transport=transport or FakeChannel(),
         storage=storage,
         db_path=db_path,
@@ -37,12 +32,8 @@ def make_registry(db_path: str) -> SessionRegistry:
         agent_factory=lambda _name=None: Agent(
             instruction="You are a helpful assistant."
         ),
-        runner=Runner(
-            executor=ToolExecutor(
-                ToolConfig(
-                    approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                )
-            )
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
         db_path=db_path,
     )
@@ -177,29 +168,34 @@ class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
         """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
         from ..schemas import UserInput
-
-        async def dispatch(text: str) -> str | None:
-            if text.startswith("/ping"):
-                return "pong"
-            return None  # 未命中回退 agent
+        from ..core import ExtensionAPI, ExtensionRegistry, Extension
 
         ch = FakeChannel()
+        # 构造一个注册了 /ping 命令的扩展声明，激活进会话
+        loader = ExtensionRegistry()
+
+        async def load_cli(api: ExtensionAPI):
+            async def ping(args: str) -> str:
+                return "pong"
+
+            api.register_command("ping", "ping", ping)
+
+        loader.add("cli", load_cli)
+        await loader.load()
+        ext = loader.extensions[0]
+
         s = Session(
             session_id="cmd-1",
             agent_factory=lambda _name=None: Agent(
                 instruction="You are a helpful assistant."
             ),
-            runner=Runner(
-                executor=ToolExecutor(
-                    ToolConfig(
-                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-                    )
-                )
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
+            extensions=[ext],
             transport=ch,
             storage="memory",
             db_path=str(tmp_path / "s.db"),
-            dispatch_command=dispatch,
         )
 
         # 命中命令：无 provider 也正常（不经 runner），回复被推送

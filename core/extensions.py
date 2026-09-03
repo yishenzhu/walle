@@ -1,11 +1,9 @@
-"""扩展系统：以 factory 函数注入能力（注册工具 / 订阅生命周期事件）。
+"""扩展系统：加载器(ExtensionRegistry)产出声明，激活器(ExtensionRunner)按会话生效。
 
-两阶段加载（贴近 pi）：
-  1. load() —— 逐个调用 factory(api)，把 on / register_tool 写入各自的
-     pending Extension（纯收集，不触碰 bus / registry）。
-  2. activate() —— 把成功加载的 Extension 提交：handlers 挂到 bus、tools
-     注册到 registry；失败的（factory 抛异常或激活冲突）整体 discard，
-     不会部分生效。
+- ExtensionRegistry（进程级一次）：add/discover 收集 factory，load() 产出
+  Extension 声明（tools/handlers/commands）。无副作用、不持有 bus/工具表。
+- ExtensionRunner（每会话一个）：把选中的扩展激活到本会话的 bus + 工具表 +
+  命令表；支持 unload/重激活。同一扩展可被多个会话独立激活。
 """
 
 from __future__ import annotations
@@ -86,16 +84,14 @@ ExtensionFactory = Callable[[ExtensionAPI], Awaitable[None]]
 
 
 class ExtensionRegistry:
-    """进程级扩展容器：load() 收集，activate() 提交，失败整体丢弃。"""
+    """进程级扩展加载器：add/discover 收集 factory，load() 产出扩展声明。
 
-    def __init__(
-        self,
-        bus: EventBus,
-        registry: ToolRegistry,
-    ) -> None:
-        self._bus = bus
-        self._registry = registry
-        self._commands: dict[str, Command] = {}
+    只负责"把扩展代码加载成声明"(Extension: tools/handlers/commands)。
+    激活到某会话(挂 bus/工具表/命令)由会话级 ExtensionRunner 承担——
+    本类不持有 bus / 工具表，无任何副作用。
+    """
+
+    def __init__(self) -> None:
         self._factories: list[tuple[str, ExtensionFactory]] = []
         self._extensions: list[Extension] = []
 
@@ -169,99 +165,6 @@ class ExtensionRegistry:
                 ext.error = str(exc)
             self._extensions.append(ext)
 
-    async def activate(self) -> None:
-        """第二阶段：把成功加载的 Extension 提交到 bus / registry。
-
-        工具同名 = 后到者覆盖（registry 语义），不视为冲突；真正失败只剩
-        factory 抛异常（load 阶段已标 FAILED）。挂载成功记录到 Extension，
-        供 unload/reload 精确摘除。
-        """
-        for ext in self._extensions:
-            if ext.state is ExtensionState.LOADING:
-                await self._activate_one(ext)
-
-    async def _activate_one(self, ext: Extension) -> None:
-        """激活单个扩展：注册工具 + 挂 handlers + 挂命令，成功记录挂载。"""
-        try:
-            if ext.tools:
-                self._registry.add_tool(*ext.tools)
-                ext.mounted_tools = [t.name for t in ext.tools]
-            for event, handlers in ext.handlers.items():
-                for handler in handlers:
-                    self._bus.on(event, handler)
-                    ext.mounted_handlers.append((event, handler))
-            for name, cmd in ext.commands.items():
-                self._commands[name] = cmd
-        except Exception as exc:  # noqa: BLE001 - 激活失败整体丢弃
-            ext.state = ExtensionState.FAILED
-            ext.error = str(exc)
-        else:
-            ext.state = ExtensionState.ACTIVE
-
-    def unload(self, name: str) -> None:
-        """卸载扩展：摘除其挂载的工具 / 事件监听器 / 命令（幂等）。
-
-        摘除前检查当前持有者是否仍是本扩展：工具按实例比对、命令按对象
-        比对，避免误删后到覆盖者的注册。
-        """
-        for ext in self._extensions:
-            if ext.name != name or ext.state is not ExtensionState.ACTIVE:
-                continue
-            for event, handler in ext.mounted_handlers:
-                self._bus.off(event, handler)
-            ext.mounted_handlers.clear()
-            current = {t.name: t for t in self._registry.all_tools()}
-            for tool in ext.tools:
-                if current.get(tool.name) is tool:  # 仍是我的实例才摘
-                    self._registry.remove_tool(tool.name)
-            ext.mounted_tools.clear()
-            for cmd_name, cmd in ext.commands.items():
-                if self._commands.get(cmd_name) is cmd:  # 未被后到者覆盖才摘
-                    del self._commands[cmd_name]
-            ext.state = ExtensionState.UNLOADED
-            logger.info(f"extension unloaded: {name}")
-            return
-        logger.warning(f"unload skipped (not active): {name}")
-
-    async def reload(self, name: str) -> None:
-        """重载扩展：卸载后重跑 factory 再激活（替换旧扩展记录）。"""
-        self.unload(name)
-        factory = next((f for n, f in self._factories if n == name), None)
-        if factory is None:
-            raise KeyError(f"no such extension: {name}")
-
-        ext = Extension(name=name)
-        try:
-            await factory(ExtensionAPI(ext))
-        except Exception as exc:  # noqa: BLE001 - 重载失败标 FAILED
-            ext.state = ExtensionState.FAILED
-            ext.error = str(exc)
-        self._replace(ext)
-        await self._activate_one(ext)
-
-    def _replace(self, ext: Extension) -> None:
-        """用重载出的新 Extension 顶替同名旧记录（找不到则追加）。"""
-        for i, e in enumerate(self._extensions):
-            if e.name == ext.name:
-                self._extensions[i] = ext
-                return
-        self._extensions.append(ext)
-
-    async def dispatch(self, text: str) -> str | None:
-        """分发斜杠命令：命中 /<name> [args] 返回回复；未命中返回 None（回退 agent）。"""
-        if not text.startswith("/"):
-            return None
-        cmd_name, _, args = text[1:].partition(" ")
-        cmd = self._commands.get(cmd_name)
-        if cmd is None:
-            return None
-        return await cmd.handler(args.strip())
-
-    @property
-    def commands(self) -> dict[str, Command]:
-        """全部已激活命令（name → Command）。"""
-        return dict(self._commands)
-
     @property
     def diagnostics(self) -> list[ResourceDiagnostic]:
         """全部扩展的诊断（加载/激活失败）。"""
@@ -282,7 +185,85 @@ class ExtensionRegistry:
         """全部扩展（按加载顺序）。"""
         return self._extensions
 
+
+class ExtensionRunner:
+    """会话级扩展激活层（对齐 pi：每会话绑定一份 runner）。
+
+    一个会话一个实例：把选中的扩展挂载到"本会话的 bus + 工具表"，
+    命令进本会话命令表。激活记录 per-session 保存（同一扩展可被多个
+    会话激活，不能污染 Extension 声明上的挂载字段）。
+    """
+
+    def __init__(self, bus: EventBus, tools: ToolRegistry) -> None:
+        self._bus = bus
+        self._tools = tools  # 宿主（会话）的工具表，扩展工具挂到这里
+        self._commands: dict[str, Command] = {}
+        self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
+
+    def activate(self, *extensions: Extension) -> None:
+        """把选中的扩展挂载到本会话（工具同名后到覆盖；事件挂本会话 bus）。"""
+        for ext in extensions:
+            if ext.name in self._mounts:
+                self.unload(ext.name)  # 重新激活前先摘旧的
+            mount = ExtensionMount()
+            try:
+                if ext.tools:
+                    self._tools.add_tool(*ext.tools)
+                    mount.tools = list(ext.tools)
+                for event, handlers in ext.handlers.items():
+                    for handler in handlers:
+                        self._bus.on(event, handler)
+                        mount.handlers.append((event, handler))
+                for name, cmd in ext.commands.items():
+                    self._commands[name] = cmd
+                    mount.commands.append(name)
+            except Exception:
+                self.rollback(mount)
+                raise
+            self._mounts[ext.name] = mount
+
+    def unload(self, name: str) -> None:
+        """摘除某扩展在本会话的挂载（工具/事件/命令）。"""
+        mount = self._mounts.pop(name, None)
+        if mount is None:
+            return
+        self.rollback(mount)
+
+    def rollback(self, mount: ExtensionMount) -> None:
+        """摘除一次激活的全部副作用（失败回滚或主动卸载共用）。"""
+        current = {t.name: t for t in self._tools.all_tools()}
+        for tool in mount.tools:
+            if current.get(tool.name) is tool:  # 仍是本挂载的实例才摘
+                self._tools.remove_tool(tool.name)
+        for event, handler in mount.handlers:
+            self._bus.off(event, handler)
+        for name in mount.commands:
+            if name in self._commands:
+                del self._commands[name]
+
+    async def dispatch(self, text: str) -> str | None:
+        """分发本会话斜杠命令：命中返回回复，未命中返回 None（回退 agent）。"""
+        if not text.startswith("/"):
+            return None
+        name, _, args = text[1:].partition(" ")
+        cmd = self._commands.get(name)
+        if cmd is None:
+            return None
+        return await cmd.handler(args.strip())
+
     @property
-    def active(self) -> list[Extension]:
-        """已成功激活的扩展。"""
-        return [e for e in self._extensions if e.state is ExtensionState.ACTIVE]
+    def commands(self) -> dict[str, Command]:
+        return dict(self._commands)
+
+    @property
+    def active_names(self) -> set[str]:
+        return set(self._mounts)
+
+
+@dataclass
+class ExtensionMount:
+    """单个扩展在一次会话激活中的挂载记录（per-session，非扩展声明）。"""
+
+    tools: list[Tool] = field(default_factory=list)
+    handlers: list[tuple[Event, Handler]] = field(default_factory=list)
+    commands: list[str] = field(default_factory=list)

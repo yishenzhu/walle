@@ -1,9 +1,10 @@
-"""ExtensionRegistry 两阶段加载测试。
+"""扩展系统测试：加载器(ExtensionRegistry)产出声明 + 激活器(ExtensionRunner)按会话生效。
 
 覆盖：
-1. load() 收集，activate() 挂 handlers / 注册 tools
-2. factory 抛异常 → 该扩展 FAILED，其余正常激活
-3. 激活冲突（工具重名）→ 整体 FAILED，不部分生效
+1. load() 收集扩展声明（tools/handlers/commands）
+2. factory 抛异常 → 该扩展声明 FAILED，其余正常加载
+3. ExtensionRunner 把声明激活进会话：同名后到者覆盖
+4. discover 目录发现 + 启停过滤
 """
 
 import pytest
@@ -13,6 +14,7 @@ from ..core import (
     EventBus,
     ExtensionAPI,
     ExtensionRegistry,
+    ExtensionRunner,
     ExtensionState,
     HookVerdict,
 )
@@ -26,10 +28,9 @@ def make_tool(name: str) -> Tool:
     return Tool(name=name, description=name, parameters={"type": "object"}, fn=fn)
 
 
-async def test_load_then_activate_registers_handlers_and_tools():
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+async def test_load_produces_declarations():
+    """load() 产出扩展声明（不激活、无副作用）。"""
+    mgr = ExtensionRegistry()
     seen = []
 
     async def factory(api: ExtensionAPI):
@@ -39,19 +40,34 @@ async def test_load_then_activate_registers_handlers_and_tools():
     mgr.add("demo", factory)
     await mgr.load()
     assert len(mgr.extensions) == 1
-    assert mgr.extensions[0].state is ExtensionState.LOADING  # 未激活
+    ext = mgr.extensions[0]
+    assert ext.state is ExtensionState.LOADING  # 加载成功，未激活
+    assert any(t.name == "ext_tool" for t in ext.tools)  # 声明里有工具
+    assert Event.AGENT_START in ext.handlers  # 声明里有事件订阅
 
-    await mgr.activate()
-    ext = mgr.active[0]
-    assert ext.state is ExtensionState.ACTIVE
+
+async def test_load_and_activate_registers_handlers_and_tools():
+    """声明经 ExtensionRunner 激活：工具/事件挂到会话 bus/工具表。"""
+    bus = EventBus()
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
+    seen = []
+
+    async def factory(api: ExtensionAPI):
+        api.on(Event.AGENT_START, lambda **kw: seen.append(kw))
+        api.register_tool(make_tool("ext_tool"))
+
+    mgr.add("demo", factory)
+    await mgr.load()
+
+    runner.activate(mgr.extensions[0])
     assert bus.has(Event.AGENT_START)  # handler 已挂载
-    assert any(t.name == "ext_tool" for t in registry.all_tools())
+    assert any(t.name == "ext_tool" for t in tools.all_tools())
 
 
 async def test_failing_factory_is_isolated():
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    mgr = ExtensionRegistry()
 
     async def bad(api: ExtensionAPI):
         raise RuntimeError("boom")
@@ -62,19 +78,18 @@ async def test_failing_factory_is_isolated():
     mgr.add("bad", bad)
     mgr.add("good", good)
     await mgr.load()
-    await mgr.activate()
 
     assert mgr.extensions[0].state is ExtensionState.FAILED
     assert mgr.extensions[0].error == "boom"
-    assert mgr.extensions[1].state is ExtensionState.ACTIVE
-    assert any(t.name == "good_tool" for t in registry.all_tools())
+    assert mgr.extensions[1].state is ExtensionState.LOADING  # 好的扩展声明可用
 
 
 async def test_activate_duplicate_tool_later_overrides():
-    """扩展与扩展同名工具：后激活者覆盖先激活者（后到者胜，均 ACTIVE）。"""
+    """同一会话激活两个扩展注册同名工具：后激活者覆盖（后到者胜）。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
     second_tool = {"tool": None}
 
     async def first(api: ExtensionAPI):
@@ -88,10 +103,12 @@ async def test_activate_duplicate_tool_later_overrides():
     mgr.add("first", first)
     mgr.add("second", second)
     await mgr.load()
-    await mgr.activate()
 
-    assert {e.name for e in mgr.active} == {"first", "second"}
-    dups = [t for t in registry.all_tools() if t.name == "dup"]
+    runner.activate(mgr.extensions[0])  # first
+    runner.activate(mgr.extensions[1])  # second → 覆盖
+
+    assert runner.active_names == {"first", "second"}
+    dups = [t for t in tools.all_tools() if t.name == "dup"]
     assert dups == [second_tool["tool"]]  # 只剩后到者实例
 
 
@@ -113,7 +130,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
     FakeProvider.set_default(provider)
     try:
         bus = EventBus()
-        registry = ToolRegistry()
+        tools = ToolRegistry()
         blocked: dict = {}
 
         async def guard(**ctx_):
@@ -122,21 +139,20 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
 
         bus.on(Event.TOOL_EXECUTION_START, guard)
 
-        mgr = ExtensionRegistry(bus, registry)
+        loader = ExtensionRegistry()
+        ext_runner = ExtensionRunner(bus, tools)
 
         async def ext(api: ExtensionAPI):
             api.register_tool(make_tool("guard_tool"))  # 扩展持有的工具
 
-        mgr.add("guard", ext)
-        await mgr.load()
-        await mgr.activate()
-        assert any(
-            e.name == "guard" and e.state is ExtensionState.ACTIVE for e in mgr.active
-        )
+        loader.add("guard", ext)
+        await loader.load()
+        ext_runner.activate(loader.extensions[0])
+        assert ext_runner.active_names == {"guard"}
 
-        # 用 registry 的全部工具构造 agent（main.py 闭包同款）
+        # 用会话工具表构造 agent
         def toolkit():
-            return registry.all_tools()
+            return tools.all_tools()
 
         agent = Agent(
             instruction="helpful",
@@ -195,19 +211,17 @@ async def load_extension(api: ExtensionAPI):
 
 
 async def test_discover_loads_extension_dir(tmp_path):
-    """discover 扫到目录里的 extension.py，load+activate 后工具生效。"""
+    """discover 扫到目录里的 extension.py，load 后产出声明。"""
     _write_extension(tmp_path, "alpha", EXT_ASYNC % ("alpha_tool", "alpha ext"))
 
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    mgr = ExtensionRegistry()
     mgr.discover(root=tmp_path)
 
     assert [n for n, _ in mgr._factories] == ["alpha"]
     await mgr.load()
-    await mgr.activate()
-    assert any(e.name == "alpha" and e.state is ExtensionState.ACTIVE for e in mgr.active)
-    assert any(t.name == "alpha_tool" for t in registry.all_tools())
+    assert len(mgr.extensions) == 1
+    assert mgr.extensions[0].state is ExtensionState.LOADING
+    assert any(t.name == "alpha_tool" for t in mgr.extensions[0].tools)
 
 
 async def test_discover_enabled_whitelist(tmp_path):
@@ -215,29 +229,23 @@ async def test_discover_enabled_whitelist(tmp_path):
     _write_extension(tmp_path, "keep", EXT_ASYNC % ("k_tool", "keep"))
     _write_extension(tmp_path, "skip", EXT_ASYNC % ("s_tool", "skip"))
 
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    mgr = ExtensionRegistry()
     mgr.discover(root=tmp_path, enabled=["keep"])
 
     await mgr.load()
-    await mgr.activate()
-    assert [e.name for e in mgr.active] == ["keep"]
-    assert any(t.name == "k_tool" for t in registry.all_tools())
+    assert [e.name for e in mgr.extensions] == ["keep"]
+    assert any(t.name == "k_tool" for t in mgr.extensions[0].tools)
 
 
 async def test_discover_disabled_blacklist(tmp_path):
     """disabled 名单内的扩展不加载（即使 enabled 白名单包含它）。"""
     _write_extension(tmp_path, "keep", EXT_ASYNC % ("k_tool", "keep"))
 
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    mgr = ExtensionRegistry()
     mgr.discover(root=tmp_path, enabled=["keep"], disabled=["keep"])
 
     await mgr.load()
-    await mgr.activate()
-    assert mgr.active == []
+    assert mgr.extensions == []
 
 
 async def test_discover_missing_entry_fails_isolated(tmp_path):
@@ -246,23 +254,20 @@ async def test_discover_missing_entry_fails_isolated(tmp_path):
     (tmp_path / "broken" / "extension.py").write_text("raise RuntimeError('boom')")
     _write_extension(tmp_path, "good", EXT_ASYNC % ("g_tool", "good"))
 
-    bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    mgr = ExtensionRegistry()
     mgr.discover(root=tmp_path)
 
     await mgr.load()
-    await mgr.activate()
     names = {e.name: e.state for e in mgr.extensions}
     assert names["broken"] is ExtensionState.FAILED
-    assert names["good"] is ExtensionState.ACTIVE
+    assert names["good"] is ExtensionState.LOADING  # 好的声明可用
 
 
 # ── 内置工具走扩展注册（main.py 引导扩展同款组装）─────────
 
 
 async def test_builtin_extensions_register_via_extension_system(tmp_path, monkeypatch):
-    """内置工具作为引导扩展经 ExtensionRegistry 注册，落在纯容器里。"""
+    """内置工具作为引导扩展经 loader+runner 注册，落在会话工具表。"""
     from ..tools import Tool
     from ..tools import mcp as mcp_mod
     from ..tools.builtin import ask_user, bash, background, job_result, read
@@ -275,26 +280,27 @@ async def test_builtin_extensions_register_via_extension_system(tmp_path, monkey
             api.register_tool(Tool.from_function(fn))
 
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
     mgr.add("builtin", builtin_ext)
 
     await mgr.load()
-    await mgr.activate()
+    runner.activate(*mgr.extensions)
 
-    names = {t.name for t in registry.all_tools()}
+    names = {t.name for t in tools.all_tools()}
     assert {"bash", "ask_user", "background", "job_result", "read"} <= names
-    assert mgr.extensions[0].state is ExtensionState.ACTIVE
 
 
-# ── unload / reload：生命周期管理 ────────────────────────
+# ── ExtensionRunner：会话级卸载 / 重激活 ─────────────────
 
 
 async def test_unload_removes_tools_and_handlers():
-    """卸载摘除扩展挂载的工具与事件监听器，状态置 UNLOADED。"""
+    """卸载摘除扩展在会话中的挂载（工具/事件）。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
     seen = []
 
     async def ext(api: ExtensionAPI):
@@ -303,23 +309,24 @@ async def test_unload_removes_tools_and_handlers():
 
     mgr.add("ext", ext)
     await mgr.load()
-    await mgr.activate()
+    runner.activate(mgr.extensions[0])
     assert bus.has(Event.AGENT_START)
-    assert any(t.name == "ext_tool" for t in registry.all_tools())
+    assert any(t.name == "ext_tool" for t in tools.all_tools())
 
-    mgr.unload("ext")
+    runner.unload("ext")
     assert not bus.has(Event.AGENT_START)
-    assert not any(t.name == "ext_tool" for t in registry.all_tools())
-    assert mgr.extensions[0].state is ExtensionState.UNLOADED
+    assert not any(t.name == "ext_tool" for t in tools.all_tools())
+    assert runner.active_names == set()
 
-    mgr.unload("ext")  # 幂等：已卸载再卸不报错
+    runner.unload("ext")  # 幂等：已卸载再卸不报错
 
 
-async def test_reload_swaps_to_new_version():
-    """reload 重跑 factory：新版工具与 handler 生效，旧挂载先摘除。"""
+async def test_reactivate_swaps_to_new_version():
+    """同扩展换新声明重激活：先摘旧挂载再挂新的，无残留。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
     state = {"desc": "v1"}
 
     async def ext(api: ExtensionAPI):
@@ -330,25 +337,29 @@ async def test_reload_swaps_to_new_version():
 
     mgr.add("ext", ext)
     await mgr.load()
-    await mgr.activate()
-    first = next(t for t in registry.all_tools() if t.name == "dyn")
+    runner.activate(mgr.extensions[0])
+    first = next(t for t in tools.all_tools() if t.name == "dyn")
     assert first.description == "dyn-v1"
     assert bus.has(Event.AGENT_START)
 
+    # 换新版声明：重新 load（同 factory 名但产出不同）
     state["desc"] = "v2"
-    await mgr.reload("ext")
+    mgr2 = ExtensionRegistry()
+    mgr2.add("ext", ext)
+    await mgr2.load()
+    runner.activate(mgr2.extensions[0])  # 自动先卸载旧的再激活新的
 
-    second = next(t for t in registry.all_tools() if t.name == "dyn")
+    second = next(t for t in tools.all_tools() if t.name == "dyn")
     assert second.description == "dyn-v2"  # 新版生效
-    assert mgr.extensions[0].state is ExtensionState.ACTIVE
-    assert len([t for t in registry.all_tools() if t.name == "dyn"]) == 1  # 无旧版残留
+    assert len([t for t in tools.all_tools() if t.name == "dyn"]) == 1  # 无旧版残留
 
 
 async def test_unload_covered_tool_keeps_later_owner():
     """A 的工具被 B 覆盖后，卸载 A 不误删 B 的工具实例。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
     b_tool = {"tool": None}
 
     async def a(api: ExtensionAPI):
@@ -362,11 +373,13 @@ async def test_unload_covered_tool_keeps_later_owner():
     mgr.add("a", a)
     mgr.add("b", b)
     await mgr.load()
-    await mgr.activate()
 
-    mgr.unload("a")  # a 的工具已被 b 覆盖 → 不摘除
+    runner.activate(mgr.extensions[0])  # a
+    runner.activate(mgr.extensions[1])  # b → 覆盖 a 的 shared
 
-    shared = [t for t in registry.all_tools() if t.name == "shared"]
+    runner.unload("a")  # a 的工具已被 b 覆盖 → 不摘除
+
+    shared = [t for t in tools.all_tools() if t.name == "shared"]
     assert shared == [b_tool["tool"]]  # b 的实例仍在
 
 
@@ -376,8 +389,9 @@ async def test_unload_covered_tool_keeps_later_owner():
 async def test_register_command_and_dispatch():
     """扩展注册斜杠命令，dispatch 命中返回回复、未命中回退 None。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
         async def review(args: str) -> str:
@@ -387,20 +401,21 @@ async def test_register_command_and_dispatch():
 
     mgr.add("cli", ext)
     await mgr.load()
-    await mgr.activate()
+    runner.activate(mgr.extensions[0])
 
-    assert "review" in mgr.commands
-    assert await mgr.dispatch("/review") == "reviewing: HEAD"
-    assert await mgr.dispatch("/review main") == "reviewing: main"
-    assert await mgr.dispatch("/nope") is None  # 未知命令回退 agent
-    assert await mgr.dispatch("普通消息") is None  # 非 / 开头回退 agent
+    assert "review" in runner.commands
+    assert await runner.dispatch("/review") == "reviewing: HEAD"
+    assert await runner.dispatch("/review main") == "reviewing: main"
+    assert await runner.dispatch("/nope") is None  # 未知命令回退 agent
+    assert await runner.dispatch("普通消息") is None  # 非 / 开头回退 agent
 
 
 async def test_unload_removes_command():
-    """卸载扩展摘除其命令；被覆盖的命令不误删覆盖者。"""
+    """卸载扩展摘除其命令。"""
     bus = EventBus()
-    registry = ToolRegistry()
-    mgr = ExtensionRegistry(bus, registry)
+    tools = ToolRegistry()
+    runner = ExtensionRunner(bus, tools)
+    mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
         async def h(args: str) -> str:
@@ -410,8 +425,100 @@ async def test_unload_removes_command():
 
     mgr.add("ext", ext)
     await mgr.load()
-    await mgr.activate()
+    runner.activate(mgr.extensions[0])
 
-    mgr.unload("ext")
-    assert mgr.commands == {}
-    assert await mgr.dispatch("/greet") is None
+    runner.unload("ext")
+    assert runner.commands == {}
+    assert await runner.dispatch("/greet") is None
+
+
+# ── ExtensionRunner：会话级激活层 ────────────────────────
+
+
+async def _load_extensions(mgr: ExtensionRegistry, factory) -> ExtensionRegistry:
+    async def wrapper(api: ExtensionAPI):
+        await factory(api)
+
+    mgr.add("demo", wrapper)
+    await mgr.load()
+    return mgr
+
+
+async def test_session_context_activates_into_own_bus_and_registry():
+    """会话级激活：工具/事件挂到自己的 bus+registry，与其它会话隔离。"""
+    from ..core import ExtensionRunner
+
+    # 两个"会话"各自独立 bus + registry
+    bus1, reg1 = EventBus(), ToolRegistry()
+    bus2, reg2 = EventBus(), ToolRegistry()
+
+    async def factory(api: ExtensionAPI):
+        api.register_tool(make_tool("ext_tool"))
+        api.on(Event.AGENT_START, lambda **kw: None)
+
+    # 用 ExtensionRegistry 加载出声明
+    loader = ExtensionRegistry()
+    await _load_extensions(loader, factory)
+    ext = loader.extensions[0]
+
+    ctx1 = ExtensionRunner(bus1, reg1)
+    ctx2 = ExtensionRunner(bus2, reg2)
+    ctx1.activate(ext)
+    ctx2.activate(ext)
+
+    assert bus1.has(Event.AGENT_START) and bus2.has(Event.AGENT_START)
+    assert any(t.name == "ext_tool" for t in reg1.all_tools())
+    assert any(t.name == "ext_tool" for t in reg2.all_tools())
+
+    # 卸载 ctx1 不影响 ctx2
+    ctx1.unload("demo")
+    assert not bus1.has(Event.AGENT_START)
+    assert bus2.has(Event.AGENT_START)
+    assert reg1.all_tools() == []
+    assert any(t.name == "ext_tool" for t in reg2.all_tools())
+
+
+async def test_session_context_command_is_per_session():
+    """同一扩展在两个会话各激活一次：命令表互不干扰，卸载互不影响。"""
+    from ..core import ExtensionRunner
+
+    async def factory(api: ExtensionAPI):
+        async def greet(args: str) -> str:
+            return f"hi {args}"
+
+        api.register_command("greet", "greet", greet)
+
+    loader = ExtensionRegistry()
+    await _load_extensions(loader, factory)
+    ext = loader.extensions[0]
+
+    ctx1 = ExtensionRunner(EventBus(), ToolRegistry())
+    ctx2 = ExtensionRunner(EventBus(), ToolRegistry())
+    ctx1.activate(ext)
+    ctx2.activate(ext)
+    assert await ctx1.dispatch("/greet w") == "hi w"
+    assert await ctx2.dispatch("/greet w") == "hi w"
+
+    ctx1.unload("demo")
+    assert await ctx1.dispatch("/greet") is None  # ctx1 命令已摘
+    assert await ctx2.dispatch("/greet w") == "hi w"  # ctx2 仍在
+
+
+async def test_session_context_reactivate_replaces():
+    """同会话重新激活同一扩展：先摘旧挂载再挂新的，无重复。"""
+    from ..core import ExtensionRunner
+
+    async def factory(api: ExtensionAPI):
+        api.register_tool(make_tool("t"))
+
+    loader = ExtensionRegistry()
+    await _load_extensions(loader, factory)
+    ext = loader.extensions[0]
+
+    bus, reg = EventBus(), ToolRegistry()
+    ctx = ExtensionRunner(bus, reg)
+    ctx.activate(ext)
+    ctx.activate(ext)  # 再次激活 → 先摘旧的
+
+    tools = [t for t in reg.all_tools() if t.name == "t"]
+    assert len(tools) == 1  # 无重复残留
