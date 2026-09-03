@@ -55,12 +55,23 @@ class TestTool:
 
 
 class TestToolRegistry:
+    """ToolRegistry = 纯工具容器：注册 / 查重 / 查询，不认识具体工具。"""
+
+    @staticmethod
+    def _tool(name: str) -> Tool:
+        async def fn(args):
+            return name
+
+        return Tool(name=name, description=name, parameters={"type": "object"}, fn=fn)
+
     @pytest.fixture
     async def registry(self, tmp_path, monkeypatch):
-        """已初始化的 ToolRegistry。"""
+        """已连接 MCP 的空 ToolRegistry（无任何本地工具）。"""
         from ..conf import Config, LogConfig
+        from ..tools import mcp as mcp_mod
 
         monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
+        monkeypatch.setattr(mcp_mod, "DOT_AGENT", tmp_path)  # MCP 模块内值绑定
         conf = Config(
             log=LogConfig(level="INFO", path="x.log", backup_count=1),
         )
@@ -69,34 +80,35 @@ class TestToolRegistry:
         yield reg
         await reg.close()
 
-    async def test_builtin_tools_loaded(self, registry):
-        names = {t.name for t in registry.all_tools()}
-        assert "bash" in names
-        assert "ask_user" in names
+    async def test_empty_registry_has_no_local_tools(self, registry):
+        """纯容器初始为空（内置工具由引导扩展注册，不属于 registry）。"""
+        assert registry.all_tools() == []
 
-    async def test_add_function_duplicate_raises(self):
+    async def test_add_tool_duplicate_raises(self):
         registry = ToolRegistry()
-
-        async def bash(cmd: str = "") -> str:
-            """bash"""
-            return ""
-
-        registry.add_function(bash)
+        registry.add_tool(self._tool("x"))
         with pytest.raises(ValueError, match="Duplicate tool name"):
-            registry.add_function(bash)
+            registry.add_tool(self._tool("x"))
 
-    async def test_add_function_new(self):
+    async def test_add_tool_batch_atomic(self):
+        """整批注册：其中重名则整批抛错，不部分生效。"""
+        registry = ToolRegistry()
+        registry.add_tool(self._tool("a"))
+        with pytest.raises(ValueError):
+            registry.add_tool(self._tool("a"), self._tool("b"))
+        assert {t.name for t in registry.all_tools()} == {"a"}  # b 未部分注册
+
+    async def test_all_tools_returns_added(self):
         registry = ToolRegistry()
 
         async def custom_tool(x: str) -> str:
             """custom"""
             return x
 
-        registry.add_function(custom_tool)
+        registry.add_tool(Tool.from_function(custom_tool))
         names = {t.name for t in registry.all_tools()}
         assert "custom_tool" in names
 
     async def test_mcp_empty(self, registry):
-        assert {"bash", "ask_user", "define_tool"} <= {
-            t.name for t in registry.all_tools()
-        }
+        """空 mcp.yaml：无 MCP 远端工具。"""
+        assert registry.all_tools() == []

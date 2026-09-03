@@ -22,7 +22,7 @@ tool:
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [ask, jupyter]                 # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
-      - [allow, grilling]
+      - [allow, read]                 # 读文件自动放行（技能按需加载）
     default: ask
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）

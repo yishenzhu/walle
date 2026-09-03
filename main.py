@@ -12,7 +12,8 @@ from .core import (
     ToolExecutor,
 )
 from .channel.cli import CLIChannel
-from .tools import ToolRegistry
+from .tools import Tool, ToolRegistry
+from .tools.builtin import ask_user, bash, background, job_result, read
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,13 @@ async def main() -> None:
     # 进程级共享事件总线：Runner 发射生命周期事件，扩展订阅同一实例
     bus = EventBus()
     extensions = ExtensionRegistry(bus=bus, registry=tools)
-    # 扩展发现：扫描 .agent/extensions/，按 conf.extension 启停过滤后加载激活
+
+    # 内置工具作引导扩展先注册（用户扩展后到可同名覆盖）；技能由 Agent 拼提示词、read 加载
+    async def builtin_ext(api) -> None:
+        for fn in (bash, ask_user, background, job_result, read):
+            api.register_tool(Tool.from_function(fn))
+
+    extensions.add("builtin", builtin_ext)
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,
@@ -43,16 +50,11 @@ async def main() -> None:
     logger.info(f"extensions active: {len(extensions.active)}")
 
     sessions = SessionRegistry(
-        # 闭包：只接受 agent 名（None = default），路径拼接/校验由 Agent.load 负责
-        agent_factory=lambda name=None: Agent.load(
-            name,
-            tools=tools.all_tools,  # 工具源：define_tool 实时反映
+        agent_factory=lambda name=None: Agent.load(  # None = default agent
+            name, tools=tools.all_tools
         ),
-        # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
-        # 会退化为全量 ASK（allow 规则失效），必须显式传入。
-        runner=Runner(executor=ToolExecutor(conf.tool), bus=bus),
-        # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
-        storage=conf.session.storage,
+        runner=Runner(executor=ToolExecutor(conf.tool), bus=bus),  # 审批来自 conf.yaml
+        storage=conf.session.storage,  # 会话历史跨连接/重启保留
         db_path=conf.session.db_path,
     )
     channel = CLIChannel(registry=sessions)

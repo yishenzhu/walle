@@ -256,3 +256,32 @@ async def test_discover_missing_entry_fails_isolated(tmp_path):
     names = {e.name: e.state for e in mgr.extensions}
     assert names["broken"] is ExtensionState.FAILED
     assert names["good"] is ExtensionState.ACTIVE
+
+
+# ── 内置工具走扩展注册（main.py 引导扩展同款组装）─────────
+
+
+async def test_builtin_extensions_register_via_extension_system(tmp_path, monkeypatch):
+    """内置工具作为引导扩展经 ExtensionRegistry 注册，落在纯容器里。"""
+    from ..tools import Tool
+    from ..tools import mcp as mcp_mod
+    from ..tools.builtin import ask_user, bash, background, job_result, read
+
+    # 隔离 skills / mcp 读取目录，避免真实 .agent 干扰
+    monkeypatch.setattr(mcp_mod, "DOT_AGENT", tmp_path)
+
+    async def builtin_ext(api: ExtensionAPI) -> None:  # main.py 同款
+        for fn in (bash, ask_user, background, job_result, read):
+            api.register_tool(Tool.from_function(fn))
+
+    bus = EventBus()
+    registry = ToolRegistry()
+    mgr = ExtensionRegistry(bus, registry)
+    mgr.add("builtin", builtin_ext)
+
+    await mgr.load()
+    await mgr.activate()
+
+    names = {t.name for t in registry.all_tools()}
+    assert {"bash", "ask_user", "background", "job_result", "read"} <= names
+    assert mgr.extensions[0].state is ExtensionState.ACTIVE

@@ -20,7 +20,7 @@
 | 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
 |  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
-| 🔄 **运行时自扩展** | 用代码定义工具（`define_tool`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
+| 🔄 **插件化扩展** | 内置工具也是扩展（引导扩展注册）；`.agent/extensions/` 目录即插即用，可同名覆盖内置；技能作为提示词资源按需加载 |
 
 ---
 
@@ -182,7 +182,7 @@ tool:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [allow, ask_user]             # 提问工具自动放行
-      - [allow, grilling]             # 技能工具自动放行
+      - [allow, read]                 # 读文件自动放行（技能按需加载全文）
     default: ask                      # 默认需人工审批
 
 session:
@@ -267,9 +267,13 @@ async def my_tool(query: str) -> str:
 ```
 
 ```python
-# tools/registry.py
-self.add_function(my_tool)
+# main.py 引导扩展里注册（内置工具也走扩展系统，先于用户扩展）
+async def builtin_ext(api) -> None:
+    for fn in (bash, ask_user, my_tool, ...):
+        api.register_tool(Tool.from_function(fn))
 ```
+
+用户扩展（`.agent/extensions/`）后注册可同名覆盖内置工具。
 
 ### 添加 Skill
 
@@ -284,10 +288,13 @@ name: code-review
 description: Review code changes in the current project.
 ---
 
-技能的 system prompt 内容...
+技能正文（工作流/指令，可引用同目录 scripts、references 等资源）...
 ```
 
-框架启动时自动加载为工具。
+技能不是工具：框架把每个技能的 name/description/路径作为**可用技能清单**
+注入 agent 的 system prompt（agent 的 `skills` frontmatter 白名单控制哪些
+注入），模型在任务匹配时按需加载对应 SKILL.md 全文后执行。agent 缺省
+`skills: []` 不注入任何技能；`["*"]` 表示注入全部。
 
 ### 添加 MCP Server
 

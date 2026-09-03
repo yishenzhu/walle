@@ -80,8 +80,27 @@ class Agent(BaseModel, Generic[TContext]):
     tools: Callable[[], list[Tool]] | None = None
     # 工具筛选配置：从 tools 源中按名字过滤（allow/deny glob，deny 优先）
     tool_filter: ToolFilter = Field(default_factory=ToolFilter)
+    # 技能白名单：[] 不注入 / ["*"] 全部 / 列表仅命中项
+    skills: list[str] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def skill_prompt(self) -> str:
+        """可用技能清单（一行一技能）。空 = 不启用。"""
+        if not self.skills:
+            return ""
+        from ..tools.builtin import Skill
+
+        metas = Skill.scan()
+        wanted = None if "*" in self.skills else set(self.skills)
+        lines = [
+            f"- {m.name}: {m.description}（{m.path}）"
+            for m in metas
+            if wanted is None or m.name in wanted
+        ]
+        if not lines:
+            return ""
+        return "可用技能（任务匹配时加载对应技能后执行）：\n" + "\n".join(lines)
 
     @classmethod
     def load(
@@ -118,6 +137,7 @@ class Agent(BaseModel, Generic[TContext]):
             instruction=instruction,
             temperature=meta.get("temperature"),
             output_type=output_type,
+            skills=meta.get("skills") or [],
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
             tools=tools,
         )

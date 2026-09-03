@@ -270,6 +270,9 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
+        skill_prompt = agent.skill_prompt()
+        if skill_prompt:
+            messages += [SystemMessage(content=skill_prompt)]
         return messages
 
     def _build_tools(self, agent: Agent[Any]) -> dict[str, Tool]:
