@@ -27,15 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class ExtensionState(StrEnum):
-    LOADING = "loading"  # factory 执行完毕，待激活
-    ACTIVE = "active"  # 已提交到 bus / registry
-    FAILED = "failed"  # factory 抛异常或激活失败，已丢弃
-    UNLOADED = "unloaded"  # 已卸载（reload 前或手动卸载）
+    LOADING = "loading"  # factory 执行完毕，声明可用
+    FAILED = "failed"  # factory 抛异常，声明不可用
 
 
 @dataclass
 class Extension:
-    """一次扩展加载结果：收集的 handlers / tools + 生命周期状态。"""
+    """一次扩展加载的声明：收集的 handlers / tools / commands + 状态。"""
 
     name: str
     handlers: dict[Event, list[Handler]] = field(default_factory=dict)
@@ -43,9 +41,6 @@ class Extension:
     commands: dict[str, Command] = field(default_factory=dict)
     state: ExtensionState = ExtensionState.LOADING
     error: str | None = None
-    # 激活成功后记录实际挂载，供 unload 精确摘除
-    mounted_tools: list[str] = field(default_factory=list)
-    mounted_handlers: list[tuple[Event, Handler]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

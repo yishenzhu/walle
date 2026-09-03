@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """工具表：同名后注册者覆盖先注册者，remove_tool 摘除，all_tools 查询。
 
-    内置工具、用户扩展、MCP 让位三者统一为"后到者胜"：扩展注册同名工具
-    即覆盖内置 / 其它扩展 / MCP 工具。unload/reload 用 remove_tool 摘除。
+    mcp 为进程级共享的 MCP 客户端容器（main 连接一次，各会话工具表共享
+    其远端工具视图）；缺省自建（测试用，不自动连接）。
     """
 
-    def __init__(self):
+    def __init__(self, mcp: MCP | None = None):
         self._tools: list[Tool] = []
-        self._mcp = MCP()
+        self._mcp = mcp or MCP()
 
     def add_tool(self, *tools: Tool) -> None:
         """注册工具：同名时新工具顶替旧工具（后到者胜）。

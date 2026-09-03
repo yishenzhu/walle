@@ -9,7 +9,7 @@ from .core import (
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
-from .tools import Tool
+from .tools import MCP, Tool
 from .tools.builtin import ask_user, bash, background, job_result, read
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,10 @@ async def main() -> None:
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
     OpenAIProvider.load_env()
+
+    # 进程级共享 MCP 客户端容器：连接一次，各会话工具表共享远端工具视图
+    mcp = MCP()
+    await mcp.connect()
 
     # 进程级扩展加载器：内置工具 + .agent/extensions/ 用户扩展。
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
@@ -46,6 +50,7 @@ async def main() -> None:
         agent_factory=lambda name=None: Agent.load(name),  # 工具源由 Session 绑定会话表
         tool_config=conf.tool,
         extensions=loaded,
+        mcp=mcp,
         storage=conf.session.storage,
         db_path=conf.session.db_path,
     )
@@ -58,6 +63,7 @@ async def main() -> None:
     finally:
         await channel.stop()
         await sessions.close()  # 停机销毁全部会话（关存储/作业）
+        await mcp.close()  # 关闭进程级 MCP 客户端
 
 
 if __name__ == "__main__":

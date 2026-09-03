@@ -5,5 +5,5 @@ from .tool import (
     Job,
     JobStatus,
 )
-from .mcp import MCPClient
+from .mcp import MCP, MCPClient
 from .registry import ToolRegistry

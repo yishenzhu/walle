@@ -275,3 +275,46 @@ class TestSessionIsolation:
         assert s1.agent_runner is not s2.agent_runner
 
         await reg.close()
+
+    async def test_shared_mcp_tools_visible_in_session(self, tmp_path):
+        """进程级共享 MCP 客户端：其远端工具出现在会话工具表（MCP 不每会话重连）。"""
+        from ..tools import Tool
+        from ..tools.mcp import MCP
+
+        async def fake_fn(args):
+            return "mcp-result"
+
+        fake_tool = Tool(
+            name="mcp_remote_search",
+            description="remote",
+            parameters={"type": "object"},
+            fn=fake_fn,
+        )
+
+        class FakeMcpClient:
+            name = "remote"
+            tools = [fake_tool]
+
+        shared_mcp = MCP()
+        shared_mcp._clients.append(FakeMcpClient())
+
+        reg = SessionRegistry(
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            mcp=shared_mcp,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+        class Conn:
+            chat_id = "mcp-1"
+
+        s = reg.create(Conn())
+        names = {t.name for t in s.tools.all_tools()}
+        assert "mcp_remote_search" in names  # MCP 工具经共享容器进会话
+
+        await reg.close()
