@@ -18,3 +18,5 @@ eval/data/out/
 !eval/data/*.log
 !eval/data/*.txt
 datasets/
+# Command Code 本地配置（会话 / taste / 缓存，不入库）
+.commandcode/

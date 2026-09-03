@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Self
 
-from ..conf import Config, MCPConfig
+from ..conf import Config
 from .tool import Tool
 from .mcp import MCP
 from .defined import DefinedTool, ToolCodeError
@@ -29,22 +29,6 @@ class ToolRegistry:
             return f"定义失败: {e}"
         return f"工具已定义并生效: {name}"
 
-    async def add_mcp(self, name: str, conf: MCPConfig) -> str:
-        """添加一个 MCP server，立即连接生效并持久化（重启自动恢复）。
-
-        conf 为完整 MCP 配置：url（HTTP 流式）或 command+args（stdio 子进程）二选一。
-        先查重，再连接，连接成功才写入文件。
-        """
-        try:
-            client = await self._mcp.add(name, conf)
-        except ValueError as e:
-            return f"添加失败: {e}"
-        if client is None:
-            return "添加失败: 连接失败"
-
-        logger.info(f"mcp server added: {name} ({len(client.tools)} tools)")
-        return f"MCP server 已添加并生效: {name}，共 {len(client.tools)} 个工具"
-
     def add_function(self, *fns) -> None:
         """把任意函数注册为工具（描述取自函数 docstring）。"""
         for fn in fns:
@@ -64,10 +48,8 @@ class ToolRegistry:
         """初始化工具系统：注册内置工具 + MCP server + 动态工具。"""
         self.add_tool(*Skill.load())
         # 内置工具 + 后台作业对（background 派发 / job_result 查询）
-        # + 元工具（define_tool / add_mcp 操作 registry 自身）
-        self.add_function(
-            background, job_result, ask_user, bash, self.define_tool, self.add_mcp
-        )
+        # + 元工具（define_tool 操作 registry 自身）
+        self.add_function(background, job_result, ask_user, bash, self.define_tool)
         await self.load_mcp()
         self.load_defined()
         return self

@@ -42,7 +42,7 @@ async def main() -> None:
         # 闭包：只接受 agent 名（None = default），路径拼接/校验由 Agent.load 负责
         agent_factory=lambda name=None: Agent.load(
             name,
-            tools=tools.all_tools,  # 工具源：define_tool/add_mcp 实时反映
+            tools=tools.all_tools,  # 工具源：define_tool 实时反映
         ),
         # 审批规则来自 conf.yaml：runner 默认 ToolExecutor() 无配置，
         # 会退化为全量 ASK（allow 规则失效），必须显式传入。
