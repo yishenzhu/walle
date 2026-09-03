@@ -191,13 +191,22 @@ class SessionRegistry:
         self._db_path = db_path
         self._sessions: dict[str, Session] = {}
 
-    def create(self, conn: Any, extensions: list[Extension] | None = None) -> Session:
-        """新建会话并注册：默认激活扩展池全部；extensions 覆盖则按名单激活。"""
+    def create(
+        self,
+        conn: Any,
+        ext_names: list[str] | None = None,
+    ) -> Session:
+        """新建会话并注册。
+
+        ext_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
+        （跳过加载失败的声明）。
+        """
+        extensions = self._select_extensions(ext_names)
         session = Session(
             session_id=conn.chat_id,
             agent_factory=self._agent_factory,
             tool_config=self._tool_config,
-            extensions=extensions if extensions is not None else self._extensions,
+            extensions=extensions,
             provider=self._provider,
             storage=self._storage,
             db_path=self._db_path,
@@ -205,6 +214,14 @@ class SessionRegistry:
         session.attach(conn)
         self.register(session)
         return session
+
+    def _select_extensions(self, ext_names: list[str] | None) -> list[Extension]:
+        """从扩展声明池按名单挑扩展（默认全部可用声明；跳过加载失败的）。"""
+        pool = [e for e in self._extensions if e.error is None]
+        if ext_names is None:
+            return pool
+        wanted = set(ext_names)
+        return [e for e in pool if e.name in wanted]
 
     def register(self, session: Session) -> None:
         """注册新会话。同 id 已存在则报错（重连走 attach，不重建）。"""

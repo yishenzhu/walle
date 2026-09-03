@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core import Session, SessionRegistry, Agent
+from ..core import Agent, Event, Session, SessionRegistry
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..schemas import UserMessage
 from ..messages import SQLiteMessages, InMemoryMessages
@@ -205,3 +205,73 @@ class TestSessionCommandDispatch:
         assert ch.events[0].delta == "pong"
 
         await s.close()
+
+
+class TestSessionIsolation:
+    """会话隔离：不同会话可选激活不同扩展，工具/事件互不干扰。"""
+
+    async def _registry(self, tmp_path) -> SessionRegistry:
+        from ..core import ExtensionAPI, ExtensionRegistry
+        from ..tools import Tool
+
+        loader = ExtensionRegistry()
+
+        async def ext_a(api: ExtensionAPI):
+            async def fa(args):
+                return "a"
+
+            api.register_tool(
+                Tool(name="tool_a", description="a", parameters={}, fn=fa)
+            )
+            api.on(Event.AGENT_START, lambda **kw: None)
+
+        async def ext_b(api: ExtensionAPI):
+            async def fb(args):
+                return "b"
+
+            api.register_tool(
+                Tool(name="tool_b", description="b", parameters={}, fn=fb)
+            )
+
+        loader.add("ext_a", ext_a)
+        loader.add("ext_b", ext_b)
+        await loader.load()
+        pool = [e for e in loader.extensions if e.error is None]
+
+        reg = SessionRegistry(
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=pool,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+        return reg
+
+    async def test_sessions_activate_different_extensions(self, tmp_path):
+        """会话 1 用全部扩展；会话 2 只激活 ext_a——工具表不同、事件隔离。"""
+        reg = await self._registry(tmp_path)
+
+        class Conn:
+            def __init__(self, chat_id):
+                self.chat_id = chat_id
+
+        s1 = reg.create(Conn("s1"))  # 默认：全部扩展
+        s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
+
+        names1 = {t.name for t in s1.tools.all_tools()}
+        names2 = {t.name for t in s2.tools.all_tools()}
+        assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
+        assert names2 == {"tool_a"}  # 会话 2 只有 ext_a
+
+        # 事件隔离：各自的 bus 独立
+        assert s1.ext_runner.active_names == {"ext_a", "ext_b"}
+        assert s2.ext_runner.active_names == {"ext_a"}
+        # 审批策略随会话独立（各自 executor 实例）
+        assert s1.tool_executor is not s2.tool_executor
+        assert s1.agent_runner is not s2.agent_runner
+
+        await reg.close()
