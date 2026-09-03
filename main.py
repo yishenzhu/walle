@@ -32,8 +32,12 @@ async def main() -> None:
     # 进程级共享事件总线：Runner 发射生命周期事件，扩展订阅同一实例
     bus = EventBus()
     extensions = ExtensionRegistry(bus=bus, registry=tools)
-    # 扩展发现：目前无内置扩展工厂（后续从 .agent/extensions/ 自动发现后 add()）；
-    # load/activate 为空操作，安全闭环，为 M3 的 ResourceManager 预留注入点。
+    # 扩展发现：扫描 .agent/extensions/，按 conf.extension 启停过滤后加载激活
+    extensions.discover(
+        root=conf.extension.dir,
+        enabled=conf.extension.enabled,
+        disabled=conf.extension.disabled,
+    )
     await extensions.load()
     await extensions.activate()
     logger.info(f"extensions active: {len(extensions.active)}")

@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from ..schemas import ToolResult, ToolStart
@@ -15,6 +16,29 @@ from ..infra import TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
 from ..tools import Tool, ToolContext, tool_context, Job, JobStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class HookVerdict:
+    """工具执行前钩子（TOOL_EXECUTION_START）的表态。
+
+    返回 None = 无意见放行；返回 HookVerdict 即表态（block 与 arguments
+    至少一个非空，否则 ValueError）：
+    block=reason → 阻止执行，reason 透传给模型；
+    arguments=args → 放行并改写本次调用参数。
+    改写按注册顺序应用（后者覆盖前者）。
+    """
+
+    block: str | None = None
+    arguments: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.block is None and self.arguments is None:
+            raise ValueError("HookVerdict 必须表态：block=reason 或 arguments=args")
+
+    @property
+    def blocks(self) -> bool:
+        return self.block is not None
 
 
 class ToolExecutor:
@@ -116,22 +140,33 @@ class ToolExecutor:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=denied))
             return tc_id, denied
 
-        # preflight 屏障：任一 before hook 返回 False 即阻止执行（不部分生效）
+        # preflight 屏障：监听器返回 HookVerdict，None 放行。
+        # block → 阻止执行；arguments → 按注册顺序改写参数（后者覆盖前者）。
         if ctx.bus is not None:
-            results = await ctx.bus.emit(
+            for verdict in await ctx.bus.emit(
                 Event.TOOL_EXECUTION_START,
                 tool_name=name,
                 arguments=args,
                 tool_call_id=tc_id,
-            )
-            if any(r is False for r in results):
-                blocked = f"Tool '{name}' blocked by extension"
-                logger.info(blocked)
-                if notify and channel is not None:
-                    await channel.notify(ToolResult(tool_call_id=tc_id, error=blocked))
-                return tc_id, blocked
+            ):
+                if not isinstance(verdict, HookVerdict):
+                    continue  # None 放行
+                if verdict.blocks:
+                    blocked = f"Tool '{name}' blocked by extension"
+                    if verdict.block:
+                        blocked += f": {verdict.block}"
+                    logger.info(blocked)
+                    if notify and channel is not None:
+                        await channel.notify(
+                            ToolResult(tool_call_id=tc_id, error=blocked)
+                        )
+                    return tc_id, blocked
+                if verdict.arguments is not None:
+                    args = verdict.arguments  # 改写本次调用参数
 
         attrs = {"tool.name": name}
+        result = error = None
+        elapsed_ms = None
         try:
             tool_context.set(ctx)
             with tracer.start_as_current_span("tool.execute") as span:
@@ -147,30 +182,33 @@ class ToolExecutor:
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, result=result))
-            return tc_id, result
         except asyncio.TimeoutError:
             timeout = self._timeout_policy.resolve(name)
             logger.warning(f"{name}: timeout after {timeout}s")
             TOOL_ERRORS.add(1, attrs)
+            elapsed_ms = timeout * 1000
             error = f"Error: tool '{name}' timed out after {timeout}s"
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
-            return tc_id, error
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)
             error = f"Error: {e}"
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
-            return tc_id, error
         finally:
-            # after_tool_call 通知（非阻断，静默收集异常）
+            # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型扩展。
+            # 工具未找到 / 审批拒绝 / 被扩展阻止的路径不经过 try，不发 after。
             if ctx.bus is not None:
                 await ctx.bus.emit(
                     Event.TOOL_EXECUTION_END,
                     tool_name=name,
                     tool_call_id=tc_id,
+                    result=result,
+                    error=error,
+                    elapsed_ms=elapsed_ms,
                 )
+        return tc_id, result if error is None else error
 
     async def execute_batch(
         self,

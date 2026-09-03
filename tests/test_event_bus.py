@@ -136,6 +136,55 @@ async def test_runner_emits_lifecycle(allow_executor):
     assert result.output == "final"
 
 
+async def test_runner_emits_full_session_lifecycle(allow_executor):
+    """单次 run 的完整事件序：session/message 包裹 agent/turn，参数齐全。"""
+    bus = EventBus()
+    events: list[str] = []
+    payloads: dict[str, dict] = {}
+
+    def listen(e):
+        bus.on(e, lambda ev=e, **kw: (events.append(ev), payloads.setdefault(ev, kw)))
+
+    for e in (
+        "session_start",
+        "message_start",
+        "agent_start",
+        "turn_start",
+        "turn_end",
+        "message_end",
+        "agent_end",
+        "session_end",
+    ):
+        listen(e)
+
+    runner = Runner(executor=allow_executor, bus=bus)
+    provider = FakeProvider()
+    provider.client.chat.completions.set_responses(
+        FakeCompletion(FakeMessage(content="final"), FakeUsage())
+    )
+    env = SessionEnv(
+        channel=FakeChannel(),
+        provider=provider,  # type: ignore[arg-type]
+        messages=InMemoryMessages(),
+        session_id="s1",
+    )
+    result = await runner.run(
+        Agent(name="default", tools=lambda: [echo_tool()]),
+        "hi",
+        env=env,
+    )
+
+    # 事件对边界：session_start 开头、session_end 收尾；message 包裹 agent
+    assert events[0] == "session_start"
+    assert events[-1] == "session_end"
+    assert events.index("message_start") < events.index("agent_start")
+    assert events.index("message_end") < events.index("agent_end")
+    assert events.index("message_end") < events.index("session_end")
+    assert payloads["message_start"]["input"] == "hi"
+    assert payloads["session_start"]["session_id"] == "s1"
+    assert result.output == "final"
+
+
 async def test_runner_no_events_when_no_subscribers(allow_executor):
     """没有监听器时，run 全程不抛、正常返回。"""
     runner = Runner(executor=allow_executor, bus=EventBus())

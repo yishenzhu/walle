@@ -12,7 +12,7 @@ from .diagnostics import (
     DiagnosticType,
     ResourceDiagnostic,
 )
-from .executor import ToolExecutor
+from .executor import HookVerdict, ToolExecutor
 from .extensions import (
     Extension,
     ExtensionAPI,

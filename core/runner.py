@@ -83,9 +83,12 @@ class Runner:
             raise RuntimeError("no invalid provider")
         channel, history = env.channel, env.messages
         streamed = options.streamed
+        session_id = env.session_id
+        # run = 一次会话交互：session 边界 + 本条用户消息边界
+        await self._bus.emit(Event.SESSION_START, session_id=session_id)
+        await self._bus.emit(Event.MESSAGE_START, input=input, session_id=session_id)
         await history.add([UserMessage(content=input)])
 
-        session_id = env.session_id
         await self._bus.emit(Event.AGENT_START, agent=agent.name, session_id=session_id)
 
         with tracer.start_as_current_span("agent.run") as span:
@@ -138,6 +141,9 @@ class Runner:
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
                     await self._bus.emit(Event.TURN_END, turn=turn, agent=agent.name)
+                    await self._bus.emit(
+                        Event.MESSAGE_END, output=output, session_id=session_id
+                    )
                     await self._bus.emit(Event.AGENT_END, agent=agent.name)
                     await self._bus.emit(Event.SESSION_END, session_id=session_id)
                     return RunResult(
@@ -153,6 +159,9 @@ class Runner:
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
+            await self._bus.emit(
+                Event.MESSAGE_END, output=None, session_id=session_id
+            )
             await self._bus.emit(Event.AGENT_END, agent=agent.name)
             await self._bus.emit(Event.SESSION_END, session_id=session_id)
             return RunResult(

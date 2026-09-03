@@ -3,7 +3,7 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Handoff, Runner, RunOptions, SessionEnv, ToolExecutor
+from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionEnv, ToolExecutor
 from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
@@ -368,7 +368,7 @@ class TestRunnerToolHooks:
         from ..core import Event, EventBus
 
         async def block(**ctx_):
-            return False
+            return HookVerdict(block="runner 层拦截")
 
         bus = EventBus()
         bus.on(Event.TOOL_EXECUTION_START, block)

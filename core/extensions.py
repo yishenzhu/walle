@@ -10,16 +10,22 @@
 
 from __future__ import annotations
 
+import importlib.util
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 from .diagnostics import (
     DiagnosticType,
     ResourceDiagnostic,
 )
+from ..conf import auto_path
 from ..infra import Event, EventBus, Handler
 from ..tools import Tool, ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class ExtensionState(StrEnum):
@@ -77,6 +83,57 @@ class ExtensionRegistry:
     def add(self, name: str, factory: ExtensionFactory) -> None:
         """注册一个扩展 factory（供 load() 执行）。"""
         self._factories.append((name, factory))
+
+    def discover(
+        self,
+        root: str | Path = ".agent/extensions",
+        enabled: list[str] | None = None,
+        disabled: list[str] | None = None,
+    ) -> None:
+        """扫描扩展目录，按启停名单过滤后注册 factory。
+
+        每个子目录 = 一个扩展，入口为 <dir>/extension.py（顶层
+        load_extension(api) 或 main(api)）。import / 入口缺失等错误
+        留到 load() 阶段暴露为 FAILED（失败隔离），此处只收集。
+        """
+        enabled = enabled or []
+        disabled = disabled or []
+        base = Path(auto_path(str(root)))  # 相对路径按项目根解析
+        if not base.is_dir():
+            return
+
+        for entry in sorted(base.iterdir()):  # 目录名排序 = 加载顺序
+            if not entry.is_dir():
+                continue
+            name = entry.name
+            if enabled and name not in enabled:
+                continue
+            if name in disabled:
+                continue
+
+            async def factory(api: ExtensionAPI, entry: Path = entry) -> None:
+                mod_path = entry / "extension.py"
+                if not mod_path.is_file():
+                    raise FileNotFoundError(f"缺入口文件: {mod_path}")
+                spec = importlib.util.spec_from_file_location(
+                    f"ext_{entry.name}", mod_path
+                )
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"无法加载: {mod_path}")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                fn = getattr(module, "load_extension", None) or getattr(
+                    module, "main", None
+                )
+                if fn is None:
+                    raise AttributeError(
+                        "入口需定义 async load_extension(api) 或 main(api)"
+                    )
+                result = fn(api)
+                if hasattr(result, "__await__"):
+                    await result
+
+            self._factories.append((name, factory))
 
     async def load(self) -> None:
         """第一阶段：运行全部 factory，收集到各自的 pending Extension。

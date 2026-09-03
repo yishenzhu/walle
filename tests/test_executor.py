@@ -256,26 +256,14 @@ class TestExecuteIter:
 class TestToolHooks:
     """工具执行钩子（before/after）屏障。"""
 
-    async def test_before_hook_false_blocks_execution(self, ctx):
-        from ..core import Event, EventBus
+    def test_empty_hook_verdict_rejected(self):
+        """空 HookVerdict()（不表态）是编程错误，构造即抛 ValueError。"""
+        import pytest
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        from ..core import HookVerdict
 
-        async def block(**ctx_):
-            return False
-
-        bus = EventBus()
-        bus.on(Event.TOOL_EXECUTION_START, block)
-        ctx.bus = bus
-
-        tool = make_tool("echo", "should-not-run")
-        tc_id, result = await executor.execute_call(
-            tc := make_tool_call(name="echo"), {"echo": tool}, ctx
-        )
-        assert tc_id == "tc1"
-        assert "blocked by extension" in result
+        with pytest.raises(ValueError):
+            HookVerdict()
 
     async def test_before_hook_pass_executes(self, ctx):
         from ..core import Event, EventBus
@@ -326,3 +314,84 @@ class TestToolHooks:
             make_tool_call(name="echo"), {"echo": tool}, ctx
         )
         assert result == "ran"  # ctx.bus 为 None，钩子跳过
+
+    async def test_before_hook_block_with_reason(self, ctx):
+        """TOOL_EXECUTION_START 监听器返回 HookVerdict(block=reason) → 阻止执行。"""
+        from ..core import Event, EventBus, HookVerdict
+
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        )
+
+        async def block(**ctx_):
+            return HookVerdict(block="危险命令")
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_START, block)
+        ctx.bus = bus
+
+        tool = make_tool("echo", "should-not-run")
+        tc_id, result = await executor.execute_call(
+            make_tool_call(name="echo"), {"echo": tool}, ctx
+        )
+        assert tc_id == "tc1"
+        assert "blocked by extension" in result
+        assert "危险命令" in result  # reason 透传给模型
+
+    async def test_before_hook_rewrites_arguments(self, ctx):
+        """TOOL_EXECUTION_START 监听器返回 HookVerdict(arguments=...) → 改写本次调用。"""
+        from ..core import Event, EventBus, HookVerdict
+
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        )
+
+        seen = {}
+
+        async def rewrite(**ctx_):
+            return HookVerdict(arguments={"command": "cd /repo && ls"})
+
+        async def echo(args):
+            seen.update(args)
+            return "done"
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_START, rewrite)
+        ctx.bus = bus
+
+        tool = Tool(
+            name="bash",
+            description="bash",
+            parameters={"type": "object", "properties": {}},
+            fn=echo,
+        )
+        tc_id, result = await executor.execute_call(
+            make_tool_call(name="bash", arguments={"command": "ls"}), {"bash": tool}, ctx
+        )
+        assert result == "done"
+        assert seen == {"command": "cd /repo && ls"}  # 工具收到改写后的参数
+
+    async def test_after_hook_receives_result(self, ctx):
+        """TOOL_EXECUTION_END 携带执行结果 / 耗时（观测型扩展可用）。"""
+        from ..core import Event, EventBus
+
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        )
+
+        seen = {}
+
+        async def record(**ctx_):
+            seen["result"] = ctx_["result"]
+            seen["error"] = ctx_["error"]
+            seen["elapsed_ms"] = ctx_["elapsed_ms"]
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_END, record)
+        ctx.bus = bus
+
+        tool = make_tool("echo", "hello")
+        await executor.execute_call(make_tool_call(name="echo"), {"echo": tool}, ctx)
+        assert seen["result"] == "hello"
+        assert seen["error"] is None
+        assert seen["elapsed_ms"] is not None
