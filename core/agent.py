@@ -223,12 +223,12 @@ class Agent(BaseModel, Generic[TContext]):
         agent = self
 
         async def fn(input: str):
-            from .runner import Runner, SessionEnv
+            from .runner import Runner, SessionContext
             from ..messages import InMemoryMessages
 
             # 嵌套 Runner 显式构造隔离环境（独立历史）：与父执行实体互不污染
             runner = Runner()
-            env = SessionEnv(messages=InMemoryMessages())
+            env = SessionContext(messages=InMemoryMessages())
             result = await runner.run(agent, input, env=env)
             return result.output
 

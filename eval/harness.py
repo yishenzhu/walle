@@ -17,14 +17,14 @@ from typing import Any, Callable
 from ..core import Agent, Handoff
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
-from ..core.runner import Runner, RunOptions, SessionEnv
+from ..core.runner import Runner, RunOptions, SessionContext
 from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import Usage
 from ..infra import Tool
 from ..tools.builtin import background, bash, job_result
-from ..tools.defined import DefinedTool, ToolCodeError
+from ..tools.builtin.defined import DefinedTool, ToolCodeError
 
 from .graders import grade
 from .spec import TaskSpec
@@ -188,7 +188,7 @@ async def run_task(
             timeout=TimeoutConfig(default=60.0),
         )
     )
-    env = SessionEnv(
+    env = SessionContext(
         provider=tracked,
         channel=None,
         messages=InMemoryMessages(),

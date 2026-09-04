@@ -3,7 +3,7 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionEnv, ToolExecutor
+from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
@@ -48,7 +48,7 @@ def runner(allow_executor):
 @pytest.fixture
 def env(channel):
     """默认会话环境：历史（每测试隔离）。"""
-    return SessionEnv(
+    return SessionContext(
         channel=channel,
         messages=InMemoryMessages(),
     )
@@ -355,7 +355,7 @@ class TestRunnerNoProvider:
                 await Runner().run(
                     agent,
                     "hi",
-                    env=SessionEnv(messages=InMemoryMessages()),
+                    env=SessionContext(messages=InMemoryMessages()),
                 )
         finally:
             OpenAIProvider._default = backup

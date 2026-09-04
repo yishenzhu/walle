@@ -277,7 +277,7 @@ class TestSessionIsolation:
         await reg.close()
 
     async def test_mcp_extension_tools_visible_in_session(self, tmp_path):
-        """MCP 工具经扩展组装进会话：register_tools → 扩展声明 → 会话激活。"""
+        """MCP 工具经扩展组装进会话：extension → 扩展声明 → 会话激活。"""
         from ..core import ExtensionRegistry
         from ..infra import Tool
         from ..tools.mcp import MCPRegistry
@@ -303,7 +303,7 @@ class TestSessionIsolation:
         loader = ExtensionRegistry()
 
         async def load_mcp_ext(api) -> None:
-            mcp.register_tools(api.register_tool)
+            mcp.extension(api)  # MCP 远端工具注册进扩展 api
 
         loader.add("mcp", load_mcp_ext)
         await loader.load()

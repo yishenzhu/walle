@@ -8,7 +8,18 @@ from .agent import Agent, TContext, Handoff
 from .executor import ToolExecutor
 from ..channel import Channel
 from ..messages import Messages, InMemoryMessages
-from ..infra import Event, EventBus, OpenAIProvider, tracer, AGENT_ITERATIONS, HANDOFF
+from ..infra import (
+    Event,
+    EventBus,
+    ExtensionRunner,
+    Job,
+    OpenAIProvider,
+    Tool,
+    ToolContext,
+    tracer,
+    AGENT_ITERATIONS,
+    HANDOFF,
+)
 from ..schemas import (
     AssistantMessage,
     SystemMessage,
@@ -19,8 +30,6 @@ from ..schemas import (
     DeltaEnd,
     ToolResult,
 )
-from ..infra import Job, Tool, ToolContext
-
 
 logger = logging.getLogger(__name__)
 
@@ -29,21 +38,25 @@ DEFAULT_MAX_TURNS = 10
 
 @dataclass
 class RunOptions:
-    """单次 run 的可选行为配置（怎么做），与会话环境（SessionEnv）分离。"""
+    """单次 run 的可选行为配置（怎么做），与会话上下文（SessionContext）分离。"""
 
     max_turns: int = DEFAULT_MAX_TURNS
     streamed: bool = False  # 流式输出（delta 通知）
 
 
 @dataclass
-class SessionEnv:
-    """会话级环境与状态：Session 唯一持有，每次 run 原样传入。"""
+class SessionContext:
+    """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。
+
+    携带会话的扩展激活层（ext_runner）：工具执行期经它动态注册新工具。
+    """
 
     messages: Messages  # 会话历史（必填）
     provider: OpenAIProvider = None  # 模型接入（None 用 Runner 默认）
     channel: Channel = None  # 会话 channel 端点（仅交互，不承担会话身份）
-    session_id: str | None = None  # 会话身份（内聚在 env，而非 channel）
+    session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
+    ext_runner: ExtensionRunner | None = None  # 会话扩展激活层（工具可动态注册）
 
 
 class RunResult(BaseModel):
@@ -74,7 +87,7 @@ class Runner:
         self,
         agent: Agent[TContext],
         input: str,
-        env: SessionEnv,
+        env: SessionContext,
         options: RunOptions | None = None,
     ) -> RunResult:
         options = options or RunOptions()
@@ -106,7 +119,14 @@ class Runner:
                 await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
 
                 # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用）
-                ctx = ToolContext(channel=channel, jobs=env.jobs, bus=self._bus)
+                ctx = ToolContext(
+                    channel=channel,
+                    jobs=env.jobs,
+                    bus=self._bus,
+                    register_tool=(
+                        env.ext_runner.register_tool if env.ext_runner else None
+                    ),
+                )
                 run_turn = self._run_turn_streamed if streamed else self._run_turn
                 completion, message, tool_results = await run_turn(
                     agent, messages, tools, provider, ctx
@@ -226,7 +246,7 @@ class Runner:
         self,
         agent: Agent[TContext],
         input: str,
-        env: SessionEnv,
+        env: SessionContext,
         options: RunOptions | None = None,
     ) -> RunResult:
         try:

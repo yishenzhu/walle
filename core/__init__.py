@@ -26,7 +26,7 @@ from .runner import (
     Runner,
     RunResult,
     RunOptions,
-    SessionEnv,
+    SessionContext,
 )
 from .session import (
     Session,

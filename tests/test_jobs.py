@@ -13,7 +13,7 @@ import json
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Runner, Session, SessionEnv, ToolExecutor
+from ..core import Agent, Runner, Session, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
@@ -226,7 +226,7 @@ class TestRunnerIntegration:
         executor = allow_executor()
         runner = Runner(executor=executor)
         channel = FakeChannel()
-        env = SessionEnv(
+        env = SessionContext(
             channel=channel,
             messages=InMemoryMessages(),
             jobs={},
@@ -283,7 +283,7 @@ class TestRunnerIntegration:
         """两轮之间作业仍在跑：第二轮 job_result 先看到 running，随后完成。"""
         executor = allow_executor()
         runner = Runner(executor=executor)
-        env = SessionEnv(
+        env = SessionContext(
             channel=FakeChannel(),
             messages=InMemoryMessages(),
             jobs={},

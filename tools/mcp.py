@@ -15,7 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import DOT_AGENT, MCPConfig
-from ..infra import Tool
+from ..infra import ExtensionAPI, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class MCPRegistry:
         return self._clients
 
     def save(self, name: str, conf: MCPConfig) -> Path:
-        configs = self.load_all()
+        configs = self.load()
         configs[name] = conf
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,7 +48,7 @@ class MCPRegistry:
         )
         return p
 
-    def load_all(self) -> dict[str, MCPConfig]:
+    def load(self) -> dict[str, MCPConfig]:
         if not self._path.exists():
             return {}
         try:
@@ -80,7 +80,7 @@ class MCPRegistry:
         clients = await asyncio.gather(
             *[
                 MCPClient(name, c).connect()
-                for name, c in self.load_all().items()
+                for name, c in self.load().items()
                 if c.enabled
             ]
         )
@@ -94,15 +94,14 @@ class MCPRegistry:
         for c in self._clients:
             await c.close()
 
-    def register_tools(self, register: Callable[[Tool], None]) -> None:
-        """把全部已连接客户端的远端工具交给 register 回调（扩展注册接口）。
+    def extension(self, api: ExtensionAPI) -> None:
+        """把全部已连接客户端的远端工具注册进扩展 api（api.register_tool）。
 
-        由 main 组装 MCP 扩展时调用：register = api.register_tool。避免本类
-        直接依赖扩展系统（tools 不反向依赖 core）。
+        由 main 组装 MCP 扩展时调用——MCP 作为扩展声明，工具随扩展进各会话。
         """
         for client in self._clients:
             for tool in client.tools:
-                register(tool)
+                api.register_tool(tool)
 
 
 class MCPClient:

@@ -17,7 +17,7 @@ def test_roundtrip(tmp_path):
 
     # 单文件保存，两个 server 在同一个 mcp.yaml
     assert (tmp_path / "mcp.yaml").exists()
-    loaded = store.load_all()
+    loaded = store.load()
     assert set(loaded) == {"obsidian", "fs"}
     assert loaded["obsidian"].url == "http://127.0.0.1:27123/mcp"
     assert loaded["fs"].command == "npx"
@@ -28,19 +28,19 @@ def test_roundtrip(tmp_path):
     ]
 
 
-def test_load_all_empty(tmp_path):
-    assert MCPRegistry(tmp_path / "mcp.yaml").load_all() == {}
+def test_load_empty(tmp_path):
+    assert MCPRegistry(tmp_path / "mcp.yaml").load() == {}
 
 
 def test_unusual_name_allowed(tmp_path):
     """单文件存储无文件系统暴露，特殊字符名（中文等）允许。"""
     store = MCPRegistry(tmp_path / "mcp.yaml")
     store.save("obsidian 库", MCPConfig(url="http://x"))
-    assert "obsidian 库" in store.load_all()
+    assert "obsidian 库" in store.load()
 
 
-def test_register_tools_yields_client_tools():
-    """register_tools 把已连接客户端的工具逐个交给注册回调（扩展组装接口）。"""
+def test_extension_registers_into_api():
+    """MCPRegistry.extension 把已连接客户端的工具逐个注册进扩展 api。"""
     from ..infra import Tool
 
     async def fake_fn(args):
@@ -56,5 +56,10 @@ def test_register_tools_yields_client_tools():
     reg._clients.append(FakeClient())
 
     collected: list[str] = []
-    reg.register_tools(lambda t: collected.append(t.name))
+
+    class FakeAPI:
+        def register_tool(self, tool):
+            collected.append(tool.name)
+
+    reg.extension(FakeAPI())
     assert collected == ["mcp_a_t1", "mcp_a_t2"]

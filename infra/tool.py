@@ -49,6 +49,8 @@ class ToolContext:
     jobs: dict[str, Job] = field(default_factory=dict)
     # 进程级事件总线：工具执行钩子（before/after）屏障来源
     bus: EventBus | None = None
+    # 会话工具注册回调：动态工具（define_tool）经此把新工具注册进当前会话
+    register_tool: Callable[[Tool], None] | None = None
 
     def add_pending(self, tool_name: str, args: dict[str, Any] | None = None) -> str:
         """登记一个待启动的后台作业（executor 在本轮工具跑完后拉起）。"""

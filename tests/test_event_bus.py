@@ -8,7 +8,7 @@
 
 import pytest
 
-from ..core import Agent, EventBus, Runner, RunOptions, SessionEnv, ToolExecutor
+from ..core import Agent, EventBus, Runner, RunOptions, SessionContext, ToolExecutor
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..messages import InMemoryMessages
 from ..schemas import UserMessage
@@ -117,7 +117,7 @@ async def test_runner_emits_lifecycle(allow_executor):
         FakeCompletion(FakeMessage(content="final"), FakeUsage())
     )
     # env.provider 优先于 Runner 的默认 provider（不依赖类级 _default）
-    env = SessionEnv(
+    env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
         messages=InMemoryMessages(),
@@ -162,7 +162,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
     provider.client.chat.completions.set_responses(
         FakeCompletion(FakeMessage(content="final"), FakeUsage())
     )
-    env = SessionEnv(
+    env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
         messages=InMemoryMessages(),
@@ -192,7 +192,7 @@ async def test_runner_no_events_when_no_subscribers(allow_executor):
     provider.client.chat.completions.set_responses(
         FakeCompletion(FakeMessage(content="x"), FakeUsage())
     )
-    env = SessionEnv(
+    env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
         messages=InMemoryMessages(),

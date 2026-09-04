@@ -113,7 +113,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
     """M1+M2+M4 全链路：扩展注册工具+钩子，经共享 bus，Runner 拦下工具执行。"""
     from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
     from ..messages import InMemoryMessages
-    from ..core import Agent, Runner, SessionEnv, ToolExecutor
+    from ..core import Agent, Runner, SessionContext, ToolExecutor
     from ..core.agent import ToolFilter
     from .conftest import (
         FakeChannel,
@@ -177,7 +177,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
         result = await runner.run(
             agent,
             "use guard",
-            env=SessionEnv(channel=FakeChannel(), messages=InMemoryMessages()),
+            env=SessionContext(channel=FakeChannel(), messages=InMemoryMessages()),
         )
 
         assert blocked["name"] == "guard_tool"  # before 钩子触发了

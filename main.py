@@ -10,7 +10,7 @@ from .core import (
 )
 from .channel.cli import CLIChannel
 from .tools import MCPRegistry
-from .tools.extensions import load_builtin_extensions
+from .tools.builtin.extension import builtin_ext
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,10 @@ async def main() -> None:
     # 进程级扩展加载器：内置工具扩展 + MCP 扩展 + .agent/extensions/ 用户扩展。
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
     extensions = ExtensionRegistry()
-    extensions.add("builtin", load_builtin_extensions)
+    extensions.add("builtin", builtin_ext)
 
     async def load_mcp_ext(api) -> None:
-        mcp.register_tools(api.register_tool)
+        mcp.extension(api)  # MCP 远端工具注册进扩展 api
 
     extensions.add("mcp", load_mcp_ext)
     extensions.discover(

@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .agent import Agent
-from .runner import Runner, RunOptions, SessionEnv
+from .runner import Runner, RunOptions, SessionContext
 from ..channel import Channel
 from ..conf import ToolConfig
 from ..infra import (
@@ -76,12 +76,13 @@ class Session:
         self._jobs: dict[str, Job] = {}
         # 执行环境打包：channel 随 attach/detach 切换
         self._transport: Channel | None = transport
-        self._env = SessionEnv(
+        self._env = SessionContext(
             provider=self._provider,
             channel=self._transport,
             messages=self._messages,
             session_id=self.id,
             jobs=self._jobs,
+            ext_runner=self._ext_runner,  # 工具执行期动态注册通道
         )
 
     def _build_agent(self, name: str | None = None) -> Agent:

@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
 from ...infra import OpenAIProvider
 from ...core.agent import Agent
-from ...core.runner import Runner, RunOptions, SessionEnv
+from ...core.runner import Runner, RunOptions, SessionContext
 from ...messages import InMemoryMessages
 
 from ..harness import RecordingExecutor, TaskResult, TrackedProvider
@@ -117,7 +117,7 @@ async def run_tau_case(
             timeout=TimeoutConfig(default=120.0),
         )
     )
-    walle_env = SessionEnv(
+    walle_env = SessionContext(
         provider=tracked,
         channel=None,
         messages=InMemoryMessages(),
