@@ -15,7 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import DOT_AGENT, MCPConfig
-from ..infra import ExtensionAPI, ExtensionFactory, Tool
+from ..infra import ExtensionAPI, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -94,19 +94,15 @@ class MCPRegistry:
         for c in self._clients:
             await c.close()
 
-    def as_ext(self) -> ExtensionFactory:
-        """返回 MCP 扩展工厂：main 组装时 extensions.add("mcp", mcp.as_ext())。
+    async def as_ext(self, api: ExtensionAPI) -> None:
+        """MCP 扩展工厂：main 组装时 extensions.add("mcp", mcp.as_ext)。
 
-        工厂把全部已连接客户端的远端工具注册进扩展 api——MCP 作为扩展
+        把全部已连接客户端的远端工具注册进扩展 api——MCP 作为扩展
         声明，工具随扩展进各会话。
         """
-
-        async def load(api: ExtensionAPI) -> None:
-            for client in self._clients:
-                for tool in client.tools:
-                    api.register_tool(tool)
-
-        return load
+        for client in self._clients:
+            for tool in client.tools:
+                api.register_tool(tool)
 
 
 class MCPClient:

@@ -10,6 +10,7 @@ from .extension import (
     ExtensionRegistry,
     ExtensionRunner,
     ExtensionState,
+    HookVerdict,
     Skill,
 )
 from .logger import setup_logger, LogConfig

@@ -4,73 +4,27 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any
 
 from ..schemas import ToolResult, ToolStart
 from ..channel import Channel
-from .approval import ApprovalPolicy, Approver, ChannelApprover
-from ..conf import ApprovalDecision, ToolConfig
-from ..infra import Event, TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
+from ..conf import ToolConfig
+from ..infra import Event, HookVerdict, TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
 from ..infra import Job, JobStatus, Tool, ToolContext, tool_context
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class HookVerdict:
-    """工具执行前钩子（TOOL_EXECUTION_START）的表态。
+class ToolExecutor:
+    """工具执行器：无状态，通知渠道来自每次 execute 的 ToolContext。
 
-    返回 None = 无意见放行；返回 HookVerdict 即表态（block 与 arguments
-    至少一个非空，否则 ValueError）：
-    block=reason → 阻止执行，reason 透传给模型；
-    arguments=args → 放行并改写本次调用参数。
-    改写按注册顺序应用（后者覆盖前者）。
+    审批不在此内置——由审批扩展（core.approval.Approval）订阅
+    TOOL_EXECUTION_START 承担（preflight 事件是唯一审批屏障）。
     """
 
-    block: str | None = None
-    arguments: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        if self.block is None and self.arguments is None:
-            raise ValueError("HookVerdict 必须表态：block=reason 或 arguments=args")
-
-    @property
-    def blocks(self) -> bool:
-        return self.block is not None
-
-
-class ToolExecutor:
-    """工具执行器：无状态，审批/通知渠道均来自每次 execute 的 ToolContext。"""
-
     def __init__(self, config: ToolConfig | None = None):
-        cfg = config or ToolConfig()  # ToolConfig 自带默认构造（approval + timeout）
-        self._approval_policy = ApprovalPolicy(cfg.approval)
+        cfg = config or ToolConfig()
         self._timeout_policy = cfg.timeout
-
-    async def _check_approval(
-        self,
-        name: str,
-        args: dict[str, Any],
-        tc_id: str,
-        approver: Approver | None,
-    ) -> str | None:
-        decision = self._approval_policy.evaluate(name, args)
-        if decision == ApprovalDecision.DENY:
-            return f"Tool '{name}' denied by policy"
-        if decision == ApprovalDecision.ALLOW:
-            return None
-        # ASK：审批渠道由调用方实例化 ChannelApprover(channel) 后传入
-        # （executor 无状态，每次 execute 现建）
-        if approver is None:
-            return f"Tool '{name}' denied: no approval channel"
-        response = await approver.ask(
-            tool_name=name, arguments=args, tool_call_id=tc_id
-        )
-        if response.approved:
-            return None
-        reason = f"Tool '{name}' denied by user"
-        return f"{reason}: {response.reason}" if response.reason else reason
 
     async def execute_call(
         self,
@@ -90,7 +44,7 @@ class ToolExecutor:
         tools: dict[str, Tool],
         ctx: ToolContext,
     ) -> tuple[str, Any]:
-        """入口·名字+参数：按工具名执行（复用 execute_tool 完整链：审批/超时）。
+        """入口·名字+参数：按工具名执行（复用 execute_tool 完整链：超时）。
 
         background 元工具把任意工具丢后台时用它；tc_id 为生成的伪调用 id，
         静默执行（不推送 ToolStart/ToolResult，结果由 job_result 查询取回）。
@@ -108,11 +62,12 @@ class ToolExecutor:
         *,
         notify: bool = True,
     ) -> tuple[str, Any]:
-        """核心链：查找 → 通知（可关）→ 审批 → 执行（超时）→ 结果/错误。
+        """核心链：查找 → 通知（可关）→ preflight 屏障 → 执行（超时）→ 结果/错误。
 
         execute_call / execute_named 两个入口共用；参数已解包
         （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
-        静默执行（后台作业用，不推送 ToolStart/ToolResult）。
+        静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
+        TOOL_EXECUTION_START 上的审批扩展（core.approval.Approval）承担。
         """
         ft = tools.get(name)
         if ft is None:
@@ -130,18 +85,6 @@ class ToolExecutor:
             await channel.notify(
                 ToolStart(tool_name=name, arguments=args, tool_call_id=tc_id)
             )
-
-        denied = await self._check_approval(
-            name,
-            args,
-            tc_id,
-            ChannelApprover(channel) if channel is not None else None,
-        )
-        if denied:
-            logger.info(denied)
-            if notify and channel is not None:
-                await channel.notify(ToolResult(tool_call_id=tc_id, error=denied))
-            return tc_id, denied
 
         # preflight 屏障：监听器返回 HookVerdict，None 放行。
         # block → 阻止执行；arguments → 按注册顺序改写参数（后者覆盖前者）。

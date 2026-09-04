@@ -301,7 +301,7 @@ class TestSessionIsolation:
 
         # main 组装路径：MCPRegistry 作为扩展声明
         loader = ExtensionRegistry()
-        loader.add("mcp", mcp.as_ext())
+        loader.add("mcp", mcp.as_ext)
         await loader.load()
         mcp_ext = [e for e in loader.extensions if e.error is None]
 

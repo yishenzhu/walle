@@ -5,13 +5,14 @@ from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import (
     Agent,
+    Approval,
     ExtensionRegistry,
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
 from .tools import MCPRegistry
 from .tools.builtin.extension import builtin_ext
-from .tools.skill import skill_ext
+from .tools.skill import Skill
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,13 @@ async def main() -> None:
     mcp = MCPRegistry()
     await mcp.connect()
 
-    # 进程级扩展加载器：内置工具扩展 + MCP 扩展 + .agent/extensions/ 用户扩展。
+    # 进程级扩展加载器：内置工具扩展 + MCP 扩展 + 技能 + 审批 + .agent/extensions/ 用户扩展。
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
     extensions = ExtensionRegistry()
     extensions.add("builtin", builtin_ext)
-    extensions.add("mcp", mcp.as_ext())  # MCP 远端工具作为扩展声明
-    extensions.add("skill", skill_ext)  # 技能清单作为扩展声明
+    extensions.add("mcp", mcp.as_ext)  # MCP 远端工具作为扩展声明
+    extensions.add("skill", Skill.as_ext)  # 技能清单作为扩展声明
+    extensions.add("approval", Approval(conf.tool.approval).as_ext)  # 审批作为扩展
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,

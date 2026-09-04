@@ -1,5 +1,6 @@
 from .agent import Agent, Handoff, TContext
 from .approval import (
+    Approval,
     ApprovalPolicy,
     Approver,
     ChannelApprover,
@@ -19,9 +20,10 @@ from ..infra import (
     ExtensionRunner,
     ExtensionState,
     Handler,
+    HookVerdict,
     ResourceDiagnostic,
 )
-from .executor import HookVerdict, ToolExecutor
+from .executor import ToolExecutor
 from .runner import (
     Runner,
     RunResult,

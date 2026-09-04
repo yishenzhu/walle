@@ -27,6 +27,22 @@ def make_tool_call(id="tc1", name="echo", arguments=None):
     return FakeToolCall(id=id, name=name, arguments=json.dumps(arguments or {}))
 
 
+async def mount_approval(ctx, config) -> None:
+    """把审批扩展（按 conf 规则）激活到 ctx.bus。
+
+    审批不再由 executor 内置——测试经扩展验证 deny/ask 语义。
+    """
+    from ..core import Approval, EventBus, ExtensionRegistry, ExtensionRunner
+
+    loader = ExtensionRegistry()
+    loader.add("approval", Approval(config).as_ext)
+    await loader.load()
+    assert loader.extensions[0].error is None
+    if ctx.bus is None:
+        ctx.bus = EventBus()
+    ExtensionRunner(ctx.bus).activate(loader.extensions[0])
+
+
 @pytest.fixture
 def provider():
     p = FakeProvider()
@@ -56,12 +72,14 @@ class TestExecute:
         assert tc_id == "tc1"
         assert result == "hello"
 
-    async def test_execute_denied_by_policy(self, ctx):
+    async def test_execute_denied_by_policy(self):
         config = ApprovalConfig(
             rules=[RawRule(ApprovalDecision.DENY, "bash")],
             default=ApprovalDecision.ALLOW,
         )
-        executor = ToolExecutor(ToolConfig(approval=config))
+        ctx = ToolContext()
+        await mount_approval(ctx, config)
+        executor = ToolExecutor()
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")
         tc_id, result = await executor.execute_call(tc, {"bash": tool}, ctx)
@@ -94,36 +112,36 @@ class TestExecute:
 
     async def test_execute_user_approves(self, channel):
         channel.set_approval(approved=True)
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK))
-        )
+        ctx = ToolContext(channel=channel)
+        await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
+        executor = ToolExecutor()
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
         tc_id, result = await executor.execute_call(
-            tc, {"bash": tool}, ToolContext(channel=channel)
+            tc, {"bash": tool}, ctx
         )
         assert result == "done"
 
     async def test_execute_user_denies(self, channel):
         channel.set_approval(approved=False, reason="dangerous")
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK))
-        )
+        ctx = ToolContext(channel=channel)
+        await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
+        executor = ToolExecutor()
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
         tc_id, result = await executor.execute_call(
-            tc, {"bash": tool}, ToolContext(channel=channel)
+            tc, {"bash": tool}, ctx
         )
         assert "denied by user" in result
         assert "dangerous" in result
 
     async def test_execute_ask_no_approver(self):
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ASK))
-        )
+        ctx = ToolContext()
+        await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
+        executor = ToolExecutor()
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute_call(tc, {"bash": tool}, ToolContext())
+        tc_id, result = await executor.execute_call(tc, {"bash": tool}, ctx)
         assert "no approval channel" in result
 
     async def test_execute_timeout(self, ctx):

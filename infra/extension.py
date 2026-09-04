@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from .diagnostics import (
     DiagnosticType,
@@ -309,3 +310,26 @@ class ExtensionMount:
     skills: list[str] = field(default_factory=list)
     handlers: list[tuple[Event, Handler]] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class HookVerdict:
+    """工具执行前钩子（TOOL_EXECUTION_START）的表态。
+
+    返回 None = 无意见放行；返回 HookVerdict 即表态（block 与 arguments
+    至少一个非空，否则 ValueError）：
+    block=reason → 阻止执行，reason 透传给模型；
+    arguments=args → 放行并改写本次调用参数。
+    改写按注册顺序应用（后者覆盖前者）。
+    """
+
+    block: str | None = None
+    arguments: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.block is None and self.arguments is None:
+            raise ValueError("HookVerdict 必须表态：block=reason 或 arguments=args")
+
+    @property
+    def blocks(self) -> bool:
+        return self.block is not None

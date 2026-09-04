@@ -4,7 +4,6 @@ import pytest
 
 from ..core import Agent
 from ..infra import Skill
-from ..tools.skill import skill_ext
 
 
 def _make_skill(root, name: str, description: str) -> None:
@@ -112,8 +111,8 @@ class TestAgentSkillPrompt:
         )
 
 
-async def test_skills_ext_registers_into_session(tmp_path, monkeypatch):
-    """技能扩展：skills_ext 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
+async def test_skill_as_ext_registers_into_session(tmp_path, monkeypatch):
+    """技能扩展：Skill.as_ext 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
     from ..core import ExtensionRegistry, ExtensionRunner
     from ..infra import EventBus
     from ..tools import skill as skill_mod
@@ -123,7 +122,7 @@ async def test_skills_ext_registers_into_session(tmp_path, monkeypatch):
     _make_skill(tmp_path / "skills", "review", "Review code")
 
     loader = ExtensionRegistry()
-    loader.add("skills", skill_ext)
+    loader.add("skills", skill_mod.Skill.as_ext)
     await loader.load()
     assert loader.extensions[0].error is None
 
