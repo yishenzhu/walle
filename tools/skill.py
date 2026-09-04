@@ -12,8 +12,8 @@ from pathlib import Path
 import frontmatter
 from pydantic import BaseModel
 
-from ...conf import DOT_AGENT
-from ...infra import ExtensionAPI
+from ..conf import DOT_AGENT
+from ..infra import ExtensionAPI
 
 logger = logging.getLogger(__name__)
 

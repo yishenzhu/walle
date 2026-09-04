@@ -11,7 +11,7 @@ from .core import (
 from .channel.cli import CLIChannel
 from .tools import MCPRegistry
 from .tools.builtin.extension import builtin_ext
-from .tools.builtin.skill import skills_ext
+from .tools.skill import skills_ext
 
 logger = logging.getLogger(__name__)
 

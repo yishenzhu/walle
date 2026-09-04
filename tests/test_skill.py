@@ -4,7 +4,7 @@ import pytest
 
 from ..core import Agent
 from ..infra import Skill
-from ..tools.builtin.skill import skills_ext
+from ..tools.skill import skills_ext
 
 
 def _make_skill(root, name: str, description: str) -> None:
@@ -18,7 +18,7 @@ def _make_skill(root, name: str, description: str) -> None:
 
 def test_skill_scan_returns_meta_with_path(tmp_path, monkeypatch):
     """Skill.scan 返回元数据（name/description/path），不是工具。"""
-    from ..tools.builtin import skill as skill_mod
+    from ..tools import skill as skill_mod
 
     monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
@@ -33,7 +33,7 @@ def test_skill_scan_returns_meta_with_path(tmp_path, monkeypatch):
 
 
 def test_skill_scan_empty_dir(tmp_path, monkeypatch):
-    from ..tools.builtin import skill as skill_mod
+    from ..tools import skill as skill_mod
 
     monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
     assert skill_mod.Skill.scan() == []
@@ -41,7 +41,7 @@ def test_skill_scan_empty_dir(tmp_path, monkeypatch):
 
 def test_skill_scan_skips_broken(tmp_path, monkeypatch):
     """缺 description 的坏技能被跳过，不阻断其余。"""
-    from ..tools.builtin import skill as skill_mod
+    from ..tools import skill as skill_mod
 
     monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
     bad = tmp_path / "skills" / "bad"
@@ -119,7 +119,7 @@ async def test_skills_ext_registers_into_session(tmp_path, monkeypatch):
     """技能扩展：skills_ext 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
     from ..core import ExtensionRegistry, ExtensionRunner
     from ..infra import EventBus
-    from ..tools.builtin import skill as skill_mod
+    from ..tools import skill as skill_mod
 
     monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
