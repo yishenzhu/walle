@@ -10,6 +10,7 @@ from .extension import (
     ExtensionRegistry,
     ExtensionRunner,
     ExtensionState,
+    Skill,
 )
 from .logger import setup_logger, LogConfig
 from .telemetry import setup_telemetry, tracer, meter

@@ -113,7 +113,7 @@ class Runner:
                 model = provider.model
                 span.set_attribute("agent.model", model)
 
-                messages = await self._build_messages(agent, history)
+                messages = await self._build_messages(agent, history, env)
                 tools = self._build_tools(agent)
 
                 await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
@@ -286,13 +286,16 @@ class Runner:
             return agent.output_type.model_validate_json(content)
         return content
 
-    async def _build_messages(self, agent: Agent[Any], history: Messages) -> list:
+    async def _build_messages(
+        self, agent: Agent[Any], history: Messages, ctx: SessionContext
+    ) -> list:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        skill_prompt = agent.skill_prompt()
-        if skill_prompt:
-            messages += [SystemMessage(content=skill_prompt)]
+        if ctx.ext_runner is not None:
+            skill_prompt = agent.skill_prompt(ctx.ext_runner.skills)
+            if skill_prompt:
+                messages += [SystemMessage(content=skill_prompt)]
         return messages
 
     def _build_tools(self, agent: Agent[Any]) -> dict[str, Tool]:

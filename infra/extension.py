@@ -33,14 +33,24 @@ class ExtensionState(StrEnum):
 
 @dataclass
 class Extension:
-    """一次扩展加载的声明：收集的 handlers / tools / commands + 状态。"""
+    """一次扩展加载的声明：收集的 handlers / tools / skills / commands + 状态。"""
 
     name: str
     handlers: dict[Event, list[Handler]] = field(default_factory=dict)
     tools: list[Tool] = field(default_factory=list)
+    skills: dict[str, Skill] = field(default_factory=dict)
     commands: dict[str, Command] = field(default_factory=dict)
     state: ExtensionState = ExtensionState.LOADING
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class Skill:
+    """技能声明：渐进式披露——name/description 常驻提示词，path 供 read 加载全文。"""
+
+    name: str
+    description: str
+    path: str  # SKILL.md 完整路径
 
 
 @dataclass(frozen=True)
@@ -73,6 +83,10 @@ class ExtensionAPI:
     def register_command(self, name: str, description: str, handler) -> None:
         """注册斜杠命令 /<name>（handler 收 args 字符串，返回回复文本）。"""
         self._ext.commands[name] = Command(name, description, handler)
+
+    def register_skill(self, name: str, description: str, path: str) -> None:
+        """注册一个技能声明（name/description 进提示词，path 供 read 加载全文）。"""
+        self._ext.skills[name] = Skill(name, description, path)
 
 
 ExtensionFactory = Callable[[ExtensionAPI], Awaitable[None]]
@@ -193,6 +207,7 @@ class ExtensionRunner:
     def __init__(self, bus: EventBus) -> None:
         self._bus = bus
         self._tools: list[Tool] = []  # 会话工具表（扩展激活落点）
+        self._skills: dict[str, Skill] = {}  # 会话技能表（渐进式披露清单）
         self._commands: dict[str, Command] = {}
         self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
 
@@ -225,6 +240,9 @@ class ExtensionRunner:
                 if ext.tools:
                     self.register_tool(*ext.tools)
                     mount.tools = list(ext.tools)
+                for name, skill in ext.skills.items():
+                    self._skills[name] = skill
+                    mount.skills.append(name)
                 for event, handlers in ext.handlers.items():
                     for handler in handlers:
                         self._bus.on(event, handler)
@@ -250,6 +268,9 @@ class ExtensionRunner:
         for tool in mount.tools:
             if current.get(tool.name) is tool:  # 仍是本挂载的实例才摘
                 self.remove_tool(tool.name)
+        for name in mount.skills:
+            if name in self._skills:  # 技能同名后到覆盖，卸载摘除即可
+                del self._skills[name]
         for event, handler in mount.handlers:
             self._bus.off(event, handler)
         for name in mount.commands:
@@ -271,6 +292,11 @@ class ExtensionRunner:
         return dict(self._commands)
 
     @property
+    def skills(self) -> dict[str, Skill]:
+        """本会话可用技能（name→Skill），供 system prompt 拼技能清单。"""
+        return dict(self._skills)
+
+    @property
     def active_names(self) -> set[str]:
         return set(self._mounts)
 
@@ -280,5 +306,6 @@ class ExtensionMount:
     """单个扩展在一次会话激活中的挂载记录（per-session，非扩展声明）。"""
 
     tools: list[Tool] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
     handlers: list[tuple[Event, Handler]] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)

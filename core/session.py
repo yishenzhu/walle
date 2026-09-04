@@ -57,9 +57,13 @@ class Session:
 
         # ── 会话级运行时（每会话独立，对齐 pi AgentSession）──
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
-        self._tool_executor = ToolExecutor(tool_config or ToolConfig())  # 会话私有审批策略
+        self._tool_executor = ToolExecutor(
+            tool_config or ToolConfig()
+        )  # 会话私有审批策略
         self._agent_runner = Runner(executor=self._tool_executor, bus=self._bus)
-        self._ext_runner = ExtensionRunner(self._bus)  # 会话级扩展激活（含工具表/命令表）
+        self._ext_runner = ExtensionRunner(
+            self._bus
+        )  # 会话级扩展激活（含工具表/命令表）
         if extensions:
             self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
 
@@ -207,7 +211,7 @@ class SessionRegistry:
         ext_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
         （跳过加载失败的声明）。
         """
-        extensions = self._select_extensions(ext_names)
+        extensions = self.active_ext(ext_names)
         session = Session(
             session_id=conn.chat_id,
             agent_factory=self._agent_factory,
@@ -221,7 +225,7 @@ class SessionRegistry:
         self.register(session)
         return session
 
-    def _select_extensions(self, ext_names: list[str] | None) -> list[Extension]:
+    def active_ext(self, ext_names: list[str] | None) -> list[Extension]:
         """从扩展声明池按名单挑扩展（默认全部可用声明；跳过加载失败的）。"""
         pool = [e for e in self._extensions if e.error is None]
         if ext_names is None:

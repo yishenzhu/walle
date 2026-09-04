@@ -92,7 +92,7 @@ class TestRunnerSimple:
         await runner.run(agent, "hello", env=env)
 
         # _build_messages 返回会话历史 + system instruction
-        messages = await runner._build_messages(agent, InMemoryMessages())
+        messages = await runner._build_messages(agent, env.messages, env)
         roles = [m.role for m in messages]
         assert "system" in roles
 

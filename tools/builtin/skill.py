@@ -1,8 +1,9 @@
 """技能（Skill）：渐进式披露的提示词资源，不是工具。
 
 每个技能是 .agent/skills/<name>/SKILL.md（frontmatter name/description +
-正文指令）。本类只做"扫描 + 元数据提取"：把可用技能清单（名 + 描述 +
-SKILL.md 路径）交给 Agent 拼进 system prompt，模型按需用 read 工具加载全文。
+正文指令）。技能作为单个"skills"扩展声明：skills_ext 扫全部技能目录，
+把清单（名 + 描述 + 路径）注册进扩展——会话激活该扩展后技能清单注入
+system prompt，模型按需用 read 工具加载全文。
 """
 
 import logging
@@ -12,6 +13,7 @@ import frontmatter
 from pydantic import BaseModel
 
 from ...conf import DOT_AGENT
+from ...infra import ExtensionAPI
 
 logger = logging.getLogger(__name__)
 
@@ -65,3 +67,13 @@ class Skill:
 
         logger.info(f"skill scanned: {len(metas)} skills")
         return metas
+
+
+async def skills_ext(api: ExtensionAPI) -> None:
+    """技能扩展：扫描 .agent/skills/ 把全部技能声明注册进扩展。
+
+    会话激活该扩展后，技能清单（名/描述/路径）注入 system prompt，
+    模型按需用 read 加载对应 SKILL.md 全文（渐进式披露）。
+    """
+    for meta in Skill.scan():
+        api.register_skill(meta.name, meta.description, meta.path)

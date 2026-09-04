@@ -9,7 +9,7 @@ import frontmatter
 import yaml
 from pydantic import BaseModel, Field, create_model, model_validator
 from ..conf import DOT_AGENT
-from ..infra import Tool
+from ..infra import Skill, Tool
 
 TContext = TypeVar("TContext")
 
@@ -85,17 +85,18 @@ class Agent(BaseModel, Generic[TContext]):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    def skill_prompt(self) -> str:
-        """可用技能清单（一行一技能）。空 = 不启用。"""
-        if not self.skills:
-            return ""
-        from ..tools.builtin import Skill
+    def skill_prompt(self, skills: dict[str, Skill]) -> str:
+        """从会话可用技能拼清单（一行一技能）。
 
-        metas = Skill.scan()
+        skills 为会话激活扩展收集的技能（name→Skill）。白名单 self.skills：
+        空 = 不注入；["*"] = 全部；列表 = 只注入命中项。
+        """
+        if not self.skills or not skills:
+            return ""
         wanted = None if "*" in self.skills else set(self.skills)
         lines = [
             f"- {m.name}: {m.description}（{m.path}）"
-            for m in metas
+            for m in skills.values()
             if wanted is None or m.name in wanted
         ]
         if not lines:
