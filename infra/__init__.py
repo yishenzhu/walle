@@ -5,6 +5,7 @@ from .extension import (
     Command,
     Extension,
     ExtensionAPI,
+    ExtensionFactory,
     ExtensionMount,
     ExtensionRegistry,
     ExtensionRunner,

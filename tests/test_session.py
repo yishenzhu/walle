@@ -299,13 +299,9 @@ class TestSessionIsolation:
         mcp = MCPRegistry()
         mcp._clients.append(FakeMcpClient())
 
-        # main 组装路径：MCPRegistry 注册成扩展声明
+        # main 组装路径：MCPRegistry 作为扩展声明
         loader = ExtensionRegistry()
-
-        async def load_mcp_ext(api) -> None:
-            mcp.extension(api)  # MCP 远端工具注册进扩展 api
-
-        loader.add("mcp", load_mcp_ext)
+        loader.add("mcp", mcp.as_ext())
         await loader.load()
         mcp_ext = [e for e in loader.extensions if e.error is None]
 

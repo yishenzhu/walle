@@ -33,11 +33,7 @@ async def main() -> None:
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
     extensions = ExtensionRegistry()
     extensions.add("builtin", builtin_ext)
-
-    async def load_mcp_ext(api) -> None:
-        mcp.extension(api)  # MCP 远端工具注册进扩展 api
-
-    extensions.add("mcp", load_mcp_ext)
+    extensions.add("mcp", mcp.as_ext())  # MCP 远端工具作为扩展声明
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,
