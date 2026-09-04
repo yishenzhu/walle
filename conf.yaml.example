@@ -22,12 +22,18 @@ tool:
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [ask, jupyter]                 # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
-      - [allow, grilling]
+      - [allow, read]                 # 读文件自动放行（技能按需加载）
     default: ask
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
 session:
   storage: "sqlite"              # sqlite | memory
   db_path: "data/session.db"     # sqlite 存储路径（相对项目根）
+
+# 扩展：默认加载 .agent/extensions/ 下全部扩展；enabled 非空 = 白名单，disabled 优先
+extension:
+  dir: ".agent/extensions"
+  enabled: []                    # 例: ["audit", "sandbox"]
+  disabled: []
 
 # MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）

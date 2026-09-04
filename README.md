@@ -14,70 +14,82 @@
 | 特性 | 说明 |
 |---|---|
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
-| 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选），启动按名加载，会话内可切换 |
+| 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选/技能白名单），启动按名加载，会话内可切换 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
-| 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
-| 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
-| 🐍 **CodeAct 执行** | 持久 Jupyter kernel，Python 状态跨调用保留，异常返回 traceback 供自我调试 |
-| 📈 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
-| 🔄 **运行时自扩展** | 用代码定义工具（`define_tool`）、动态接入 MCP（`add_mcp`）、沉淀技能（Skill），持久化 `.agent/` 重启恢复 |
+| 🔌 **MCP 协议集成** | MCP 作为扩展声明（stdio / Streamable HTTP），连接进程级共享，工具随扩展进会话 |
+| 🛡️ **工具治理** | 审批即扩展：conf 规则（allow/deny/ask）由 `Approval` 扩展订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
+|  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
+| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
+| 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 
 ---
 
 ## 🏗️ 架构
 
+进程级共享"声明"，会话级自持"运行时"。
+
 ```mermaid
 flowchart TD
-    Main["main.py<br/>组装依赖 · 启动循环"]
-    Channel["Channel<br/>notify / call<br/>CLI 多会话 (JSON-line)"]
-    Runner["Runner<br/>Agent 循环 · 流式/批量"]
-    Session["Session<br/>会话实体 · attach/detach<br/>Memory / SQLite · 自动压缩"]
-    Exec["ToolExecutor<br/>工具执行器<br/>审批 · 并发 · 超时"]
-    AgentNode["Agent<br/>智能体定义<br/>Handoff · 工具筛选"]
-    Reg["ToolRegistry<br/>MCP 远程工具<br/>DefinedTool 定义工具"]
+    Main["main.py<br/>组装扩展池 · 启动"]
+    Reg["ExtensionRegistry<br/>进程级加载器<br/>builtin / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
+    SR["SessionRegistry<br/>会话注册表 · 工厂<br/>持扩展声明池 / tool_config"]
+    S["Session<br/>会话运行时容器<br/>bus · executor · runner · ext_runner"]
+    ER["ExtensionRunner<br/>会话级激活层<br/>工具表 / 技能表 / 命令表"]
+    R["Runner<br/>Agent 循环 · 流式增量事件"]
+    E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
+    A["Agent<br/>定义 · tool_filter · 技能白名单"]
+    T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
+    Ch["Channel<br/>notify / call<br/>CLI 多会话"]
 
-    Main --> Channel
-    Main --> Runner
-    Runner --> Session
-    Runner --> Exec
-    Runner --> AgentNode
-    Exec --> Reg
+    Main --> Reg
+    Reg -->|Extension 声明池| SR
+    SR -->|create 会话| S
+    S -->|activate 选中扩展| ER
+    S --> R
+    S --> E
+    R --> A
+    E --> T
+    ER -->|all_tools 工具源| R
+    Ch --> S
 
     classDef entry fill:#e8f5e9,stroke:#2e7d32
     classDef core fill:#e3f2fd,stroke:#1565c0
     classDef tool fill:#fff3e0,stroke:#e65100
-    class Main entry
-    class Runner,Session,Exec,AgentNode core
-    class Channel,Reg tool
+    class Main,Reg,SR entry
+    class S,ER,R,E,A core
+    class T,Ch tool
 ```
+
+> 详细类职责与内部变量传递边界见 [docs/architecture.md](docs/architecture.md)。
 
 ### 核心流程
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant C as Channel
+    participant C as Channel(CLI)
     participant S as Session
     participant R as Runner
-    participant T as ToolExecutor
+    participant B as Bus(会话事件)
+    participant E as ToolExecutor
     participant M as LLM
 
-    U->>C: 输入
     C->>S: handle(UserInput)
-    S->>R: run(agent, input)
+    S->>S: 斜杠命令? → CommandContext 分发(命中即返回)
+    S->>R: run(agent, input, env)
     loop 多轮迭代
-        R->>M: 调用 LLM（流式/批量）
-        M-->>R: 返回（tool_calls / 最终回复）
+        R->>M: 调用 LLM（流式增量 → MESSAGE_DELTA 事件）
+        M-->>R: tool_calls / 文本
         alt 有 tool_calls
-            R->>T: 并发执行
-            T->>T: 审批检查 → 执行
-            T-->>R: 结果
+            R->>R: tool_context 统一注入本轮 ctx
+            R->>E: execute_calls（并发）
+            E->>B: TOOL_EXECUTION_START（审批扩展 deny/ask → 人工确认）
+            E->>E: 执行工具（超时）→ TOOL_EXECUTION_END
+            E-->>R: 结果
             alt 含 Handoff
                 R->>R: 切换 Agent，继续循环
             end
         else 无 tool_calls
-            R-->>S: 最终结果
+            R-->>S: MESSAGE_END（→ DeltaEnd 推送）
         end
     end
     S-->>C: notify(Delta) 流式输出
@@ -90,13 +102,14 @@ sequenceDiagram
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 入口 | `main.py` | 依赖注入组装，启动 REPL 循环 |
-| 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
+| 入口 | `main.py` | 组装进程级扩展池（builtin/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
+| 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor） |
+| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp（MCP 客户端）、skill（技能）、approval（审批扩展：规则 + 人工确认）、define_tool 动态定义 |
+| 扩展激活 | `infra/extension.py` | ExtensionRegistry（进程级加载器）+ ExtensionRunner（会话级激活层：工具/技能/命令表）+ CommandContext |
+| 底层类型 | `infra/` | Tool、EventBus、HookVerdict、诊断、日志、遥测、指标、LLM Provider |
 | 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
-| 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
-| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略（会话实体在 `core/session.py`） |
+| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略 |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
-| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider、Jupyter kernel |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -141,7 +154,7 @@ cp .env.example .env             # LLM API Key
 启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
 `PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。
 
-会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史/kernel），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
+会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 
@@ -182,9 +195,8 @@ tool:
     rules:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
-      - [ask, jupyter]                # 代码执行默认需人工确认
       - [allow, ask_user]             # 提问工具自动放行
-      - [allow, grilling]             # 技能工具自动放行
+      - [allow, read]                 # 读文件自动放行（技能按需加载全文）
     default: ask                      # 默认需人工审批
 
 session:
@@ -215,7 +227,7 @@ session:
 | `.agent/agents/` | Agent 定义（frontmatter Markdown，文件名即 agent 名） | 手动编辑 |
 | `.agent/skills/` | 技能（SKILL.md + 可选 scripts/assets） | `skill-creator` 或手动 |
 | `.agent/tools/` | 模型定义的代码工具 | `define_tool` |
-| `.agent/mcp.yaml` | MCP Server 配置 | `add_mcp` 或手动编辑 |
+| `.agent/mcp.yaml` | MCP Server 配置 | 手动编辑 |
 
 以上均在下次启动自动恢复。
 
@@ -235,7 +247,7 @@ tools:
     - bash
 ---
 
-你是一名资深编码助手。优先使用 python/jupyter 完成任务，禁止 bash 执行任意命令。
+你是一名资深编码助手。优先使用 python/bash 完成任务，禁止 bash 执行任意危险命令。
 ```
 
 | frontmatter 字段 | 类型 | 说明 |
@@ -245,12 +257,12 @@ tools:
 | `temperature` | float | 可选，采样温度 |
 | `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `[]` 禁用全部，需显式授权） |
 | `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
-| `output_model` | string | 可选，引用 `.agent/agents/models.yaml` 中同名定义，作为结构化输出模型 |
+| `skills` | list[string] | 可选，技能白名单：`[]` 不注入 / `["*"]` 全部 / 列表仅命中项 |
 
-- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` / `add_mcp` 新增的工具
-- **输出模型**：`output_model: summary` 会在启动时从 `.agent/agents/models.yaml` 构建 Pydantic 模型，作为 `response_format` 约束；模型定义见 `models.yaml` 内注释
+- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配。Agent 不持有工具源——运行时每轮从会话扩展 runner 取工具表并经 `tools` 过滤
+- **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
-- **会话内切换**：API `Session.set_agent(name)` 按名切换（历史/kernel 保留）；未指定时用默认 agent
+- **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
 
@@ -264,14 +276,18 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（kernel / interact）
+    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs）
     return f"result: {query}"
 ```
 
 ```python
-# tools/registry.py
-self.add_function(my_tool)
+# main.py 引导扩展里注册（内置工具也走扩展系统，先于用户扩展）
+async def builtin_ext(api) -> None:
+    for fn in (bash, ask_user, my_tool, ...):
+        api.register_tool(Tool.from_function(fn))
 ```
+
+用户扩展（`.agent/extensions/`）后注册可同名覆盖内置工具。
 
 ### 添加 Skill
 
@@ -286,10 +302,13 @@ name: code-review
 description: Review code changes in the current project.
 ---
 
-技能的 system prompt 内容...
+技能正文（工作流/指令，可引用同目录 scripts、references 等资源）...
 ```
 
-框架启动时自动加载为工具。
+技能不是工具：框架把每个技能的 name/description/路径作为**可用技能清单**
+注入 agent 的 system prompt（agent 的 `skills` frontmatter 白名单控制哪些
+注入），模型在任务匹配时按需加载对应 SKILL.md 全文后执行。agent 缺省
+`skills: []` 不注入任何技能；`["*"]` 表示注入全部。
 
 ### 添加 MCP Server
 
@@ -307,8 +326,6 @@ http-server:
     Authorization: "Bearer xxx"
   enabled: false
 ```
-
-Agent 也可在对话中用 `add_mcp` 动态添加，连接成功后自动持久化。
 
 ### 动态定义工具
 
@@ -328,7 +345,7 @@ async def weather(city: str) -> str:
 from walle.core import Agent, Handoff
 from walle.tools import Tool
 
-# 工具源：返回工具列表的 callable（运行期新增的 define_tool / add_mcp 工具实时反映）
+# 工具源：返回工具列表的 callable（运行期新增的 define_tool 工具实时反映）
 def all_tools() -> list[Tool]:
     return [search_tool, write_tool]
 
@@ -362,23 +379,24 @@ walle/
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（审批·并发·超时）
-│   ├── approval.py            #   审批规则引擎
-│   └── session.py             #   会话实体（attach/detach，支持切换 Agent）
+│   ├── executor.py            #   工具执行器（并发·超时）
+│   ├── session.py             #   会话实体（attach/detach，支持切换 Agent）
+│   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
-├── tools/                     # 工具系统
-│   ├── tool.py                #   Tool 模型 + ContextVar
-│   ├── registry.py            #   工具注册表
-│   ├── mcp.py                 #   MCP 配置 + 客户端
-│   ├── defined.py             #   模型定义工具（校验/持久化）
-│   └── builtin/               #   内置工具
+├── tools/                     # 工具与扩展声明
+│   ├── mcp.py                 #   MCP 配置 + 客户端（Registry.as_ext）
+│   ├── skill.py               #   技能扫描（Skill.as_ext）
+│   ├── approval.py            #   审批扩展（Approval.as_ext：规则 + 人工确认）
+│   ├── __init__.py            #   tools 公共导出
+│   └── builtin/               #   内置工具扩展
 │       ├── bash.py            #     Bash 执行
-│       ├── python.py          #     jupyter 代码执行（CodeAct）
+│       ├── read.py            #     文件读取
 │       ├── ask_user.py        #     向用户提问
+│       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
-│       └── skill.py           #     Skill 加载器
+│       └── extension.py       #     builtin 扩展声明
 
 ├── messages/                  # 消息存储
 │   ├── protocol.py            #   Messages Protocol
@@ -397,7 +415,6 @@ walle/
 │   ├── telemetry.py           #   OpenTelemetry 初始化
 │   ├── metrics.py             #   指标定义
 │   ├── provider.py            #   LLM Provider（create/stream/set_model）
-│   ├── jupyter.py             #   Jupyter kernel（持久 Python 解释器）
 │   └── sqlite_store.py        #   SQLite 存储工具
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
@@ -414,7 +431,7 @@ walle/
 │   ├── agents/                #   Agent 定义（frontmatter Markdown）
 │   ├── skills/                #   技能（skill-creator 生成）
 │   ├── tools/                 #   模型定义的工具（define_tool）
-│   └── mcp.yaml               #   MCP Server 配置（add_mcp）
+│   └── mcp.yaml               #   MCP Server 配置（手动编辑）
 └── scripts/
     └── run.sh                 # 一键启动脚本
 ```
@@ -441,13 +458,12 @@ walle/
 `eval/` 是自建的能力评测套件：无头执行（真实 LLM + 内置工具，无人工交互），
 按域覆盖核心引擎能力，自动评分并生成报告。
 
-### 任务域（20 任务）
+### 任务域（14 任务）
 
 | 域 | 任务数 | 覆盖能力 |
 |---|---|---|
-| codeact | 6 | Jupyter kernel 计算 / 跨调用状态保留 / 报错自愈 |
 | bash | 5 | shell 统计 / 文件读写 |
-| combined | 3 | bash + jupyter 多工具流水线 |
+| combined | 3 | bash 多工具流水线 |
 | define_tool | 2 | 模型运行期定义工具并立即使用 |
 | background | 2 | 后台作业派发 → job_result 取回 |
 | handoff | 2 | 多智能体链式移交 |
@@ -455,9 +471,9 @@ walle/
 ### 运行
 
 ```bash
-PYTHONPATH=.. .venv/bin/python -m walle.eval.run             # 全量 20 任务
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run             # 全量 14 任务
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --smoke     # 冒烟（1 任务）
-PYTHONPATH=.. .venv/bin/python -m walle.eval.run --domain codeact
+PYTHONPATH=.. .venv/bin/python -m walle.eval.run --domain bash
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --repeat 3  # 每任务 3 次取均值
 PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上次报告（不调 LLM）
 ```
@@ -471,7 +487,7 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上�
 
 | 指标 | 值 |
 |---|---|
-| 成功率 | 20/20 (100%) |
+| 成功率 | 14/14 (100%) |
 | 平均轮次 | 2.7 |
 | 平均 token/任务 | 2,041 |
 | 平均耗时/任务 | 7.7s |
@@ -504,7 +520,7 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split
 ```
 
 报告输出到 `eval/report/tau/`（复用自建套件的报告管线）。支持 `--concurrency N`
-线程池并发（每用例独立 env/provider/kernel）与 `--resume` 断点续跑（每完成一个
+线程池并发（每用例独立 env/provider）与 `--resume` 断点续跑（每完成一个
 用例即写盘）。
 
 ### 结果（retail test 全量 115 用例，deepseek-v4-flash）

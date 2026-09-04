@@ -3,11 +3,11 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Handoff, Runner, RunOptions, SessionEnv, ToolExecutor
+from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
-from ..tools import Tool
+from ..infra import Tool
 
 from .conftest import (
     FakeChannel,
@@ -47,13 +47,13 @@ def runner(allow_executor):
 
 @pytest.fixture
 def env(channel):
-    """默认会话环境：独立 kernel + 历史（每测试隔离）。"""
-    from ..infra import PyKernel
+    """默认会话环境：历史（每测试隔离）+ 会话扩展 runner（工具表）。"""
+    from ..core import EventBus, ExtensionRunner
 
-    return SessionEnv(
+    return SessionContext(
         channel=channel,
-        kernel=PyKernel(),
         messages=InMemoryMessages(),
+        ext_runner=ExtensionRunner(EventBus()),
     )
 
 
@@ -95,7 +95,7 @@ class TestRunnerSimple:
         await runner.run(agent, "hello", env=env)
 
         # _build_messages 返回会话历史 + system instruction
-        messages = await runner._build_messages(agent, InMemoryMessages())
+        messages = await runner._build_messages(agent, env.messages, env)
         roles = [m.role for m in messages]
         assert "system" in roles
 
@@ -123,7 +123,8 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="I used echo")),
         )
 
-        agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool("result!")])
+        agent = Agent(instruction="helpful")
+        env.ext_runner.register_tool(make_echo_tool("result!"))
 
         result = await runner.run(agent, "use echo", env=env)
 
@@ -162,7 +163,8 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="done")),
         )
 
-        agent = Agent(instruction="helpful", tools=lambda: [tool_a, tool_b])
+        agent = Agent(instruction="helpful")
+        env.ext_runner.register_tool(tool_a, tool_b)
 
         result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
@@ -290,17 +292,16 @@ class TestRunnerModelParams:
 
 
 class TestRunnerBuildTools:
-    """_build_tools 方法测试。"""
+    """_build_tools 方法测试：源 = 会话工具列表（调用方从扩展 runner 取）。"""
 
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
         agent = Agent(
             instruction="helpful",
-            tools=lambda: [tool],
             tool_filter=ToolFilter(allow=["*"]),
         )
         runner = Runner()
-        tools = runner._build_tools(agent)
+        tools = runner._build_tools(agent, [tool])
         assert "echo" in tools
 
     def test_includes_handoff_tools(self, provider):
@@ -310,45 +311,30 @@ class TestRunnerBuildTools:
             handoffs=[Handoff(target=researcher)],
         )
         runner = Runner()
-        tools = runner._build_tools(agent)
+        tools = runner._build_tools(agent, [])
         assert "transfer_to_researcher" in tools
 
-    def test_includes_tool_source(self, provider):
-        """tools（工具源函数）返回的工具实时进入 Agent 工具列表。"""
-        dynamic = make_echo_tool("dyn")
-
-        agent = Agent(
-            instruction="helpful",
-            tools=lambda: [dynamic],
-            tool_filter=ToolFilter(allow=["*"]),
-        )
+    def test_tool_filter_applied(self, provider):
+        """agent.tool_filter 从会话工具源中筛选（allow/deny）。"""
+        tool = make_echo_tool()
+        agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["echo"]))
         runner = Runner()
-        tools = runner._build_tools(agent)
-        assert "echo" in tools
+        assert "echo" in runner._build_tools(agent, [tool])
+        agent2 = Agent(instruction="helpful", tool_filter=ToolFilter(allow=[]))
+        assert runner._build_tools(agent2, [tool]) == {}
 
-    def test_agent_tools_from_source(self):
-        """agent.tools 源实时获取工具。"""
-        dynamic = make_echo_tool("dyn")
-
-        agent = Agent(
-            instruction="helpful",
-            tools=lambda: [dynamic],
-        )
-        names = {t.name for t in agent.tools()}
-        assert names == {"echo"}
-
-    def test_agent_tools_none(self, provider):
-        """无 tools 源时 _build_tools 正常（空工具）。"""
-        agent = Agent(instruction="helpful")
+    def test_no_tools_returns_empty(self, provider):
+        """空源（无 ext_runner / 无工具）→ 空工具。"""
+        agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
         runner = Runner()
-        assert runner._build_tools(agent) == {}
+        assert runner._build_tools(agent, []) == {}
 
 
 class TestRunnerNoProvider:
     """无 Provider 时 run 应报错（默认 provider 缺失）。"""
 
     async def test_raises_without_provider(self):
-        from ..infra import OpenAIProvider, PyKernel
+        from ..infra import OpenAIProvider
 
         backup = OpenAIProvider._default
         OpenAIProvider._default = None
@@ -358,106 +344,84 @@ class TestRunnerNoProvider:
                 await Runner().run(
                     agent,
                     "hi",
-                    env=SessionEnv(kernel=PyKernel(), messages=InMemoryMessages()),
+                    env=SessionContext(messages=InMemoryMessages()),
                 )
         finally:
             OpenAIProvider._default = backup
 
 
-class TestRunnerKernel:
-    """Runner 完全无状态：kernel 由调用方传入 run，工具经其执行。"""
+class TestRunnerToolHooks:
+    """Runner 贯通 bus 到工具层（before/after 钩子）。"""
 
-    async def test_run_uses_passed_kernel(self, provider, channel, allow_executor):
-        """run 传入的 kernel 被工具执行使用（同一 kernel 跨 run 状态保留）。"""
-        from ..infra import PyKernel
-        from ..tools import ToolContext, tool_context
+    async def test_tool_blocked_by_before_hook(self, provider, env):
+        from ..core import Event, EventBus
 
-        async def py(args):
-            # 通过 tool_context 上下文变量拿 kernel 并执行
-            ctx = tool_context.get()
-            return await ctx.kernel.run("x = 5")
+        async def block(**ctx_):
+            return HookVerdict(block="runner 层拦截")
 
-        tool = Tool(
-            name="py",
-            description="run py",
-            parameters={"type": "object", "properties": {}},
-            fn=py,
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_START, block)
+
+        runner = Runner(
+            executor=ToolExecutor(
+                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+            ),
+            bus=bus,
         )
 
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
-                    tool_calls=[FakeToolCall(id="tc1", name="py", arguments="{}")]
+                    tool_calls=[FakeToolCall(id="tc1", name="echo", arguments="{}")]
                 )
             ),
             FakeCompletion(FakeMessage(content="done")),
         )
-        agent = Agent(instruction="helpful", tools=lambda: [tool])
 
-        runner = Runner(executor=allow_executor)
-        kernel = PyKernel()
-        result = await runner.run(
-            agent,
-            "run",
-            env=SessionEnv(
-                channel=channel,
-                kernel=kernel,
-                messages=InMemoryMessages(),
-            ),
+        agent = Agent(
+            instruction="helpful",
+            tools=lambda: [make_echo_tool()],
+            tool_filter=ToolFilter(allow=["*"]),
         )
+        result = await runner.run(agent, "use echo", env=env)
+
+        # 工具被拦下 → 无输出结果，但流程继续（工具结果为空导致轮次结束）
+        assert result.completed_turns == 2
         assert result.output == "done"
-        await kernel.close()
 
-    async def test_runner_kernel_state_persists_across_turns(
-        self, provider, channel, allow_executor
-    ):
-        """同一 kernel 跨多次 run 保留状态（会话级，由 Session 持有）。"""
-        from ..infra import PyKernel
-        from ..tools import tool_context
+    async def test_tool_after_hook_notified(self, provider, env):
+        from ..core import Event, EventBus, ExtensionRunner
 
-        async def py(args):
-            ctx = tool_context.get()
-            return await ctx.kernel.run(args["code"])
+        seen: list[str] = []
 
-        tool = Tool(
-            name="py",
-            description="run py",
-            parameters={"type": "object", "properties": {"code": {"type": "string"}}},
-            fn=py,
+        async def record(**ctx_):
+            seen.append(ctx_["tool_name"])
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_END, record)
+
+        runner = Runner(
+            executor=ToolExecutor(
+                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+            ),
+            bus=bus,
         )
 
         provider.client.chat.completions.set_responses(
             FakeCompletion(
                 FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="t1", name="py", arguments='{"code": "y = 10"}')
-                    ]
-                )
-            ),
-            FakeCompletion(FakeMessage(content="ok")),
-            FakeCompletion(
-                FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="t2", name="py", arguments='{"code": "y * 2"}')
-                    ]
+                    tool_calls=[FakeToolCall(id="tc1", name="echo", arguments="{}")]
                 )
             ),
             FakeCompletion(FakeMessage(content="done")),
         )
-        agent = Agent(instruction="helpful", tools=lambda: [tool])
 
-        runner = Runner(executor=allow_executor)
-        kernel = PyKernel()
-        r1 = await runner.run(
-            agent,
-            "set",
-            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
+        agent = Agent(
+            instruction="helpful",
+            tool_filter=ToolFilter(allow=["*"]),
         )
-        r2 = await runner.run(
-            agent,
-            "get",
-            env=SessionEnv(channel=channel, kernel=kernel, messages=InMemoryMessages()),
-        )
-        assert r1.output == "ok"
-        assert r2.output == "done"
-        await kernel.close()
+        env.ext_runner = ExtensionRunner(bus)  # 工具经会话扩展 runner 提供
+        env.ext_runner.register_tool(make_echo_tool())
+        await runner.run(agent, "use echo", env=env)
+
+        assert seen == ["echo"]

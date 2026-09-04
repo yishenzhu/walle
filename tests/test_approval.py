@@ -2,7 +2,7 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
-from ..core.approval import ApprovalRule, ApprovalPolicy
+from ..tools.approval import ApprovalRule, ApprovalPolicy
 
 
 # ── ApprovalRule.parse ────────────────────────────────

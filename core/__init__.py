@@ -1,18 +1,25 @@
-from .agent import Agent, Handoff, TContext
-from .approval import (
-    ApprovalPolicy,
-    Approver,
-    ChannelApprover,
-    AutoApproveApprover,
-    DenyApprover,
-    TimeoutApprover,
+from .agent import Agent, Handoff
+from ..infra import (
+    Command,
+    DiagnosticType,
+    Event,
+    EventBus,
+    Extension,
+    ExtensionAPI,
+    ExtensionMount,
+    ExtensionRegistry,
+    ExtensionRunner,
+    ExtensionState,
+    Handler,
+    HookVerdict,
+    ResourceDiagnostic,
 )
 from .executor import ToolExecutor
 from .runner import (
     Runner,
     RunResult,
     RunOptions,
-    SessionEnv,
+    SessionContext,
 )
 from .session import (
     Session,

@@ -1,4 +1,4 @@
-from .. import tool_context
+from ...infra import tool_context
 from ...schemas import Inquiry
 
 

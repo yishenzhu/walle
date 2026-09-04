@@ -17,8 +17,8 @@ from pathlib import Path
 from pyflakes.api import check
 from pyflakes.reporter import Reporter
 
-from ..conf import DOT_AGENT
-from .tool import Tool
+from ...conf import DOT_AGENT
+from ...infra import Tool, tool_context
 
 logger = logging.getLogger(__name__)
 
@@ -123,3 +123,21 @@ class DefinedTool:
             except Exception as e:
                 logger.warning(f"defined tool load failed ({name}): {e}")
         return tools
+
+
+async def define_tool(name: str = "", code: str = "") -> str:
+    """定义一个新工具：提交代码（顶层 async def <name> + docstring 即描述）。
+
+    校验通过后持久化并立即注册进当前会话（经 tool_context 的注册通道）。
+    """
+    if not name or not code:
+        return "Error: name 和 code 均为必填"
+    try:
+        tool = DefinedTool().create(name, code)
+    except (ToolCodeError, OSError, ValueError) as e:
+        return f"定义失败: {e}"
+    ctx = tool_context.get()
+    if ctx is None or ctx.register_tool is None:
+        return f"定义失败: 当前无会话注册通道（{name} 已持久化）"
+    ctx.register_tool(tool)
+    return f"工具已定义并生效: {name}"

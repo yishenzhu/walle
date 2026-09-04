@@ -1,3 +1,7 @@
+"""核心数据类型：工具（Tool）与工具执行上下文（ToolContext）。"""
+
+from __future__ import annotations
+
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -7,19 +11,18 @@ from enum import StrEnum
 from typing import Any
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
-from pydantic import BaseModel
 
 from ..channel import Channel
-from ..infra import PyKernel
+from .event_bus import EventBus
 
 
 class JobStatus(StrEnum):
     """后台作业状态。"""
 
-    PENDING = "pending"   # 待启动（background 已登记，executor 未拉起）
-    RUNNING = "running"   # 运行中（executor 已 create_task）
-    DONE = "done"         # 完成（result 可读）
-    ERROR = "error"       # 失败（error 可读）
+    PENDING = "pending"  # 待启动（background 已登记，executor 未拉起）
+    RUNNING = "running"  # 运行中（executor 已 create_task）
+    DONE = "done"  # 完成（result 可读）
+    ERROR = "error"  # 失败（error 可读）
 
 
 @dataclass
@@ -30,22 +33,24 @@ class Job:
     running 起 task；done 存 result；error 存错误信息。
     """
 
-    status: JobStatus = JobStatus.PENDING   # 见 JobStatus
-    tool_name: str | None = None            # pending 时：要执行的工具名
-    args: dict[str, Any] | None = None      # pending 时：工具参数
-    task: asyncio.Task | None = None        # running 后：后台任务
-    result: Any = None                      # done：执行结果
-    error: str | None = None                # error：错误信息
+    status: JobStatus = JobStatus.PENDING  # 见 JobStatus
+    tool_name: str | None = None  # pending 时：要执行的工具名
+    args: dict[str, Any] | None = None  # pending 时：工具参数
+    task: asyncio.Task | None = None  # running 后：后台任务
+    result: Any = None  # done：执行结果
+    error: str | None = None  # error：错误信息
 
 
 @dataclass
 class ToolContext:
     # 会话 channel：工具按需发起 notify / call（如 ask_user 提问）
     channel: Channel | None = None
-    # 会话级计算资源：python 工具的持久解释器（按会话隔离，由 Session 管理）
-    kernel: PyKernel | None = None
     # 后台作业表：跨轮存活（Session 持有并传入），job_id → Job
     jobs: dict[str, Job] = field(default_factory=dict)
+    # 进程级事件总线：工具执行钩子（before/after）屏障来源
+    bus: EventBus | None = None
+    # 会话工具注册回调：动态工具（define_tool）经此把新工具注册进当前会话
+    register_tool: Callable[[Tool], None] | None = None
 
     def add_pending(self, tool_name: str, args: dict[str, Any] | None = None) -> str:
         """登记一个待启动的后台作业（executor 在本轮工具跑完后拉起）。"""
@@ -59,13 +64,17 @@ class ToolContext:
 tool_context: ContextVar[ToolContext | None] = ContextVar("tool_context", default=None)
 
 
-class Tool(BaseModel):
+@dataclass
+class Tool:
+    """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。
+
+    纯数据 + 行为，不需要 pydantic 序列化（schema 由 formatted_schema 生成）。
+    """
+
     name: str
     description: str
     parameters: dict[str, Any]
     fn: Callable[[dict[str, Any]], Awaitable[Any]]
-
-    model_config = {"arbitrary_types_allowed": True}
 
     async def run(self, args: dict[str, Any]) -> Any:
         return await self.fn(args)

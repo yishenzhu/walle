@@ -4,8 +4,8 @@ background 只登记 pending 作业到 ctx.jobs（不碰 executor）；本轮工
 完后由 executor.launch_pending 统一拉起，结果用 job_result 稍后查询取回。
 """
 
-from .. import tool_context
-from ..tool import JobStatus
+from ...infra import tool_context
+from ...infra import JobStatus
 from ...schemas import JobDispatch, JobResult
 
 

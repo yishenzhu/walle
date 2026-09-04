@@ -161,7 +161,7 @@ class CLIChannel:
     握手 hello 帧：
       - 带 attach=true + chat_id → 从 registry 取已有会话 attach（resume）
       - 否则 → registry.create(conn) 新建会话（绑定本连接为 transport）
-    连接断开 → detach 保留会话（kernel/messages 状态跨连接存活），
+    连接断开 → detach 保留会话（messages 状态跨连接存活），
     会话留在 registry 供重连 attach。真正销毁走 registry 显式 remove+close。
     """
 
@@ -217,6 +217,7 @@ class CLIChannel:
 
             chat_id = msg.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
             attach = bool(msg.get("attach", False))
+            ext_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
 
             conn = CLIConn(chat_id, reader, writer)
 
@@ -231,8 +232,8 @@ class CLIChannel:
                 session.attach(conn)
                 logger.info(f"cli client reattached: {chat_id}")
             else:
-                # 新会话：registry.create（注入 factory 构造 + attach + 注册）
-                session = self._registry.create(conn)
+                # 新会话：registry.create（按需激活指定扩展）
+                session = self._registry.create(conn, ext_names)
                 logger.info(f"cli client connected: {chat_id}")
 
             async def on_input(content: str) -> None:
@@ -250,7 +251,7 @@ class CLIChannel:
         finally:
             if session is not None:
                 try:
-                    # 断开只 detach（保留 kernel/messages 供重连），不 close
+                    # 断开只 detach（保留 messages 供重连），不 close
                     session.detach()
                 except Exception as exc:
                     logger.warning(f"session {chat_id} detach failed: {exc}")
@@ -276,11 +277,13 @@ class CLIClient:
         host: str = HOST,
         port: int = PORT,
         attach: str = "",
+        extensions: list[str] | None = None,
     ):
         self._host = host
         self._port = port
         self._chat_id = attach or f"cli-{uuid.uuid4().hex[:12]}"
         self._attach = bool(attach)
+        self._extensions = extensions  # 可选：新会话要激活的扩展名
         self._reply_done = asyncio.Event()  # 回复完成（delta_end）信号
 
     @staticmethod
@@ -308,14 +311,14 @@ class CLIClient:
     async def run(self) -> None:
         """连接服务端，握手（attach 或新建）后双循环收发。"""
         reader, writer = await asyncio.open_connection(self._host, self._port)
-        await self._send(
-            writer,
-            {
-                "type": "hello",
-                "chat_id": self._chat_id,
-                "attach": bool(self._attach),
-            },
-        )
+        hello = {
+            "type": "hello",
+            "chat_id": self._chat_id,
+            "attach": bool(self._attach),
+        }
+        if self._extensions:
+            hello["extensions"] = self._extensions
+        await self._send(writer, hello)
         mode = "恢复会话" if self._attach else "新会话"
         print(
             f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C 退出）"
@@ -456,18 +459,24 @@ class CLIClient:
 
 
 def main() -> None:
-    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--list]。"""
+    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--extensions a,b] [--list]。"""
     import argparse
 
     parser = argparse.ArgumentParser(prog="walle-cli", description="walle CLI 客户端")
     parser.add_argument("--attach", default="", help="恢复已有会话（attach）")
+    parser.add_argument(
+        "--extensions",
+        default="",
+        help="新会话激活的扩展名（逗号分隔，缺省全部）",
+    )
     parser.add_argument("--list", action="store_true", help="浏览会话（仅元数据）")
     args = parser.parse_args()
 
     if args.list:
         asyncio.run(CLIClient.list_sessions())
     else:
-        asyncio.run(CLIClient(attach=args.attach).run())
+        exts = [e.strip() for e in args.extensions.split(",") if e.strip()] or None
+        asyncio.run(CLIClient(attach=args.attach, extensions=exts).run())
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 """Session 存储持久化 + attach/detach 生命周期测试。"""
+
 import pytest
 
-from ..core import Session, SessionRegistry, Runner, Agent, ToolExecutor
+from ..core import Agent, Event, Session, SessionRegistry
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..schemas import UserMessage
 from ..messages import SQLiteMessages, InMemoryMessages
@@ -10,14 +11,12 @@ from .conftest import FakeChannel, FakeProvider
 
 
 def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"):
-    """构造一个不依赖真实 LLM 的 Session（agent_factory 为最小 Agent）。"""
-    runner = Runner(executor=ToolExecutor(ToolConfig(
-        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-    )))
+    """构造一个 Session（agent 由内部按名加载 .agent/agents/default.md）。"""
     return Session(
         session_id=session_id,
-        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
-        runner=runner,
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+        ),
         transport=transport or FakeChannel(),
         storage=storage,
         db_path=db_path,
@@ -27,10 +26,9 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
 def make_registry(db_path: str) -> SessionRegistry:
     """构造带 Session 构造参数的 registry（register 测试用）。"""
     return SessionRegistry(
-        agent_factory=lambda _name=None: Agent(instruction="You are a helpful assistant."),
-        runner=Runner(executor=ToolExecutor(ToolConfig(
+        tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        ))),
+        ),
         db_path=db_path,
     )
 
@@ -91,14 +89,13 @@ class TestSessionStorage:
 
 class TestSessionLifecycle:
     async def test_attach_detach(self, tmp_path):
-        """attach 绑定 transport；detach 解除但不销毁 kernel/messages。"""
+        """attach 绑定 transport；detach 解除但不销毁 messages。"""
         s = make_session("life", str(tmp_path / "s.db"))
         assert s.attached is True
 
         s.detach()
         assert s.attached is False
-        # detach 后状态仍在（kernel 未关、消息可读）
-        assert s._kernel is not None
+        # detach 后状态仍在（消息可读）
         await s._messages.add([UserMessage(content="after-detach")])
         msgs = await s._messages.get()
         assert len(msgs) == 1
@@ -159,3 +156,226 @@ class TestSessionRegistry:
         reg.register(s2)
         await reg.close()
         assert reg.list() == []
+
+
+class TestSessionCommandDispatch:
+    async def test_command_reply_bypasses_runner(self, tmp_path):
+        """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
+        from ..schemas import UserInput
+        from ..core import ExtensionAPI, ExtensionRegistry, Extension
+
+        ch = FakeChannel()
+        # 构造一个注册了 /ping 命令的扩展声明，激活进会话
+        loader = ExtensionRegistry()
+
+        async def load_cli(api: ExtensionAPI):
+            from ..schemas import Delta, DeltaEnd
+
+            async def ping(args: str, ctx):
+                # 推送由命令自己决定：经 channel notify Delta 回复流
+                await ctx.channel.notify(Delta(delta="pong"))
+                await ctx.channel.notify(DeltaEnd())
+
+            api.register_command("ping", "ping", ping)
+
+        loader.add("cli", load_cli)
+        await loader.load()
+        ext = loader.extensions[0]
+
+        s = Session(
+            session_id="cmd-1",
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=[ext],
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+        # 命中命令：无 provider 也正常（不经 runner），回复被推送
+        await s.handle(UserInput(content="/ping"))
+        types = [type(e).__name__ for e in ch.events]
+        assert types == ["Delta", "DeltaEnd"]  # 只有回复推送，无 agent 输出
+        assert ch.events[0].delta == "pong"
+
+        await s.close()
+
+    async def test_silent_command_no_push(self, tmp_path):
+        """静默命令（handler 返回 None）：命中但无任何推送。"""
+        from ..schemas import UserInput
+        from ..core import ExtensionAPI, ExtensionRegistry
+
+        ch = FakeChannel()
+        loader = ExtensionRegistry()
+
+        async def load_cli(api: ExtensionAPI):
+            async def noop(args: str, ctx):
+                return None  # 不调用 ctx → 静默执行
+
+            api.register_command("noop", "noop", noop)
+
+        loader.add("cli", load_cli)
+        await loader.load()
+
+        s = Session(
+            session_id="cmd-2",
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=[loader.extensions[0]],
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+        try:
+            await s.handle(UserInput(content="/noop"))
+            assert ch.events == []  # 无推送
+        finally:
+            await s.close()
+
+
+class TestSessionStreamForward:
+    """Runner 只发事件，Session 监听 MESSAGE_DELTA/END 转发给 transport。"""
+
+    def _session(self, tmp_path, ch: FakeChannel) -> Session:
+        return Session(
+            session_id="stream-1",
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+    async def test_delta_and_end_forwarded_to_transport(self, tmp_path):
+        ch = FakeChannel()
+        s = self._session(tmp_path, ch)
+        try:
+            await s._bus.emit(Event.MESSAGE_DELTA, delta="你好")
+            await s._bus.emit(Event.MESSAGE_END, output="你好")
+            types = [type(e).__name__ for e in ch.events]
+            assert types == ["Delta", "DeltaEnd"]
+            assert ch.events[0].delta == "你好"
+        finally:
+            await s.close()
+
+    async def test_tool_turn_no_delta_end(self, tmp_path):
+        """MESSAGE_END output=None（工具轮/异常）→ 不发 DeltaEnd。"""
+        ch = FakeChannel()
+        s = self._session(tmp_path, ch)
+        try:
+            await s._bus.emit(Event.MESSAGE_END, output=None)
+            assert ch.events == []
+        finally:
+            await s.close()
+
+    async def _registry(self, tmp_path) -> SessionRegistry:
+        from ..core import ExtensionAPI, ExtensionRegistry
+        from ..infra import Tool
+
+        loader = ExtensionRegistry()
+
+        async def ext_a(api: ExtensionAPI):
+            async def fa(args):
+                return "a"
+
+            api.register_tool(
+                Tool(name="tool_a", description="a", parameters={}, fn=fa)
+            )
+            api.on(Event.AGENT_START, lambda **kw: None)
+
+        async def ext_b(api: ExtensionAPI):
+            async def fb(args):
+                return "b"
+
+            api.register_tool(
+                Tool(name="tool_b", description="b", parameters={}, fn=fb)
+            )
+
+        loader.add("ext_a", ext_a)
+        loader.add("ext_b", ext_b)
+        await loader.load()
+        pool = [e for e in loader.extensions if e.error is None]
+
+        reg = SessionRegistry(
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=pool,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+        return reg
+
+    async def test_sessions_activate_different_extensions(self, tmp_path):
+        """会话 1 用全部扩展；会话 2 只激活 ext_a——工具表不同、事件隔离。"""
+        reg = await self._registry(tmp_path)
+
+        class Conn:
+            def __init__(self, chat_id):
+                self.chat_id = chat_id
+
+        s1 = reg.create(Conn("s1"))  # 默认：全部扩展
+        s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
+
+        names1 = {t.name for t in s1.context.ext_runner.all_tools()}
+        names2 = {t.name for t in s2.context.ext_runner.all_tools()}
+        assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
+        assert names2 == {"tool_a"}  # 会话 2 只有 ext_a
+
+        # 运行时隔离：各自 context / 扩展激活层独立（bus/工具表随会话）
+        assert s1.context is not s2.context
+        assert s1.context.ext_runner is not s2.context.ext_runner
+        assert s1.context.ext_runner.active_names == {"ext_a", "ext_b"}
+        assert s2.context.ext_runner.active_names == {"ext_a"}
+
+        await reg.close()
+
+    async def test_mcp_extension_tools_visible_in_session(self, tmp_path):
+        """MCP 工具经扩展组装进会话：extension → 扩展声明 → 会话激活。"""
+        from ..core import ExtensionRegistry
+        from ..infra import Tool
+        from ..tools.mcp import MCPRegistry
+
+        async def fake_fn(args):
+            return "mcp-result"
+
+        fake_tool = Tool(
+            name="mcp_remote_search",
+            description="remote",
+            parameters={"type": "object"},
+            fn=fake_fn,
+        )
+
+        class FakeMcpClient:
+            name = "remote"
+            tools = [fake_tool]
+
+        mcp = MCPRegistry()
+        mcp._clients.append(FakeMcpClient())
+
+        # main 组装路径：MCPRegistry 作为扩展声明
+        loader = ExtensionRegistry()
+        loader.add("mcp", mcp.as_ext)
+        await loader.load()
+        mcp_ext = [e for e in loader.extensions if e.error is None]
+
+        reg = SessionRegistry(
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=mcp_ext,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+        class Conn:
+            chat_id = "mcp-1"
+
+        s = reg.create(Conn())
+        names = {t.name for t in s.context.ext_runner.all_tools()}
+        assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
+
+        await reg.close()

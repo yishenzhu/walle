@@ -1,28 +1,13 @@
 from __future__ import annotations
 
 import fnmatch
-import functools
 from pathlib import Path
-from typing import TypeVar, Generic, Any, Callable
+from typing import Any
 
 import frontmatter
-import yaml
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, Field, model_validator
 from ..conf import DOT_AGENT
-from ..tools import Tool
-
-TContext = TypeVar("TContext")
-
-# 简写类型名 → Python 类型
-TYPE_MAP = {
-    "str": str,
-    "int": int,
-    "float": float,
-    "bool": bool,
-    "any": Any,
-    "object": dict,
-    "array": list,
-}
+from ..infra import Skill, Tool
 
 
 class ToolFilter(BaseModel):
@@ -69,31 +54,50 @@ class Handoff(BaseModel):
         )
 
 
-class Agent(BaseModel, Generic[TContext]):
+class Agent(BaseModel):
     name: str | None = None
     description: str | None = None
     instruction: str | None = None
     handoffs: list[Handoff] = Field(default_factory=list)
     temperature: float | None = None
     output_type: type[BaseModel] | None = None
-    # 工具源：返回该 Agent 当前全部工具（运行时添加的工具由此实时反映）
-    tools: Callable[[], list[Tool]] | None = None
-    # 工具筛选配置：从 tools 源中按名字过滤（allow/deny glob，deny 优先）
+    # 工具筛选配置：运行时从扩展 runner 取全部工具后按名字过滤
+    # （allow/deny glob，deny 优先）
     tool_filter: ToolFilter = Field(default_factory=ToolFilter)
+    # 技能白名单：[] 不注入 / ["*"] 全部 / 列表仅命中项
+    skills: list[str] = Field(default_factory=list)
 
     model_config = {"arbitrary_types_allowed": True}
+
+    def skill_prompt(self, skills: dict[str, Skill]) -> str:
+        """从会话可用技能拼清单（一行一技能）。
+
+        skills 为会话激活扩展收集的技能（name→Skill）。白名单 self.skills：
+        空 = 不注入；["*"] = 全部；列表 = 只注入命中项。
+        """
+        if not self.skills or not skills:
+            return ""
+        wanted = None if "*" in self.skills else set(self.skills)
+        lines = [
+            f"- {m.name}: {m.description}（{m.path}）"
+            for m in skills.values()
+            if wanted is None or m.name in wanted
+        ]
+        if not lines:
+            return ""
+        return "可用技能（任务匹配时加载对应技能后执行）：\n" + "\n".join(lines)
 
     @classmethod
     def load(
         cls,
         name: str | None = None,
-        tools: Callable[[], list[Tool]] | None = None,
         root: Path | None = None,
     ) -> Agent:
         """按名加载 Agent（.agent/agents/<name>.md）。
 
-        frontmatter 支持 name/description/temperature/tools/output_model，
-        正文即 instruction。root 缺省用 DOT_AGENT/agents。
+        frontmatter 支持 name/description/temperature/skills/tools(筛选)，
+        正文即 instruction。root 缺省用 DOT_AGENT/agents。工具不经 agent
+        配置——运行时由会话扩展 runner 提供。
         """
         name = name or "default"
         root = root or DOT_AGENT / "agents"
@@ -107,90 +111,18 @@ class Agent(BaseModel, Generic[TContext]):
                 f"agent name '{meta.get('name')}' not match file name '{name}'"
             )
         instruction = post.content.strip() or None
-        output_model = meta.get("output_model")
-        models_path = root / "models.yaml"
-        output_type = cls._load_model(output_model, models_path) if output_model else None
         return cls(
             name=name,
             description=meta.get("description"),
             instruction=instruction,
             temperature=meta.get("temperature"),
-            output_type=output_type,
+            skills=meta.get("skills") or [],
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
-            tools=tools,
         )
 
-    @staticmethod
-    @functools.cache
-    def _load_model(model_name: str, path: Path) -> type[BaseModel] | None:
-        """从 path（models.yaml）加载名为 model_name 的输出模型，按参数缓存。
-
-        path 为模型文件完整路径。文件缺失或条目不存在抛 ValueError。
-        """
-        if not path.exists():
-            raise ValueError(f"models file not found: {path}")
-        registry = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        spec = registry.get(model_name)
-        if spec is None:
-            raise ValueError(f"输出模型 {model_name} 不存在于 {path}")
-        return Agent._build_model(model_name, spec)
-
-    @classmethod
-    def _build_model(cls, name: str, spec: dict, depth: int = 0) -> type[BaseModel]:
-        """把字段 dict 转成 Pydantic 模型。
-
-        简写（类型字符串）或完整 dict（type/desc/default/items）；array 用
-        items 定元素类型，object 嵌套递归，default 非 None 则字段可选。
-        """
-        max_depth = 32  # 防御自引用/过深嵌套导致死循环
-        if depth > max_depth:
-            raise ValueError(f"模型嵌套过深（>{max_depth}），疑似自引用：{name}")
-        fields = {}
-        for fname, fspec in spec.items():
-            if isinstance(fspec, dict):
-                ftype = fspec.get("type")
-                desc = fspec.get("desc")
-                default = fspec.get("default")
-                if ftype == "array":
-                    py_type = list[cls._build_type(fspec.get("items"))]
-                elif ftype == "object":
-                    py_type = cls._build_model(
-                        fname, fspec.get("properties", {}), depth + 1
-                    )
-                else:
-                    py_type = cls._build_type(ftype)
-                if default is not None:
-                    field_default = (
-                        Field(default=default, description=desc)
-                        if desc
-                        else Field(default=default)
-                    )
-                else:
-                    field_default = Field(description=desc) if desc else ...
-                fields[fname] = (py_type, field_default)
-            else:
-                py_type = cls._build_type(fspec)
-                fields[fname] = (py_type, ...)
-        return create_model(f"output_{name}", **fields)
-
-    @staticmethod
-    def _build_type(tspec: Any) -> Any:
-        """简写类型名 → Python 类型。
-
-        null（YAML 转为 None）→ type(None)；联合类型 list 暂不支持，抛错。
-        """
-        if tspec is None:
-            return type(None)
-        if isinstance(tspec, list):
-            raise ValueError(f"联合类型暂不支持: {tspec}")
-        m = TYPE_MAP.get(tspec)
-        if m is None:
-            raise ValueError(f"未知类型: {tspec}")
-        return m
-
-    def available_tools(self) -> list[Tool]:
-        """当前可用的工具：实时取 tools 源并应用 tool_filter 筛选。"""
-        return self.tool_filter.apply(self.tools()) if self.tools else []
+    def available_tools(self, source: list[Tool]) -> list[Tool]:
+        """从会话工具源过滤出本 agent 可用工具（tool_filter allow/deny）。"""
+        return self.tool_filter.apply(source)
 
     def _validate_as_tool(self) -> None:
         if self.name is None or self.description is None:
@@ -201,13 +133,12 @@ class Agent(BaseModel, Generic[TContext]):
         agent = self
 
         async def fn(input: str):
-            from .runner import Runner, SessionEnv
-            from ..infra import PyKernel
+            from .runner import Runner, SessionContext
             from ..messages import InMemoryMessages
 
-            # 嵌套 Runner 显式构造隔离环境（独立 kernel + 历史）：与父执行实体互不污染
+            # 嵌套 Runner 显式构造隔离环境（独立历史）：与父执行实体互不污染
             runner = Runner()
-            env = SessionEnv(kernel=PyKernel(), messages=InMemoryMessages())
+            env = SessionContext(messages=InMemoryMessages())
             result = await runner.run(agent, input, env=env)
             return result.output
 

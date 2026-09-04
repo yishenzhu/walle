@@ -1,7 +1,6 @@
 ---
 name: summarize
 description: 摘要助手，输出结构由 summary 模型定义
-output_model: summary
 tools:
   allow: []
 ---

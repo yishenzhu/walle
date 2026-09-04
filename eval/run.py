@@ -2,8 +2,8 @@
 
 示例：
   PYTHONPATH=.. python -m walle.eval.run --smoke                    # 快速冒烟（1 个任务）
-  PYTHONPATH=.. python -m walle.eval.run                            # 全量 20 任务
-  PYTHONPATH=.. python -m walle.eval.run --domain codeact           # 只跑某域
+  PYTHONPATH=.. python -m walle.eval.run                            # 全量 14 任务
+  PYTHONPATH=.. python -m walle.eval.run --domain bash              # 只跑某域
   PYTHONPATH=.. python -m walle.eval.run --task 'bash*'             # glob 过滤任务名
   PYTHONPATH=.. python -m walle.eval.run --repeat 3                 # 每任务重复 3 次（报告均值）
   PYTHONPATH=.. python -m walle.eval.run --price-prompt 0.07 --price-completion 0.27
@@ -43,11 +43,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--task", help="按 glob 过滤任务名")
     p.add_argument("--repeat", type=int, default=1, help="每任务重复次数（默认 1）")
     p.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR, help="报告输出目录")
-    p.add_argument("--price-prompt", type=float, default=0.0, help="输入单价 USD/M token")
-    p.add_argument("--price-completion", type=float, default=0.0, help="输出单价 USD/M token")
+    p.add_argument(
+        "--price-prompt", type=float, default=0.0, help="输入单价 USD/M token"
+    )
+    p.add_argument(
+        "--price-completion", type=float, default=0.0, help="输出单价 USD/M token"
+    )
     p.add_argument("--smoke", action="store_true", help="冒烟：只跑第一个任务")
-    p.add_argument("--render-only", action="store_true", help="重渲染上次报告（不调 LLM）")
-    p.add_argument("--retry", type=int, default=2, help="任务级失败（provider 超时等）的最大尝试次数")
+    p.add_argument(
+        "--render-only", action="store_true", help="重渲染上次报告（不调 LLM）"
+    )
+    p.add_argument(
+        "--retry",
+        type=int,
+        default=2,
+        help="任务级失败（provider 超时等）的最大尝试次数",
+    )
     return p.parse_args(argv)
 
 
@@ -151,8 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f" {mark} turns={res.turns} tokens={res.tokens}"
                 f" tools={len(res.tool_calls)}/{res.tool_errors}"
-                f" {res.elapsed:.1f}s"
-                + (f"  {res.error}" if res.error else "")
+                f" {res.elapsed:.1f}s" + (f"  {res.error}" if res.error else "")
             )
 
     # 全部任务级失败（provider 故障）时拒绝覆盖已有报告，避免好数据被冲掉

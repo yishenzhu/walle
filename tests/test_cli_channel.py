@@ -12,7 +12,7 @@ import json
 import pytest
 
 from ..channel.cli import CLIConn
-from ..core.approval import ChannelApprover
+from ..tools.approval import ChannelApprover
 from ..schemas import Approval, ApprovalRsp
 
 
@@ -186,7 +186,7 @@ async def test_channel_approver_passthrough_model_reply():
 
 # ── 轮3：attach/resume + 断开 detach 保留 + list 帧 ─────────────────────────
 
-from ..core import SessionRegistry, Session, Runner, Agent, ToolExecutor
+from ..core import SessionRegistry, Session
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..channel.cli import CLIChannel
 from ..schemas import UserMessage
@@ -197,15 +197,8 @@ class _TestServer:
 
     def __init__(self, db_path: str):
         self.registry = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
-            runner=Runner(
-                executor=ToolExecutor(
-                    ToolConfig(
-                        approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                    )
-                )
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),
             db_path=db_path,
         )
@@ -269,7 +262,7 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         )
         await _read_line(r2)  # welcome
         assert reg.get("sess-1").attached is True
-        # 仍是同一个 Session 实例（kernel/messages 保留）
+        # 仍是同一个 Session 实例（messages 保留）
         w2.close()
         await w2.wait_closed()
         await asyncio.sleep(0.05)

@@ -1,9 +1,9 @@
-"""Tool 与 ToolRegistry 测试。"""
+"""Tool 测试。"""
 
 import pytest
 
-from ..tools import Tool, ToolRegistry
-from ..tools.tool import ToolContext, tool_context
+from ..core import ExtensionRunner
+from ..infra import EventBus, Tool, ToolContext, tool_context
 
 
 class TestTool:
@@ -54,56 +54,50 @@ class TestTool:
         assert result == 3
 
 
-class TestToolRegistry:
+class TestRunnerToolTable:
+    """会话工具表由 ExtensionRunner 持有：注册 / 覆盖 / 摘除 / 查询。"""
+
+    @staticmethod
+    def _tool(name: str) -> Tool:
+        async def fn(args):
+            return name
+
+        return Tool(name=name, description=name, parameters={"type": "object"}, fn=fn)
+
     @pytest.fixture
-    async def registry(self, tmp_path, monkeypatch):
-        """已初始化（含 python kernel 预启动）的 ToolRegistry。"""
-        from ..conf import Config, LogConfig
+    def runner(self):
+        return ExtensionRunner(EventBus())
 
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
-        conf = Config(
-            log=LogConfig(level="INFO", path="x.log", backup_count=1),
-        )
-        reg = ToolRegistry()
-        await reg.initialize(conf)
-        yield reg
-        await reg.close()
+    def test_empty_tool_table(self, runner):
+        assert runner.all_tools() == []
 
-    async def test_builtin_tools_loaded(self, registry):
-        names = {t.name for t in registry.all_tools()}
-        assert "bash" in names
-        assert "ask_user" in names
-        assert "jupyter" in names
+    def test_register_duplicate_replaces(self, runner):
+        """同名后注册者覆盖先注册者（后到者胜）。"""
+        first = self._tool("x")
+        runner.register_tool(first)
 
-    async def test_add_function_duplicate_raises(self):
-        registry = ToolRegistry()
+        second = self._tool("x")
+        runner.register_tool(second)
 
-        async def bash(cmd: str = "") -> str:
-            """bash"""
-            return ""
+        tools = [t for t in runner.all_tools() if t.name == "x"]
+        assert tools == [second]  # 旧实例被替换，只剩新实例
 
-        registry.add_function(bash)
+    def test_register_same_batch_duplicate_raises(self, runner):
+        """同一批内工具名重复是编程错误（整批抛错）。"""
         with pytest.raises(ValueError, match="Duplicate tool name"):
-            registry.add_function(bash)
+            runner.register_tool(self._tool("a"), self._tool("a"))
 
-    async def test_add_function_new(self):
-        registry = ToolRegistry()
+    def test_remove_tool(self, runner):
+        runner.register_tool(self._tool("x"))
+        runner.remove_tool("x")
+        assert runner.all_tools() == []
+        runner.remove_tool("x")  # 不存在则忽略
 
+    def test_all_tools_returns_registered(self, runner):
         async def custom_tool(x: str) -> str:
             """custom"""
             return x
 
-        registry.add_function(custom_tool)
-        names = {t.name for t in registry.all_tools()}
+        runner.register_tool(Tool.from_function(custom_tool))
+        names = {t.name for t in runner.all_tools()}
         assert "custom_tool" in names
-
-    async def test_mcp_empty(self, registry):
-        assert {"bash", "ask_user", "define_tool", "jupyter"} <= {
-            t.name for t in registry.all_tools()
-        }
-
-    async def test_initialize_registers_python_tool(self, registry):
-        """initialize 后 jupyter 工具已注册（纯函数，kernel 由 Runner 经 ToolContext 提供）。"""
-        py_tool = next(t for t in registry.all_tools() if t.name == "jupyter")
-        assert py_tool is not None
-        assert "code" in py_tool.parameters["properties"]

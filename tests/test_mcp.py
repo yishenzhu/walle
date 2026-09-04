@@ -1,23 +1,11 @@
 import asyncio
 
 from ..conf import MCPConfig
-from ..tools.mcp import MCP
-from ..tools.registry import ToolRegistry
-
-
-class _FakeClient:
-    """模拟已连接的 MCPClient（只用于重名测试）。"""
-
-    def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self):
-        return self._name
+from ..tools.mcp import MCPRegistry
 
 
 def test_roundtrip(tmp_path):
-    store = MCP(tmp_path / "mcp.yaml")
+    store = MCPRegistry(tmp_path / "mcp.yaml")
     store.save("obsidian", MCPConfig(url="http://127.0.0.1:27123/mcp"))
     store.save(
         "fs",
@@ -29,7 +17,7 @@ def test_roundtrip(tmp_path):
 
     # 单文件保存，两个 server 在同一个 mcp.yaml
     assert (tmp_path / "mcp.yaml").exists()
-    loaded = store.load_all()
+    loaded = store.load()
     assert set(loaded) == {"obsidian", "fs"}
     assert loaded["obsidian"].url == "http://127.0.0.1:27123/mcp"
     assert loaded["fs"].command == "npx"
@@ -40,70 +28,38 @@ def test_roundtrip(tmp_path):
     ]
 
 
-def test_load_all_empty(tmp_path):
-    assert MCP(tmp_path / "mcp.yaml").load_all() == {}
+def test_load_empty(tmp_path):
+    assert MCPRegistry(tmp_path / "mcp.yaml").load() == {}
 
 
 def test_unusual_name_allowed(tmp_path):
     """单文件存储无文件系统暴露，特殊字符名（中文等）允许。"""
-    store = MCP(tmp_path / "mcp.yaml")
+    store = MCPRegistry(tmp_path / "mcp.yaml")
     store.save("obsidian 库", MCPConfig(url="http://x"))
-    assert "obsidian 库" in store.load_all()
+    assert "obsidian 库" in store.load()
 
 
-class TestAddMcpServer:
-    async def _registry(self):
-        return ToolRegistry()
+def test_as_ext_registers_into_api():
+    """MCPRegistry.as_ext 把客户端工具逐个注册进扩展 api。"""
+    from ..infra import Tool
 
-    def test_missing_url_and_command(self, monkeypatch, tmp_path):
-        """无 url/command 的配置：连接失败，不落盘。"""
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
+    async def fake_fn(args):
+        return "x"
 
-        async def main():
-            reg = await self._registry()
-            out = await reg.add_mcp("x", MCPConfig())
-            assert "连接失败" in out
-            assert not any(c.name == "x" for c in reg._mcp.clients)
-            assert not (tmp_path / "mcp.yaml").exists()
+    class FakeClient:
+        tools = [
+            Tool(name="mcp_a_t1", description="t1", parameters={}, fn=fake_fn),
+            Tool(name="mcp_a_t2", description="t2", parameters={}, fn=fake_fn),
+        ]
 
-        asyncio.run(main())
+    reg = MCPRegistry()
+    reg._clients.append(FakeClient())
 
-    def test_empty_name_rejected(self, monkeypatch, tmp_path):
-        """空名无法连接成功（无有效 server），不落盘。"""
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
+    collected: list[str] = []
 
-        async def main():
-            reg = await self._registry()
-            out = await reg.add_mcp("", MCPConfig(url="http://127.0.0.1:1"))
-            assert "连接失败" in out
-            assert not (tmp_path / "mcp.yaml").exists()
+    class FakeAPI:
+        def register_tool(self, tool):
+            collected.append(tool.name)
 
-        asyncio.run(main())
-
-    def test_connect_failure_not_persisted(self, monkeypatch, tmp_path):
-        """连接失败返回错误提示，且不落盘。"""
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
-
-        async def main():
-            reg = await self._registry()
-            out = await reg.add_mcp(
-                "dead",
-                MCPConfig(url="http://127.0.0.1:1"),  # 未监听端口，快速连接拒绝
-            )
-            assert "连接失败" in out
-            assert not (tmp_path / "mcp.yaml").exists()
-
-        asyncio.run(main())
-
-    def test_duplicate_name_rejected(self, monkeypatch, tmp_path):
-        """重名 server 直接拒绝，不连接不落盘。"""
-        monkeypatch.setattr("walle.conf.DOT_AGENT", tmp_path)
-
-        async def main():
-            reg = await self._registry()
-            reg._mcp.clients.append(_FakeClient("obsidian"))
-            out = await reg.add_mcp("obsidian", MCPConfig(url="http://127.0.0.1:1"))
-            assert "已存在" in out
-            assert not (tmp_path / "mcp.yaml").exists()
-
-        asyncio.run(main())
+    asyncio.run(reg.as_ext(FakeAPI()))  # noqa: RUF006
+    assert collected == ["mcp_a_t1", "mcp_a_t2"]

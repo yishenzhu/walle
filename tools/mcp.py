@@ -4,6 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 
 import httpx
@@ -14,13 +15,13 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import DOT_AGENT, MCPConfig
-from .tool import Tool
+from ..infra import ExtensionAPI, Tool
 
 logger = logging.getLogger(__name__)
 
 
-class MCP:
-    """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端管理。"""
+class MCPRegistry:
+    """MCP server 配置持久化（.agent/mcp.yaml）+ 客户端注册管理。"""
 
     def __init__(self, path: Path | None = None):
         self._path = path or DOT_AGENT / "mcp.yaml"
@@ -32,7 +33,7 @@ class MCP:
         return self._clients
 
     def save(self, name: str, conf: MCPConfig) -> Path:
-        configs = self.load_all()
+        configs = self.load()
         configs[name] = conf
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +48,7 @@ class MCP:
         )
         return p
 
-    def load_all(self) -> dict[str, MCPConfig]:
+    def load(self) -> dict[str, MCPConfig]:
         if not self._path.exists():
             return {}
         try:
@@ -79,7 +80,7 @@ class MCP:
         clients = await asyncio.gather(
             *[
                 MCPClient(name, c).connect()
-                for name, c in self.load_all().items()
+                for name, c in self.load().items()
                 if c.enabled
             ]
         )
@@ -92,6 +93,16 @@ class MCP:
         """关闭全部客户端。"""
         for c in self._clients:
             await c.close()
+
+    async def as_ext(self, api: ExtensionAPI) -> None:
+        """MCP 扩展工厂：main 组装时 extensions.add("mcp", mcp.as_ext)。
+
+        把全部已连接客户端的远端工具注册进扩展 api——MCP 作为扩展
+        声明，工具随扩展进各会话。
+        """
+        for client in self._clients:
+            for tool in client.tools:
+                api.register_tool(tool)
 
 
 class MCPClient:

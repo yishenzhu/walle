@@ -1,6 +1,6 @@
 import asyncio
 
-from ..tools.defined import DefinedTool, ToolCodeError
+from ..tools.builtin.defined import DefinedTool, ToolCodeError
 
 
 def test_create_ok(tmp_path):
@@ -50,3 +50,30 @@ def test_load_restore(tmp_path):
     assert len(loaded) == 1
     assert loaded[0].name == "greet"
     assert asyncio.run(loaded[0].run({"name": "walle"})) == "hi walle"
+
+
+async def test_define_tool_registers_via_context(tmp_path, monkeypatch):
+    """define_tool 工具执行时经 tool_context 的注册通道把新工具加入会话。"""
+    from ..core import ExtensionRunner
+    from ..infra import EventBus, ToolContext, tool_context
+    from ..tools.builtin.defined import define_tool
+
+    monkeypatch.setattr("walle.tools.builtin.defined.DOT_AGENT", tmp_path)
+
+    runner = ExtensionRunner(EventBus())
+    ctx = ToolContext(register_tool=runner.register_tool)
+    token = tool_context.set(ctx)
+    try:
+        out = await define_tool(
+            name="double",
+            code='async def double(n: int) -> int:\n    """翻倍工具"""\n    return n * 2\n',
+        )
+    finally:
+        tool_context.reset(token)
+
+    assert "已定义并生效" in out
+    names = {t.name for t in runner.all_tools()}
+    assert "double" in names  # 已注册进会话工具表
+    # 定义的工具可运行
+    double = next(t for t in runner.all_tools() if t.name == "double")
+    assert await double.run({"n": 21}) == 42

@@ -20,9 +20,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ...infra import OpenAIProvider, PyKernel
+from ...infra import OpenAIProvider
+from ...core import EventBus, ExtensionRunner
 from ...core.agent import Agent
-from ...core.runner import Runner, RunOptions, SessionEnv
+from ...core.runner import Runner, RunOptions, SessionContext
 from ...messages import InMemoryMessages
 
 from ..harness import RecordingExecutor, TaskResult, TrackedProvider
@@ -54,14 +55,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--split", default="test", choices=["train", "test", "dev"])
     p.add_argument("--start", type=int, default=0, help="起始用例下标")
     p.add_argument("--limit", type=int, default=-1, help="跑多少个用例（-1 = 全部）")
-    p.add_argument("--user-model", default=None, help="user simulator 模型（默认同 .env 模型）")
+    p.add_argument(
+        "--user-model", default=None, help="user simulator 模型（默认同 .env 模型）"
+    )
     p.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     p.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
-    p.add_argument("--price-prompt", type=float, default=0.0, help="输入单价 USD/M token")
-    p.add_argument("--price-completion", type=float, default=0.0, help="输出单价 USD/M token")
-    p.add_argument("--resume", action="store_true", help="从上次中断处续跑（读已有 detail）")
-    p.add_argument("--concurrency", type=int, default=1,
-                   help="并发用例数（线程池；每用例独立 env/provider，默认 1）")
+    p.add_argument(
+        "--price-prompt", type=float, default=0.0, help="输入单价 USD/M token"
+    )
+    p.add_argument(
+        "--price-completion", type=float, default=0.0, help="输出单价 USD/M token"
+    )
+    p.add_argument(
+        "--resume", action="store_true", help="从上次中断处续跑（读已有 detail）"
+    )
+    p.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="并发用例数（线程池；每用例独立 env/provider，默认 1）",
+    )
     return p.parse_args(argv)
 
 
@@ -105,12 +118,14 @@ async def run_tau_case(
             timeout=TimeoutConfig(default=120.0),
         )
     )
-    walle_env = SessionEnv(
+    ext_runner = ExtensionRunner(EventBus())
+    ext_runner.register_tool(*tools_src())
+    walle_env = SessionContext(
         provider=tracked,
         channel=None,
-        kernel=PyKernel(),
         messages=InMemoryMessages(),
         jobs={},
+        ext_runner=ext_runner,
     )
     agent = Agent(
         name="tau",
@@ -123,7 +138,6 @@ async def run_tau_case(
             "Continue the conversation until the user's request is fully handled."
         ),
         temperature=0.0,
-        tools=tools_src,
     )
     runner = Runner(executor=executor)
 
@@ -163,7 +177,6 @@ async def run_tau_case(
     except Exception as e:
         error = f"{type(e).__name__}: {e}"
     finally:
-        await walle_env.kernel.close()
         # 线程内必须显式关闭 client，否则 httpx 连接在事件循环关闭后
         # 才尝试 aclose，报 "Event loop is closed"
         await agent_provider.close()
@@ -178,7 +191,9 @@ async def run_tau_case(
         success, detail = reward == 1.0, [f"tau reward={reward}"]
 
     return TaskResult(
-        task=make_task_spec(task_index, env.tasks[task_index].instruction[:120], env_name(env)),
+        task=make_task_spec(
+            task_index, env.tasks[task_index].instruction[:120], env_name(env)
+        ),
         success=success,
         detail=detail,
         turns=spent,
@@ -224,7 +239,9 @@ def main(argv: list[str] | None = None) -> int:
             user_provider="openai",
             task_split=args.split,
         )
-        e.user = WalleUserSimulationEnv(api_key=api_key, base_url=base_url, model=user_model)
+        e.user = WalleUserSimulationEnv(
+            api_key=api_key, base_url=base_url, model=user_model
+        )
         tools_i, state_i = build_tau_tools(e)
         provider_i = OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
         return e, lambda: tools_i, state_i, provider_i
@@ -238,9 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     indices = [idx for idx in indices if idx not in done]
     if done:
         print(f"resume: 跳过已完成的 {len(done)} 个用例，剩余 {len(indices)}")
-    print(f"tau-bench env={args.env} split={args.split} tasks={len(indices)} "
-          f"agent_model={model} user_model={user_model} "
-          f"concurrency={args.concurrency}")
+    print(
+        f"tau-bench env={args.env} split={args.split} tasks={len(indices)} "
+        f"agent_model={model} user_model={user_model} "
+        f"concurrency={args.concurrency}"
+    )
 
     pricing = Pricing(
         prompt_per_m=args.price_prompt, completion_per_m=args.price_completion
@@ -300,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     print_lock = threading.Lock()
 
     def run_one(idx: int) -> TaskResult:
-        """线程内跑单个用例：独立 env/provider/kernel，互不共享。"""
+        """线程内跑单个用例：独立 env/provider，互不共享。"""
         e, tools_src_i, state_i, provider_i = build_env()
         try:
             return asyncio.run(
@@ -308,7 +327,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as exc:  # 线程级兜底：不因单用例异常中断整批
             return TaskResult(
-                task=make_task_spec(idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)),
+                task=make_task_spec(
+                    idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)
+                ),
                 success=False,
                 detail=[f"thread error: {type(exc).__name__}: {exc}"],
                 error=f"{type(exc).__name__}: {exc}",
