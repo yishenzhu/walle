@@ -342,19 +342,21 @@ class TestSessionCloseCancels:
     async def test_session_close_cancels_pending_jobs(self, tmp_path):
         s = Session(
             session_id="jobs-1",
-            agent_factory=lambda name=None: Agent(instruction="You are helpful."),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
             db_path=str(tmp_path / "s.db"),
         )
-        executor = s.tool_executor  # 本会话的工具执行器
+        # Session 不暴露执行器——close 取消验证用独立 executor 派发即可
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        )
 
         # 派发一个永不完成的后台作业
         async def never(args):
             await asyncio.Event().wait()
 
-        ctx = ToolContext(jobs=s.jobs)
+        ctx = ToolContext(jobs=s.context.jobs)
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="never", args={})
@@ -368,11 +370,11 @@ class TestSessionCloseCancels:
                     ),
                 },
             )
-            task = s.jobs[rsp.job_id].task
+            task = s.context.jobs[rsp.job_id].task
             assert not task.done()
         finally:
             tool_context.reset(token)
 
         await s.close()
         assert task.cancelled()
-        assert s.jobs == {}
+        assert s.context.jobs == {}

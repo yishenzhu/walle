@@ -150,7 +150,7 @@ async def test_channel_approver_passthrough_model_reply():
 
 # ── 轮3：attach/resume + 断开 detach 保留 + list 帧 ─────────────────────────
 
-from ..core import SessionRegistry, Session, Agent
+from ..core import SessionRegistry, Session
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..channel.cli import CLIChannel
 from ..schemas import UserMessage
@@ -161,9 +161,6 @@ class _TestServer:
 
     def __init__(self, db_path: str):
         self.registry = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),

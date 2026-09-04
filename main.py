@@ -4,7 +4,6 @@ import logging
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import (
-    Agent,
     Approval,
     ExtensionRegistry,
     SessionRegistry,
@@ -48,7 +47,6 @@ async def main() -> None:
     logger.info(f"extensions loaded: {len(loaded)}")
 
     sessions = SessionRegistry(
-        agent_factory=lambda name=None: Agent.load(name),  # 工具源由 Session 绑定会话表
         tool_config=conf.tool,
         extensions=loaded,
         storage=conf.session.storage,

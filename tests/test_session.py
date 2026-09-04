@@ -11,12 +11,9 @@ from .conftest import FakeChannel, FakeProvider
 
 
 def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"):
-    """构造一个不依赖真实 LLM 的 Session（agent_factory 为最小 Agent）。"""
+    """构造一个 Session（agent 由内部按名加载 .agent/agents/default.md）。"""
     return Session(
         session_id=session_id,
-        agent_factory=lambda _name=None: Agent(
-            instruction="You are a helpful assistant."
-        ),
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
@@ -29,9 +26,6 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
 def make_registry(db_path: str) -> SessionRegistry:
     """构造带 Session 构造参数的 registry（register 测试用）。"""
     return SessionRegistry(
-        agent_factory=lambda _name=None: Agent(
-            instruction="You are a helpful assistant."
-        ),
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
@@ -190,9 +184,6 @@ class TestSessionCommandDispatch:
 
         s = Session(
             session_id="cmd-1",
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -229,9 +220,6 @@ class TestSessionCommandDispatch:
 
         s = Session(
             session_id="cmd-2",
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -253,9 +241,6 @@ class TestSessionStreamForward:
     def _session(self, tmp_path, ch: FakeChannel) -> Session:
         return Session(
             session_id="stream-1",
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -315,9 +300,6 @@ class TestSessionStreamForward:
         pool = [e for e in loader.extensions if e.error is None]
 
         reg = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -338,17 +320,16 @@ class TestSessionStreamForward:
         s1 = reg.create(Conn("s1"))  # 默认：全部扩展
         s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
 
-        names1 = {t.name for t in s1.tools}
-        names2 = {t.name for t in s2.tools}
+        names1 = {t.name for t in s1.context.ext_runner.all_tools()}
+        names2 = {t.name for t in s2.context.ext_runner.all_tools()}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
         assert names2 == {"tool_a"}  # 会话 2 只有 ext_a
 
-        # 事件隔离：各自的 bus 独立
-        assert s1.ext_runner.active_names == {"ext_a", "ext_b"}
-        assert s2.ext_runner.active_names == {"ext_a"}
-        # 审批策略随会话独立（各自 executor 实例）
-        assert s1.tool_executor is not s2.tool_executor
-        assert s1.agent_runner is not s2.agent_runner
+        # 运行时隔离：各自 context / 扩展激活层独立（bus/工具表随会话）
+        assert s1.context is not s2.context
+        assert s1.context.ext_runner is not s2.context.ext_runner
+        assert s1.context.ext_runner.active_names == {"ext_a", "ext_b"}
+        assert s2.context.ext_runner.active_names == {"ext_a"}
 
         await reg.close()
 
@@ -382,9 +363,6 @@ class TestSessionStreamForward:
         mcp_ext = [e for e in loader.extensions if e.error is None]
 
         reg = SessionRegistry(
-            agent_factory=lambda _name=None: Agent(
-                instruction="You are a helpful assistant."
-            ),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -397,7 +375,7 @@ class TestSessionStreamForward:
             chat_id = "mcp-1"
 
         s = reg.create(Conn())
-        names = {t.name for t in s.tools}
+        names = {t.name for t in s.context.ext_runner.all_tools()}
         assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
 
         await reg.close()

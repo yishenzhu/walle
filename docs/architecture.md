@@ -21,14 +21,16 @@ walle 的运行时模型：**进程共享声明（扩展/MCP），会话自持�
 ```
 Session
 ├─ _bus            EventBus        # 会话私有事件总线（唯一事实源）
-├─ _tool_executor  ToolExecutor    # 持超时策略；审批经 bus 上的扩展
-├─ _agent_runner   Runner          # 构造时注入 _bus + _tool_executor
+├─ _agent_runner   Runner          # 构造时注入 _bus + 按会话新建的 ToolExecutor
 ├─ _ext_runner     ExtensionRunner # 构造时注入 _bus；activate() 选中扩展
-├─ _agent_builder  Callable        # 进程注入的 Agent 工厂（main 传入）
 ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
+├─ _provider       OpenAIProvider
 ├─ _messages       Messages        # 历史（SQLite/内存）
 ├─ _jobs           dict[str, Job]  # 后台作业表（唯一事实源）
 ├─ _transport      Channel|None    # 连接端点（attach/detach 切换，唯一 channel 事实源）
+└─ context ──────▶ property：每次现造 SessionContext 视图
+                   （channel=_transport / jobs=_jobs / ext_runner=_ext_runner…），
+                   对外访问会话能力的统一入口，也是 runner.run 的 env
 ```
 
 各零件持有**同一 `_bus` 引用**：Session 的事件总线 = Runner 的事件总线 =
@@ -39,9 +41,9 @@ ExtensionRunner 激活落点 = 每轮 ToolContext.bus = 命令 CommandContext.bu
 
 | 上下文 | 给谁 | 使命 | 何时构造/注入 |
 |---|---|---|---|
-| `SessionContext`(env) | Runner.run | 跨**轮**的会话状态（消息/jobs/工具源） | Session 每次 run 现造（channel 取当前 transport） |
+| `SessionContext`(context/env) | Runner.run、外部访问 | 跨**轮**的会话状态（消息/jobs/工具源） | Session property，每次访问现造视图（channel 取当前 _transport） |
 | `ToolContext`(tool_context) | 工具 / 审批扩展 / 钩子 | 跨**单轮内所有工具执行**的会话能力 | runner 每轮构造并 `set`；后台作业 run_job 内自设 |
-| `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次构造（channel 取当前 transport） |
+| `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次构造（channel 取 context.channel） |
 
 **判定规则**：
 - 会话生命周期级状态（历史/作业/扩展激活）→ `SessionContext`
@@ -60,18 +62,18 @@ Session._bus ──注入──▶ Runner._bus
 注意：`Runner` 的默认构造会**自建 bus**（独立运行/测试）。凡经 Session 使用的
 Runner 必须显式注入会话 bus，否则扩展事件与工具钩子会落到两条总线上。
 
-### channel：唯一事实源 Session._transport，无镜像副本
+### channel：唯一事实源 Session._transport（内部私有件）
 ```
-Session._transport ──现造 env────▶ SessionContext.channel（每次 run 一个）
-                   ──每轮────────▶ ToolContext.channel（executor 推送/审批）
-                   ──每次命令───▶ CommandContext.channel
+Session._transport ──context 视图──▶ context.channel（每次现造，供外部/runner）
+                   ──每轮──────────▶ ToolContext.channel（executor 推送/审批）
+                   ──每次命令─────▶ CommandContext.channel
 ```
-`Session` 不维护常驻 env/channel 副本：每次 `run` 由 `_make_env()` 按当前
-`_transport` 现造会话环境，attach/detach 只改 `_transport` 一处。
+attach/detach 只改 `_transport` 一处；Session 内部（Delta 转发/handle）直接
+用私有件，不绕 context。对外读 channel 统一经 `session.context.channel`。
 
-### jobs：事实源是 Session._jobs（env 每次现造只是引用视图）
+### jobs：唯一事实源 Session._jobs（context 视图引用同一 dict）
 ```
-Session._jobs ──现造 env 引用──▶ 每次 run 的 SessionContext.jobs
+Session._jobs ──context 视图──▶ context.jobs（外部读写同一 dict）
               ──每轮引用──────▶ ToolContext.jobs（background 写入点）
 ```
 作业表跨轮存活：background 工具写 pending → runner 每轮 `launch_pending`
