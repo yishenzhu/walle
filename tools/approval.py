@@ -1,3 +1,9 @@
+"""审批扩展：工具审批（规则判断 + 人工审批）作为扩展声明。
+
+Approval(config).as_ext 与 mcp/skill 同形态——main 里作为 "approval"
+扩展加进进程级扩展池，每个会话激活后订阅 TOOL_EXECUTION_START。
+"""
+
 import asyncio
 import fnmatch
 from typing import Any, Protocol

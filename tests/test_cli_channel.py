@@ -12,7 +12,7 @@ import json
 import pytest
 
 from ..channel.cli import CLIConn
-from ..core.approval import ChannelApprover
+from ..tools.approval import ChannelApprover
 from ..schemas import Approval, ApprovalRsp
 
 

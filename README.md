@@ -103,11 +103,11 @@ sequenceDiagram
 | 层 | 目录 | 职责 |
 |---|---|---|
 | 入口 | `main.py` | 组装进程级扩展池（builtin/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
-| 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor）、审批扩展（Approval） |
+| 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor） |
+| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp（MCP 客户端）、skill（技能）、approval（审批扩展：规则 + 人工确认）、define_tool 动态定义 |
 | 扩展激活 | `infra/extension.py` | ExtensionRegistry（进程级加载器）+ ExtensionRunner（会话级激活层：工具/技能/命令表）+ CommandContext |
 | 底层类型 | `infra/` | Tool、EventBus、HookVerdict、诊断、日志、遥测、指标、LLM Provider |
 | 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
-| 工具系统 | `tools/` | MCP 客户端（进程级）、技能扫描（Skill.as_ext）、内置工具（builtin/）、define_tool 动态定义 |
 | 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略 |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
@@ -379,22 +379,24 @@ walle/
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（审批·并发·超时）
-│   ├── approval.py            #   审批规则引擎
-│   └── session.py             #   会话实体（attach/detach，支持切换 Agent）
+│   ├── executor.py            #   工具执行器（并发·超时）
+│   ├── session.py             #   会话实体（attach/detach，支持切换 Agent）
+│   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
-├── tools/                     # 工具系统
-│   ├── tool.py                #   Tool 模型 + ContextVar
-│   ├── registry.py            #   工具注册表
-│   ├── mcp.py                 #   MCP 配置 + 客户端
-│   ├── defined.py             #   模型定义工具（校验/持久化）
-│   └── builtin/               #   内置工具
+├── tools/                     # 工具与扩展声明
+│   ├── mcp.py                 #   MCP 配置 + 客户端（Registry.as_ext）
+│   ├── skill.py               #   技能扫描（Skill.as_ext）
+│   ├── approval.py            #   审批扩展（Approval.as_ext：规则 + 人工确认）
+│   ├── __init__.py            #   tools 公共导出
+│   └── builtin/               #   内置工具扩展
 │       ├── bash.py            #     Bash 执行
+│       ├── read.py            #     文件读取
 │       ├── ask_user.py        #     向用户提问
+│       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
-│       └── skill.py           #     Skill 加载器
+│       └── extension.py       #     builtin 扩展声明
 
 ├── messages/                  # 消息存储
 │   ├── protocol.py            #   Messages Protocol

@@ -4,12 +4,11 @@ import logging
 from .conf import Config
 from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import (
-    Approval,
     ExtensionRegistry,
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
-from .tools import MCPRegistry
+from .tools import MCPRegistry, Approval
 from .tools.builtin.extension import builtin_ext
 from .tools.skill import Skill
 

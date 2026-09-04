@@ -32,8 +32,9 @@ async def mount_approval(ctx, config) -> None:
 
     审批不再由 executor 内置——测试经扩展验证 deny/ask 语义。
     """
-    from ..core import Approval, EventBus, ExtensionRegistry, ExtensionRunner
+    from ..core import EventBus, ExtensionRegistry, ExtensionRunner
     from ..infra import tool_context
+    from ..tools.approval import Approval
 
     loader = ExtensionRegistry()
     loader.add("approval", Approval(config).as_ext)

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """工具执行器：无状态，通知渠道来自每次 execute 的 ToolContext。
 
-    审批不在此内置——由审批扩展（core.approval.Approval）订阅
+    审批不在此内置——由审批扩展（tools.approval.Approval）订阅
     TOOL_EXECUTION_START 承担（preflight 事件是唯一审批屏障）。
     """
 
@@ -50,7 +50,7 @@ class ToolExecutor:
         execute_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
         （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
         静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
-        TOOL_EXECUTION_START 上的审批扩展（core.approval.Approval）承担。
+        TOOL_EXECUTION_START 上的审批扩展（tools.approval.Approval）承担。
         """
         ft = tools.get(name)
         if ft is None:
