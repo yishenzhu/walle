@@ -30,27 +30,11 @@ class ToolExecutor:
         self,
         tc,
         tools: dict[str, Tool],
-        ctx: ToolContext,
     ) -> tuple[str, Any]:
         """入口·回调对象：执行一个模型工具调用（tc 为 LLM 回调对象，含 id/function）。"""
         name = tc.function.name
         args = json.loads(tc.function.arguments)
-        return await self.execute_tool(name, args, tc.id, tools, ctx)
-
-    async def execute_named(
-        self,
-        name: str,
-        args: dict[str, Any],
-        tools: dict[str, Tool],
-        ctx: ToolContext,
-    ) -> tuple[str, Any]:
-        """入口·名字+参数：按工具名执行（复用 execute_tool 完整链：超时）。
-
-        background 元工具把任意工具丢后台时用它；tc_id 为生成的伪调用 id，
-        静默执行（不推送 ToolStart/ToolResult，结果由 job_result 查询取回）。
-        """
-        tc_id = f"bg-{uuid.uuid4().hex[:8]}"
-        return await self.execute_tool(name, args, tc_id, tools, ctx, notify=False)
+        return await self.execute_tool(name, args, tc.id, tools)
 
     async def execute_tool(
         self,
@@ -58,13 +42,12 @@ class ToolExecutor:
         args: dict[str, Any],
         tc_id: str,
         tools: dict[str, Tool],
-        ctx: ToolContext,
         *,
         notify: bool = True,
     ) -> tuple[str, Any]:
         """核心链：查找 → 通知（可关）→ preflight 屏障 → 执行（超时）→ 结果/错误。
 
-        execute_call / execute_named 两个入口共用；参数已解包
+        execute_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
         （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
         静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
         TOOL_EXECUTION_START 上的审批扩展（core.approval.Approval）承担。
@@ -75,11 +58,10 @@ class ToolExecutor:
             logger.warning(reason)
             return tc_id, reason
 
-        channel = ctx.channel
-        # 执行上下文提前注入：审批扩展与 preflight 钩子（事件 handler）都能
-        # 经 tool_context 拿到会话上下文（channel / register_tool 等）交互。
-        # 与原实现一致：每轮 execute 覆盖 set，不显式 reset。
-        tool_context.set(ctx)
+        # 会话上下文由调用方（runner 每轮 / run_job 后台任务）注入
+        # tool_context——审批扩展、preflight 钩子与工具执行都原地获取。
+        ctx = tool_context.get()
+        channel = ctx.channel if ctx is not None else None
 
         if notify and channel is not None:
             await channel.notify(
@@ -88,7 +70,7 @@ class ToolExecutor:
 
         # preflight 屏障：监听器返回 HookVerdict，None 放行。
         # block → 阻止执行；arguments → 按注册顺序改写参数（后者覆盖前者）。
-        if ctx.bus is not None:
+        if ctx is not None and ctx.bus is not None:
             for verdict in await ctx.bus.emit(
                 Event.TOOL_EXECUTION_START,
                 tool_name=name,
@@ -144,7 +126,7 @@ class ToolExecutor:
         finally:
             # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型扩展。
             # 工具未找到 / 审批拒绝 / 被扩展阻止的路径不经过 try，不发 after。
-            if ctx.bus is not None:
+            if ctx is not None and ctx.bus is not None:
                 await ctx.bus.emit(
                     Event.TOOL_EXECUTION_END,
                     tool_name=name,
@@ -155,34 +137,27 @@ class ToolExecutor:
                 )
         return tc_id, result if error is None else error
 
-    async def execute_batch(
+    async def execute_calls(
         self,
         tool_calls: list,
         tools: dict[str, Tool],
-        ctx: ToolContext,
-    ) -> list[tuple[str, Any]]:
-        return await asyncio.gather(
-            *[self.execute_call(tc, tools, ctx) for tc in tool_calls]
-        )
-
-    async def execute_iter(
-        self,
-        tool_calls: list,
-        tools: dict[str, Tool],
-        ctx: ToolContext,
     ) -> AsyncIterator[tuple[str, Any]]:
+        """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。"""
         for task in asyncio.as_completed(
-            [self.execute_call(tc, tools, ctx) for tc in tool_calls]
+            [self.execute_call(tc, tools) for tc in tool_calls]
         ):
             tc_id, result = await task
             yield tc_id, result
 
-    async def launch_pending(self, ctx: ToolContext, tools: dict[str, Tool]) -> None:
+    async def launch_pending(self, tools: dict[str, Tool]) -> None:
         """本轮工具执行完后：把 background 写下的 pending 作业拉起（create_task）。
 
         job 状态 pending → running；run_job 跑完后写回 result/error
-        （供 job_result 读取）。
+        （供 job_result 读取）。ctx 原地取自 tool_context。
         """
+        ctx = tool_context.get()
+        if ctx is None:
+            return
         for job_id, job in ctx.jobs.items():
             if job.status != JobStatus.PENDING:
                 continue
@@ -198,10 +173,15 @@ class ToolExecutor:
     ) -> None:
         """后台作业执行体：执行工具并写回结果（done）或错误（error）。
 
-        launch_pending 拉起（create_task）后由本方法跑完。
+        launch_pending 拉起（create_task）后由本方法跑完。后台任务独立
+        context——开头注入 tool_context，工具/审批扩展经它拿会话上下文。
         """
+        tool_context.set(ctx)
         try:
-            _, result = await self.execute_named(job.tool_name, job.args, tools, ctx)
+            tc_id = f"bg-{uuid.uuid4().hex[:8]}"
+            _, result = await self.execute_tool(
+                job.tool_name, job.args, tc_id, tools, notify=False
+            )
             job.result = result
             job.status = JobStatus.DONE
         except asyncio.CancelledError:

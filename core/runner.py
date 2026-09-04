@@ -16,6 +16,7 @@ from ..infra import (
     OpenAIProvider,
     Tool,
     ToolContext,
+    tool_context,
     tracer,
     AGENT_ITERATIONS,
     HANDOFF,
@@ -118,7 +119,9 @@ class Runner:
 
                 await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
 
-                # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用）
+                # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用），
+                # 并统一注入 tool_context——整轮工具（含并发、审批扩展 /
+                # preflight 钩子）经它拿会话上下文，executor 不再每工具设置。
                 ctx = ToolContext(
                     channel=channel,
                     jobs=env.jobs,
@@ -127,12 +130,17 @@ class Runner:
                         env.ext_runner.register_tool if env.ext_runner else None
                     ),
                 )
-                run_turn = self._run_turn_streamed if streamed else self._run_turn
-                completion, message, tool_results = await run_turn(
-                    agent, messages, tools, provider, ctx
-                )
+                tool_context.set(ctx)
+                if streamed:
+                    completion, message, tool_results = await self._run_turn_streamed(
+                        agent, messages, tools, provider, ctx
+                    )
+                else:
+                    completion, message, tool_results = await self._run_turn(
+                        agent, messages, tools, provider
+                    )
                 # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
-                await self._executor.launch_pending(ctx, tools)
+                await self._executor.launch_pending(tools)
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
@@ -212,8 +220,8 @@ class Runner:
             completion = await stream.get_final_completion()
             message = completion.choices[0].message
             if message.tool_calls:
-                async for tc_id, r in self._executor.execute_iter(
-                    message.tool_calls, tools, ctx
+                async for tc_id, r in self._executor.execute_calls(
+                    message.tool_calls, tools
                 ):
                     tool_results.append((tc_id, r))
             elif ctx.channel:
@@ -226,7 +234,6 @@ class Runner:
         messages: list,
         tools: dict[str, Tool],
         provider,
-        ctx: ToolContext,
     ):
         tool_results: list = []
         completion = await provider.create(
@@ -237,9 +244,12 @@ class Runner:
 
         message = completion.choices[0].message
         if message.tool_calls:
-            tool_results = await self._executor.execute_batch(
-                message.tool_calls, tools, ctx
-            )
+            tool_results = [
+                r
+                async for r in self._executor.execute_calls(
+                    message.tool_calls, tools
+                )
+            ]
         return completion, message, tool_results
 
     def run_sync(
