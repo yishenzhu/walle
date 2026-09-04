@@ -175,8 +175,12 @@ class TestSessionCommandDispatch:
         loader = ExtensionRegistry()
 
         async def load_cli(api: ExtensionAPI):
-            async def ping(args: str) -> str:
-                return "pong"
+            from ..schemas import Delta, DeltaEnd
+
+            async def ping(args: str, ctx):
+                # 推送由命令自己决定：经 channel notify Delta 回复流
+                await ctx.channel.notify(Delta(delta="pong"))
+                await ctx.channel.notify(DeltaEnd())
 
             api.register_command("ping", "ping", ping)
 
@@ -206,9 +210,81 @@ class TestSessionCommandDispatch:
 
         await s.close()
 
+    async def test_silent_command_no_push(self, tmp_path):
+        """静默命令（handler 返回 None）：命中但无任何推送。"""
+        from ..schemas import UserInput
+        from ..core import ExtensionAPI, ExtensionRegistry
 
-class TestSessionIsolation:
-    """会话隔离：不同会话可选激活不同扩展，工具/事件互不干扰。"""
+        ch = FakeChannel()
+        loader = ExtensionRegistry()
+
+        async def load_cli(api: ExtensionAPI):
+            async def noop(args: str, ctx):
+                return None  # 不调用 ctx → 静默执行
+
+            api.register_command("noop", "noop", noop)
+
+        loader.add("cli", load_cli)
+        await loader.load()
+
+        s = Session(
+            session_id="cmd-2",
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            extensions=[loader.extensions[0]],
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+        try:
+            await s.handle(UserInput(content="/noop"))
+            assert ch.events == []  # 无推送
+        finally:
+            await s.close()
+
+
+class TestSessionStreamForward:
+    """Runner 只发事件，Session 监听 MESSAGE_DELTA/END 转发给 transport。"""
+
+    def _session(self, tmp_path, ch: FakeChannel) -> Session:
+        return Session(
+            session_id="stream-1",
+            agent_factory=lambda _name=None: Agent(
+                instruction="You are a helpful assistant."
+            ),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            transport=ch,
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+    async def test_delta_and_end_forwarded_to_transport(self, tmp_path):
+        ch = FakeChannel()
+        s = self._session(tmp_path, ch)
+        try:
+            await s._bus.emit(Event.MESSAGE_DELTA, delta="你好")
+            await s._bus.emit(Event.MESSAGE_END, output="你好")
+            types = [type(e).__name__ for e in ch.events]
+            assert types == ["Delta", "DeltaEnd"]
+            assert ch.events[0].delta == "你好"
+        finally:
+            await s.close()
+
+    async def test_tool_turn_no_delta_end(self, tmp_path):
+        """MESSAGE_END output=None（工具轮/异常）→ 不发 DeltaEnd。"""
+        ch = FakeChannel()
+        s = self._session(tmp_path, ch)
+        try:
+            await s._bus.emit(Event.MESSAGE_END, output=None)
+            assert ch.events == []
+        finally:
+            await s.close()
 
     async def _registry(self, tmp_path) -> SessionRegistry:
         from ..core import ExtensionAPI, ExtensionRegistry

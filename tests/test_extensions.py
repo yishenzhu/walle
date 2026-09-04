@@ -146,13 +146,9 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
         ext_runner.activate(loader.extensions[0])
         assert ext_runner.active_names == {"guard"}
 
-        # 用会话工具表构造 agent
-        def toolkit():
-            return ext_runner.all_tools()
-
+        # 会话上下文携带扩展 runner：工具源与技能清单都从它来
         agent = Agent(
             instruction="helpful",
-            tools=toolkit,
             tool_filter=ToolFilter(allow=["*"]),
         )
 
@@ -177,7 +173,11 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
         result = await runner.run(
             agent,
             "use guard",
-            env=SessionContext(channel=FakeChannel(), messages=InMemoryMessages()),
+            env=SessionContext(
+                channel=FakeChannel(),
+                messages=InMemoryMessages(),
+                ext_runner=ext_runner,
+            ),
         )
 
         assert blocked["name"] == "guard_tool"  # before 钩子触发了
@@ -379,37 +379,63 @@ async def test_unload_covered_tool_keeps_later_owner():
 
 
 async def test_register_command_and_dispatch():
-    """扩展注册斜杠命令，dispatch 命中返回回复、未命中回退 None。"""
+    """扩展注册斜杠命令：handler(args, ctx) 自决推送；未命中回退 agent。"""
+    from ..infra import CommandContext
+    from ..schemas import Delta, DeltaEnd
+    from .conftest import FakeChannel
+
     bus = EventBus()
     runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
-        async def review(args: str) -> str:
-            return f"reviewing: {args or 'HEAD'}"
+        async def review(args: str, ctx_: CommandContext | None):
+            # 推送由命令自己决定：经 channel 推 Delta 回复流
+            await ctx_.channel.notify(Delta(delta=f"reviewing: {args or 'HEAD'}"))
+            await ctx_.channel.notify(DeltaEnd())
+
+        async def silent(args: str, ctx_: CommandContext | None):
+            return None  # 命中但静默（不推送）
 
         api.register_command("review", "审查当前分支", review)
+        api.register_command("silent", "静默命令", silent)
 
     mgr.add("cli", ext)
     await mgr.load()
     runner.activate(mgr.extensions[0])
 
     assert "review" in runner.commands
-    assert await runner.dispatch("/review") == "reviewing: HEAD"
-    assert await runner.dispatch("/review main") == "reviewing: main"
-    assert await runner.dispatch("/nope") is None  # 未知命令回退 agent
-    assert await runner.dispatch("普通消息") is None  # 非 / 开头回退 agent
+    ch = FakeChannel()
+    ctx = CommandContext(channel=ch, bus=bus)
+    assert await runner.dispatch("/review", ctx) is True
+    assert [type(e).__name__ for e in ch.events] == ["Delta", "DeltaEnd"]
+    assert ch.events[0].delta == "reviewing: HEAD"
+
+    ch2 = FakeChannel()
+    assert await runner.dispatch("/review main", CommandContext(ch2, bus)) is True
+    assert ch2.events[0].delta == "reviewing: main"
+
+    ch3 = FakeChannel()
+    assert await runner.dispatch("/silent", CommandContext(ch3, bus)) is True  # 命中静默
+    assert ch3.events == []
+
+    assert await runner.dispatch("/nope", CommandContext(FakeChannel(), bus)) is False
+    assert (
+        await runner.dispatch("普通消息", CommandContext(FakeChannel(), bus)) is False
+    )
 
 
 async def test_unload_removes_command():
     """卸载扩展摘除其命令。"""
+    from ..infra import CommandContext
+
     bus = EventBus()
     runner = ExtensionRunner(bus)
     mgr = ExtensionRegistry()
 
     async def ext(api: ExtensionAPI):
-        async def h(args: str) -> str:
-            return "v1"
+        async def h(args: str, ctx_: CommandContext | None):
+            return None
 
         api.register_command("greet", "greet", h)
 
@@ -419,7 +445,26 @@ async def test_unload_removes_command():
 
     runner.unload("ext")
     assert runner.commands == {}
-    assert await runner.dispatch("/greet") is None
+    ctx = CommandContext(channel=None, bus=bus)
+    assert await runner.dispatch("/greet", ctx) is False
+
+
+async def test_command_context_exposes_transport():
+    """CommandContext 只暴露底层能力（transport/bus），用法由命令自决。"""
+    from ..infra import CommandContext
+    from ..schemas import Delta, DeltaEnd, Inquiry
+    from .conftest import FakeChannel
+
+    # 命令可经 channel notify 推送、call Inquiry 提问（无需预设接口）
+    ch = FakeChannel()
+    ch._inquiry_response = "user reply"
+    ctx = CommandContext(channel=ch, bus=EventBus())
+    await ctx.channel.notify(Delta(delta="自决推送"))
+    await ctx.channel.notify(DeltaEnd())
+    reply = await ctx.channel.call(Inquiry(question="自决提问", options=["a", "b"]))
+    assert [type(e).__name__ for e in ch.events] == ["Delta", "DeltaEnd"]
+    assert ch.events[0].delta == "自决推送"
+    assert reply == "user reply"
 
 
 # ── ExtensionRunner：会话级激活层 ────────────────────────
@@ -471,10 +516,14 @@ async def test_session_context_activates_into_own_bus_and_registry():
 async def test_session_context_command_is_per_session():
     """同一扩展在两个会话各激活一次：命令表互不干扰，卸载互不影响。"""
     from ..core import ExtensionRunner
+    from ..infra import CommandContext
+    from ..schemas import Delta, DeltaEnd
+    from .conftest import FakeChannel
 
     async def factory(api: ExtensionAPI):
-        async def greet(args: str) -> str:
-            return f"hi {args}"
+        async def greet(args: str, ctx_: CommandContext | None):
+            await ctx_.channel.notify(Delta(delta=f"hi {args}"))
+            await ctx_.channel.notify(DeltaEnd())
 
         api.register_command("greet", "greet", greet)
 
@@ -482,16 +531,25 @@ async def test_session_context_command_is_per_session():
     await _load_extensions(loader, factory)
     ext = loader.extensions[0]
 
+    ch1, ch2 = FakeChannel(), FakeChannel()
     ctx1 = ExtensionRunner(EventBus())
     ctx2 = ExtensionRunner(EventBus())
     ctx1.activate(ext)
     ctx2.activate(ext)
-    assert await ctx1.dispatch("/greet w") == "hi w"
-    assert await ctx2.dispatch("/greet w") == "hi w"
+    assert await ctx1.dispatch("/greet w", CommandContext(ch1, EventBus())) is True
+    assert await ctx2.dispatch("/greet w", CommandContext(ch2, EventBus())) is True
+    assert ch1.events[0].delta == "hi w"
+    assert ch2.events[0].delta == "hi w"
 
     ctx1.unload("demo")
-    assert await ctx1.dispatch("/greet") is None  # ctx1 命令已摘
-    assert await ctx2.dispatch("/greet w") == "hi w"  # ctx2 仍在
+    assert (
+        await ctx1.dispatch("/greet", CommandContext(FakeChannel(), EventBus()))
+        is False
+    )  # 已摘
+    assert (
+        await ctx2.dispatch("/greet w", CommandContext(FakeChannel(), EventBus()))
+        is True
+    )  # 仍在
 
 
 async def test_session_context_reactivate_replaces():

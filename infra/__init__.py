@@ -3,6 +3,7 @@ from .tool import Job, JobStatus, Tool, ToolContext, tool_context
 from .diagnostics import DiagnosticType, ResourceDiagnostic
 from .extension import (
     Command,
+    CommandContext,
     Extension,
     ExtensionAPI,
     ExtensionFactory,

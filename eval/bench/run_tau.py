@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
 from ...infra import OpenAIProvider
+from ...core import EventBus, ExtensionRunner
 from ...core.agent import Agent
 from ...core.runner import Runner, RunOptions, SessionContext
 from ...messages import InMemoryMessages
@@ -117,11 +118,14 @@ async def run_tau_case(
             timeout=TimeoutConfig(default=120.0),
         )
     )
+    ext_runner = ExtensionRunner(EventBus())
+    ext_runner.register_tool(*tools_src())
     walle_env = SessionContext(
         provider=tracked,
         channel=None,
         messages=InMemoryMessages(),
         jobs={},
+        ext_runner=ext_runner,
     )
     agent = Agent(
         name="tau",
@@ -134,7 +138,6 @@ async def run_tau_case(
             "Continue the conversation until the user's request is fully handled."
         ),
         temperature=0.0,
-        tools=tools_src,
     )
     runner = Runner(executor=executor)
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel
 from typing import Any
 
-from .agent import Agent, TContext, Handoff
+from .agent import Agent, Handoff
 from .executor import ToolExecutor
 from ..channel import Channel
 from ..messages import Messages, InMemoryMessages
@@ -27,8 +27,6 @@ from ..schemas import (
     ToolMessage,
     Usage,
     UserMessage,
-    Delta,
-    DeltaEnd,
     ToolResult,
 )
 
@@ -62,7 +60,7 @@ class SessionContext:
 
 class RunResult(BaseModel):
     input: str
-    last_agent: Agent[Any] | None = None
+    last_agent: Agent | None = None
     max_turns: int
     completed_turns: int = 0
     output: str | BaseModel | None = None
@@ -71,28 +69,26 @@ class RunResult(BaseModel):
 
 
 class Runner:
-    """Agent 执行器：持有默认 provider / 工具执行器 / 事件总线，env 未提供时复用。"""
+    """Agent 执行器：持有工具执行器 / 事件总线；provider 由 run 时 env 提供。"""
 
     def __init__(
         self,
-        provider: OpenAIProvider | None = None,
         executor: ToolExecutor | None = None,
         bus: EventBus | None = None,
     ) -> None:
-        # 默认实例（复用，避免每次 run 新建）
-        self._provider = provider or OpenAIProvider.get_default()
+        # provider 不经构造——run 时由 env 提供（env 缺省回退默认实例）
         self._executor = executor or ToolExecutor()
         self._bus = bus or EventBus()
 
     async def run(
         self,
-        agent: Agent[TContext],
+        agent: Agent,
         input: str,
         env: SessionContext,
         options: RunOptions | None = None,
     ) -> RunResult:
         options = options or RunOptions()
-        provider = env.provider or self._provider
+        provider = env.provider or OpenAIProvider.get_default()
         if provider is None:
             raise RuntimeError("no invalid provider")
         channel, history = env.channel, env.messages
@@ -115,7 +111,10 @@ class Runner:
                 span.set_attribute("agent.model", model)
 
                 messages = await self._build_messages(agent, history, env)
-                tools = self._build_tools(agent)
+                tool_source = (
+                    env.ext_runner.all_tools() if env.ext_runner is not None else []
+                )
+                tools = self._build_tools(agent, tool_source)
 
                 await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
 
@@ -133,7 +132,7 @@ class Runner:
                 tool_context.set(ctx)
                 if streamed:
                     completion, message, tool_results = await self._run_turn_streamed(
-                        agent, messages, tools, provider, ctx
+                        agent, messages, tools, provider
                     )
                 else:
                     completion, message, tool_results = await self._run_turn(
@@ -201,12 +200,12 @@ class Runner:
 
     async def _run_turn_streamed(
         self,
-        agent: Agent[Any],
+        agent: Agent,
         messages: list,
         tools: dict[str, Tool],
         provider,
-        ctx: ToolContext,
     ):
+        # 流式增量只发事件（MESSAGE_DELTA）——推给 channel 由监听者负责
         tool_results: list = []
         async with provider.stream(
             messages=[m.model_dump() for m in messages],  # type: ignore
@@ -214,8 +213,8 @@ class Runner:
             **self.model_params(agent),
         ) as stream:
             async for event in stream:
-                if event.type == "content.delta" and ctx.channel:
-                    await ctx.channel.notify(Delta(delta=event.delta))
+                if event.type == "content.delta":
+                    await self._bus.emit(Event.MESSAGE_DELTA, delta=event.delta)
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message
@@ -224,13 +223,11 @@ class Runner:
                     message.tool_calls, tools
                 ):
                     tool_results.append((tc_id, r))
-            elif ctx.channel:
-                await ctx.channel.notify(DeltaEnd())
         return completion, message, tool_results
 
     async def _run_turn(
         self,
-        agent: Agent[Any],
+        agent: Agent,
         messages: list,
         tools: dict[str, Tool],
         provider,
@@ -254,7 +251,7 @@ class Runner:
 
     def run_sync(
         self,
-        agent: Agent[TContext],
+        agent: Agent,
         input: str,
         env: SessionContext,
         options: RunOptions | None = None,
@@ -271,7 +268,7 @@ class Runner:
 
         return asyncio.run(self.run(agent, input, env, options))
 
-    def model_params(self, agent: Agent[Any]):
+    def model_params(self, agent: Agent):
         params: dict[str, Any] = {}
         if agent.temperature is not None:
             params["temperature"] = agent.temperature
@@ -288,7 +285,7 @@ class Runner:
         return params
 
     def _format_output(
-        self, agent: Agent[Any], content: str | None
+        self, agent: Agent, content: str | None
     ) -> str | BaseModel | None:
         if content is None:
             return None
@@ -297,7 +294,7 @@ class Runner:
         return content
 
     async def _build_messages(
-        self, agent: Agent[Any], history: Messages, ctx: SessionContext
+        self, agent: Agent, history: Messages, ctx: SessionContext
     ) -> list:
         messages = await history.get()
         if agent.instruction:
@@ -308,10 +305,11 @@ class Runner:
                 messages += [SystemMessage(content=skill_prompt)]
         return messages
 
-    def _build_tools(self, agent: Agent[Any]) -> dict[str, Tool]:
-        # 实时取工具（agent.tools 源反映运行时添加的工具）并按 tool_filter 筛选
+    def _build_tools(self, agent: Agent, source: list[Tool]) -> dict[str, Tool]:
+        # 按 agent 的可用工具（源经 tool_filter 过滤）构造工具表；工具不经
+        # agent 配置——源来自会话扩展 runner，每轮实时取。
         tools: dict[str, Tool] = {}
-        for t in agent.available_tools():
+        for t in agent.available_tools(source):
             tools[t.name] = t
         for h in agent.handoffs:
             t = h.as_tool()

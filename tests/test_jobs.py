@@ -229,16 +229,18 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        def agent_tools():
-            return [
-                make_tool("slow", "slow-done", delay=0.05),
-                Tool.from_function(background),
-                Tool.from_function(job_result),
-            ]
+        from ..core import EventBus, ExtensionRunner
+
+        ext_runner = ExtensionRunner(EventBus())
+        ext_runner.register_tool(
+            make_tool("slow", "slow-done", delay=0.05),
+            Tool.from_function(background),
+            Tool.from_function(job_result),
+        )
+        env.ext_runner = ext_runner
 
         agent = Agent(
             instruction="You are helpful.",
-            tools=agent_tools,
             tool_filter=ToolFilter(allow=["*"]),
         )
 
@@ -286,16 +288,18 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        def agent_tools():
-            return [
-                make_tool("slow", "done-42", delay=0.1),
-                Tool.from_function(background),
-                Tool.from_function(job_result),
-            ]
+        from ..core import EventBus, ExtensionRunner
+
+        ext_runner = ExtensionRunner(EventBus())
+        ext_runner.register_tool(
+            make_tool("slow", "done-42", delay=0.1),
+            Tool.from_function(background),
+            Tool.from_function(job_result),
+        )
+        env.ext_runner = ext_runner
 
         agent = Agent(
             instruction="You are helpful.",
-            tools=agent_tools,
             tool_filter=ToolFilter(allow=["*"]),
         )
 

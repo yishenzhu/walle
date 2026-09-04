@@ -1,4 +1,4 @@
-from .agent import Agent, Handoff, TContext
+from .agent import Agent, Handoff
 from .approval import (
     Approval,
     ApprovalPolicy,

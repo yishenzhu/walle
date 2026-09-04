@@ -47,10 +47,13 @@ def runner(allow_executor):
 
 @pytest.fixture
 def env(channel):
-    """默认会话环境：历史（每测试隔离）。"""
+    """默认会话环境：历史（每测试隔离）+ 会话扩展 runner（工具表）。"""
+    from ..core import EventBus, ExtensionRunner
+
     return SessionContext(
         channel=channel,
         messages=InMemoryMessages(),
+        ext_runner=ExtensionRunner(EventBus()),
     )
 
 
@@ -120,7 +123,8 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="I used echo")),
         )
 
-        agent = Agent(instruction="helpful", tools=lambda: [make_echo_tool("result!")])
+        agent = Agent(instruction="helpful")
+        env.ext_runner.register_tool(make_echo_tool("result!"))
 
         result = await runner.run(agent, "use echo", env=env)
 
@@ -159,7 +163,8 @@ class TestRunnerWithTools:
             FakeCompletion(FakeMessage(content="done")),
         )
 
-        agent = Agent(instruction="helpful", tools=lambda: [tool_a, tool_b])
+        agent = Agent(instruction="helpful")
+        env.ext_runner.register_tool(tool_a, tool_b)
 
         result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
@@ -287,17 +292,16 @@ class TestRunnerModelParams:
 
 
 class TestRunnerBuildTools:
-    """_build_tools 方法测试。"""
+    """_build_tools 方法测试：源 = 会话工具列表（调用方从扩展 runner 取）。"""
 
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
         agent = Agent(
             instruction="helpful",
-            tools=lambda: [tool],
             tool_filter=ToolFilter(allow=["*"]),
         )
         runner = Runner()
-        tools = runner._build_tools(agent)
+        tools = runner._build_tools(agent, [tool])
         assert "echo" in tools
 
     def test_includes_handoff_tools(self, provider):
@@ -307,38 +311,23 @@ class TestRunnerBuildTools:
             handoffs=[Handoff(target=researcher)],
         )
         runner = Runner()
-        tools = runner._build_tools(agent)
+        tools = runner._build_tools(agent, [])
         assert "transfer_to_researcher" in tools
 
-    def test_includes_tool_source(self, provider):
-        """tools（工具源函数）返回的工具实时进入 Agent 工具列表。"""
-        dynamic = make_echo_tool("dyn")
-
-        agent = Agent(
-            instruction="helpful",
-            tools=lambda: [dynamic],
-            tool_filter=ToolFilter(allow=["*"]),
-        )
+    def test_tool_filter_applied(self, provider):
+        """agent.tool_filter 从会话工具源中筛选（allow/deny）。"""
+        tool = make_echo_tool()
+        agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["echo"]))
         runner = Runner()
-        tools = runner._build_tools(agent)
-        assert "echo" in tools
+        assert "echo" in runner._build_tools(agent, [tool])
+        agent2 = Agent(instruction="helpful", tool_filter=ToolFilter(allow=[]))
+        assert runner._build_tools(agent2, [tool]) == {}
 
-    def test_agent_tools_from_source(self):
-        """agent.tools 源实时获取工具。"""
-        dynamic = make_echo_tool("dyn")
-
-        agent = Agent(
-            instruction="helpful",
-            tools=lambda: [dynamic],
-        )
-        names = {t.name for t in agent.tools()}
-        assert names == {"echo"}
-
-    def test_agent_tools_none(self, provider):
-        """无 tools 源时 _build_tools 正常（空工具）。"""
-        agent = Agent(instruction="helpful")
+    def test_no_tools_returns_empty(self, provider):
+        """空源（无 ext_runner / 无工具）→ 空工具。"""
+        agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
         runner = Runner()
-        assert runner._build_tools(agent) == {}
+        assert runner._build_tools(agent, []) == {}
 
 
 class TestRunnerNoProvider:
@@ -401,7 +390,7 @@ class TestRunnerToolHooks:
         assert result.output == "done"
 
     async def test_tool_after_hook_notified(self, provider, env):
-        from ..core import Event, EventBus
+        from ..core import Event, EventBus, ExtensionRunner
 
         seen: list[str] = []
 
@@ -429,9 +418,10 @@ class TestRunnerToolHooks:
 
         agent = Agent(
             instruction="helpful",
-            tools=lambda: [make_echo_tool()],
             tool_filter=ToolFilter(allow=["*"]),
         )
+        env.ext_runner = ExtensionRunner(bus)  # 工具经会话扩展 runner 提供
+        env.ext_runner.register_tool(make_echo_tool())
         await runner.run(agent, "use echo", env=env)
 
         assert seen == ["echo"]

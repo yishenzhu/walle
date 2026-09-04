@@ -1,4 +1,4 @@
-"""会话实体：对齐 pi 的 AgentSession——每个会话自持一套运行时。
+"""会话实体：每个会话自持一套完整运行时。
 
 会话 = 独立边界：自己的事件总线(bus)、工具表(tools)、审批策略
 (executor)、扩展激活(ExtensionRunner)、agent 循环(Runner)。扩展声明
@@ -19,6 +19,8 @@ from .runner import Runner, RunOptions, SessionContext
 from ..channel import Channel
 from ..conf import ToolConfig
 from ..infra import (
+    CommandContext,
+    Event,
     EventBus,
     Extension,
     ExtensionRegistry,
@@ -55,7 +57,7 @@ class Session:
         # 创建时间内聚在 Session（注册表/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
 
-        # ── 会话级运行时（每会话独立，对齐 pi AgentSession）──
+        # ── 会话级运行时（每会话独立：bus/审批/agent 循环/扩展激活）──
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
         self._tool_executor = ToolExecutor(
             tool_config or ToolConfig()
@@ -66,6 +68,9 @@ class Session:
         )  # 会话级扩展激活（含工具表/命令表）
         if extensions:
             self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
+        # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
+        self._bus.on(Event.MESSAGE_DELTA, self._on_delta)
+        self._bus.on(Event.MESSAGE_END, self._on_message_end)
 
         # agent_factory 接收 agent 名（缺省 = default），工具源由会话覆写为会话工具表
         self._agent_builder = agent_factory
@@ -78,22 +83,12 @@ class Session:
             self._messages = SQLiteMessages(db_path=db_path, session_id=session_id)
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
-        # 执行环境打包：channel 随 attach/detach 切换
+        # transport：连接端点（attach/detach 切换），唯一 channel 事实源
         self._transport: Channel | None = transport
-        self._env = SessionContext(
-            provider=self._provider,
-            channel=self._transport,
-            messages=self._messages,
-            session_id=self.id,
-            jobs=self._jobs,
-            ext_runner=self._ext_runner,  # 工具执行期动态注册通道
-        )
 
     def _build_agent(self, name: str | None = None) -> Agent:
-        """按名构造 agent，并把工具源绑定到本会话的工具表。"""
-        agent = self._agent_builder(name)
-        agent.tools = self._ext_runner.all_tools  # 本会话工具表
-        return agent
+        """按名构造 agent（工具不经 agent——运行时由扩展 runner 提供）。"""
+        return self._agent_builder(name)
 
     @property
     def jobs(self) -> dict[str, Job]:
@@ -132,30 +127,48 @@ class Session:
         """
         self._agent = self._build_agent(name)
 
+    async def _on_delta(self, delta: str) -> None:
+        """流式增量事件 → 推给当前 transport（无 transport 则丢弃）。"""
+        if self._transport is not None:
+            await self._transport.notify(Delta(delta=delta))
+
+    async def _on_message_end(self, output: Any = None, **_: Any) -> None:
+        """消息结束事件 → 文本输出完成时发 DeltaEnd（工具轮不发）。"""
+        if output is not None and self._transport is not None:
+            await self._transport.notify(DeltaEnd())
+
     def attach(self, transport: Channel) -> None:
-        """绑定新 transport（重连/接管）：换 channel 端点，环境随之更新。"""
+        """绑定新 transport（重连/接管）：换 channel 端点。"""
         self._transport = transport
-        self._env.channel = transport
 
     def detach(self) -> None:
         """解除 transport：保留 messages 状态，会话仍可被 attach 恢复。"""
         self._transport = None
-        self._env.channel = None
+
+    def _make_env(self) -> SessionContext:
+        """按当前 transport 组装传给 runner 的环境（每次 run 现造）。"""
+        return SessionContext(
+            provider=self._provider,
+            channel=self._transport,
+            messages=self._messages,
+            session_id=self.id,
+            jobs=self._jobs,
+            ext_runner=self._ext_runner,  # 工具执行期动态注册通道
+        )
 
     async def handle(self, user_input: UserInput) -> None:
         if self._transport is None:
             raise RuntimeError(f"session '{self.id}' is detached, attach first")
         content = user_input.content or ""
-        # 斜杠命令：命中则不经 agent，直接回复；未命中回退给 agent
-        reply = await self._ext_runner.dispatch(content)
-        if reply is not None:
-            await self._transport.notify(Delta(delta=reply))
-            await self._transport.notify(DeltaEnd())
+        # 命令执行上下文：暴露 transport（推送/提问）与事件总线，用法自决
+        if await self._ext_runner.dispatch(
+            content, CommandContext(channel=self._transport, bus=self._bus)
+        ):
             return
         await self._agent_runner.run(
             self._agent,
             content,
-            env=self._env,
+            env=self._make_env(),
             options=RunOptions(streamed=True),
         )
 

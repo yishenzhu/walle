@@ -21,6 +21,7 @@ from .diagnostics import (
     ResourceDiagnostic,
 )
 from ..conf import auto_path
+from ..channel import Channel
 from .event_bus import Event, EventBus, Handler
 from .tool import Tool
 
@@ -54,13 +55,30 @@ class Skill:
     path: str  # SKILL.md 完整路径
 
 
+@dataclass
+class CommandContext:
+    """命令执行上下文：暴露会话底层能力，用法由命令自己决定。
+
+    channel = 会话 transport：notify(Delta/DeltaEnd...) 推送、call(Inquiry)
+    向用户提问；bus = 会话事件总线（消息输出等事件）。命令按需自取，
+    不预设 UI 语义。
+    """
+
+    channel: Channel | None
+    bus: EventBus
+
+
 @dataclass(frozen=True)
 class Command:
-    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。"""
+    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。
+
+    handler(args, ctx)：推送与交互由命令经 ctx（notify/confirm/select/
+    input）自己决定；不调用即静默。
+    """
 
     name: str
     description: str
-    handler: Callable[[str], Awaitable[str]]
+    handler: Callable[[str, CommandContext | None], Awaitable[None]]
 
 
 class ExtensionAPI:
@@ -197,12 +215,12 @@ class ExtensionRegistry:
 
 
 class ExtensionRunner:
-    """会话级扩展激活层（对齐 pi：每会话绑定一份 runner）。
+    """会话级扩展激活层：每会话绑定一份。
 
-    一个会话一个实例：持有本会话的 bus、工具表、命令表——扩展激活的
-    tools/handlers/commands 全挂到这里。工具表与会话工具源合一：Session
-    把本 runner 的 all_tools 直接绑给 Agent。激活记录 per-session 保存
-    （同一扩展可被多个会话激活，不污染 Extension 声明）。
+    一个会话一个实例：持有本会话的 bus、工具表、技能表、命令表——扩展
+    激活的 tools/skills/handlers/commands 全挂到这里。工具表即会话工具源：
+    Session 每轮从这里取 all_tools 交给 Agent 过滤。激活记录 per-session
+    保存（同一扩展可被多个会话激活，不污染 Extension 声明）。
     """
 
     def __init__(self, bus: EventBus) -> None:
@@ -278,15 +296,22 @@ class ExtensionRunner:
             if name in self._commands:
                 del self._commands[name]
 
-    async def dispatch(self, text: str) -> str | None:
-        """分发本会话斜杠命令：命中返回回复，未命中返回 None（回退 agent）。"""
+    async def dispatch(
+        self, text: str, ctx: CommandContext | None = None
+    ) -> bool:
+        """分发本会话斜杠命令：命中返回 True，未命中返回 False（回退 agent）。
+
+        ctx 为命令执行上下文（会话组装：notify 推送 / 提问交互），由
+        调用方注入；命令推送与否经 ctx 自决，测试可传 None 或假 ctx。
+        """
         if not text.startswith("/"):
-            return None
+            return False
         name, _, args = text[1:].partition(" ")
         cmd = self._commands.get(name)
         if cmd is None:
-            return None
-        return await cmd.handler(args.strip())
+            return False
+        await cmd.handler(args.strip(), ctx)
+        return True
 
     @property
     def commands(self) -> dict[str, Command]:

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ..core import Agent, Handoff
+from ..core import Agent, EventBus, ExtensionRunner, Handoff
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
@@ -145,11 +145,13 @@ def build_tool_system() -> Callable[[], list[Tool]]:
     return source
 
 
-def build_agent(task: TaskSpec, tools_src: Callable[[], list[Tool]]) -> Agent:
+def build_agent(task: TaskSpec) -> Agent:
     """按任务规格构造 Agent（含 handoff 多智能体）。
 
     - handoff 任务：按 AgentSpec 程序化构造，先建全部 agent 再挂 handoff 边
     - 普通任务：加载 frontmatter agent（如 default），仅覆写工具 allowlist 与温度
+
+    工具不经 agent——由调用方挂到会话扩展 runner（env.ext_runner）。
     """
     if task.agents:
         agents: dict[str, Agent] = {}
@@ -159,7 +161,6 @@ def build_agent(task: TaskSpec, tools_src: Callable[[], list[Tool]]) -> Agent:
                 description=spec.description or f"{spec.name} agent",
                 instruction=spec.instruction,
                 temperature=task.temperature,
-                tools=tools_src,
                 tool_filter=ToolFilter(allow=spec.tools),
             )
         for spec in task.agents:
@@ -169,7 +170,7 @@ def build_agent(task: TaskSpec, tools_src: Callable[[], list[Tool]]) -> Agent:
                 ]
         return agents[task.agents[0].name]
 
-    agent = Agent.load(task.agent, tools=tools_src)
+    agent = Agent.load(task.agent)
     agent.tool_filter = ToolFilter(allow=task.tools)
     agent.temperature = task.temperature
     return agent
@@ -188,13 +189,18 @@ async def run_task(
             timeout=TimeoutConfig(default=60.0),
         )
     )
+    # 会话扩展 runner 持有工具表：初集注册进工具表，define_tool 等运行时
+    # 动态注册也落这里（ToolContext.register_tool 绑它）
+    ext_runner = ExtensionRunner(EventBus())
+    ext_runner.register_tool(*tools_src())
     env = SessionContext(
         provider=tracked,
         channel=None,
         messages=InMemoryMessages(),
         jobs={},
+        ext_runner=ext_runner,
     )
-    agent = build_agent(task, tools_src)
+    agent = build_agent(task)
     runner = Runner(executor=executor)
 
     start = time.monotonic()

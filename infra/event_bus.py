@@ -24,6 +24,7 @@ class Event(StrEnum):
     TURN_START = "turn_start"
     TURN_END = "turn_end"
     MESSAGE_START = "message_start"
+    MESSAGE_DELTA = "message_delta"  # 流式输出增量（delta 文本，逐块发）
     MESSAGE_END = "message_end"
     TOOL_EXECUTION_START = "tool_execution_start"
     TOOL_EXECUTION_END = "tool_execution_end"
