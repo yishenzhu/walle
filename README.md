@@ -14,69 +14,82 @@
 | 特性 | 说明 |
 |---|---|
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
-| 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选），启动按名加载，会话内可切换 |
+| 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选/技能白名单），启动按名加载，会话内可切换 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
-| 🔌 **MCP 协议集成** | 对接任意 MCP Server（stdio / Streamable HTTP），自动发现工具 |
-| 🛡️ **工具治理** | glob 三态审批（allow / deny / ask）+ 超时保护，按工具名 + 参数粒度控制 |
+| 🔌 **MCP 协议集成** | MCP 作为扩展声明（stdio / Streamable HTTP），连接进程级共享，工具随扩展进会话 |
+| 🛡️ **工具治理** | 审批即扩展：conf 规则（allow/deny/ask）由 `Approval` 扩展订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
 |  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复 |
-| 🔄 **插件化扩展** | 内置工具也是扩展（引导扩展注册）；`.agent/extensions/` 目录即插即用，可同名覆盖内置；技能作为提示词资源按需加载 |
+| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
+| 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 
 ---
 
 ## 🏗️ 架构
 
+进程级共享"声明"，会话级自持"运行时"。
+
 ```mermaid
 flowchart TD
-    Main["main.py<br/>组装依赖 · 启动循环"]
-    Channel["Channel<br/>notify / call<br/>CLI 多会话 (JSON-line)"]
-    Runner["Runner<br/>Agent 循环 · 流式/批量"]
-    Session["Session<br/>会话实体 · attach/detach<br/>Memory / SQLite · 自动压缩"]
-    Exec["ToolExecutor<br/>工具执行器<br/>审批 · 并发 · 超时"]
-    AgentNode["Agent<br/>智能体定义<br/>Handoff · 工具筛选"]
-    Reg["ToolRegistry<br/>MCP 远程工具<br/>DefinedTool 定义工具"]
+    Main["main.py<br/>组装扩展池 · 启动"]
+    Reg["ExtensionRegistry<br/>进程级加载器<br/>builtin / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
+    SR["SessionRegistry<br/>会话注册表 · 工厂<br/>持扩展声明池 / tool_config"]
+    S["Session<br/>会话运行时容器<br/>bus · executor · runner · ext_runner"]
+    ER["ExtensionRunner<br/>会话级激活层<br/>工具表 / 技能表 / 命令表"]
+    R["Runner<br/>Agent 循环 · 流式增量事件"]
+    E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
+    A["Agent<br/>定义 · tool_filter · 技能白名单"]
+    T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
+    Ch["Channel<br/>notify / call<br/>CLI 多会话"]
 
-    Main --> Channel
-    Main --> Runner
-    Runner --> Session
-    Runner --> Exec
-    Runner --> AgentNode
-    Exec --> Reg
+    Main --> Reg
+    Reg -->|Extension 声明池| SR
+    SR -->|create 会话| S
+    S -->|activate 选中扩展| ER
+    S --> R
+    S --> E
+    R --> A
+    E --> T
+    ER -->|all_tools 工具源| R
+    Ch --> S
 
     classDef entry fill:#e8f5e9,stroke:#2e7d32
     classDef core fill:#e3f2fd,stroke:#1565c0
     classDef tool fill:#fff3e0,stroke:#e65100
-    class Main entry
-    class Runner,Session,Exec,AgentNode core
-    class Channel,Reg tool
+    class Main,Reg,SR entry
+    class S,ER,R,E,A core
+    class T,Ch tool
 ```
+
+> 详细类职责与内部变量传递边界见 [docs/architecture.md](docs/architecture.md)。
 
 ### 核心流程
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant C as Channel
+    participant C as Channel(CLI)
     participant S as Session
     participant R as Runner
-    participant T as ToolExecutor
+    participant B as Bus(会话事件)
+    participant E as ToolExecutor
     participant M as LLM
 
-    U->>C: 输入
     C->>S: handle(UserInput)
-    S->>R: run(agent, input)
+    S->>S: 斜杠命令? → CommandContext 分发(命中即返回)
+    S->>R: run(agent, input, env)
     loop 多轮迭代
-        R->>M: 调用 LLM（流式/批量）
-        M-->>R: 返回（tool_calls / 最终回复）
+        R->>M: 调用 LLM（流式增量 → MESSAGE_DELTA 事件）
+        M-->>R: tool_calls / 文本
         alt 有 tool_calls
-            R->>T: 并发执行
-            T->>T: 审批检查 → 执行
-            T-->>R: 结果
+            R->>R: tool_context 统一注入本轮 ctx
+            R->>E: execute_calls（并发）
+            E->>B: TOOL_EXECUTION_START（审批扩展 deny/ask → 人工确认）
+            E->>E: 执行工具（超时）→ TOOL_EXECUTION_END
+            E-->>R: 结果
             alt 含 Handoff
                 R->>R: 切换 Agent，继续循环
             end
         else 无 tool_calls
-            R-->>S: 最终结果
+            R-->>S: MESSAGE_END（→ DeltaEnd 推送）
         end
     end
     S-->>C: notify(Delta) 流式输出
@@ -89,13 +102,14 @@ sequenceDiagram
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 入口 | `main.py` | 依赖注入组装，启动 REPL 循环 |
-| 核心引擎 | `core/` | Agent 模型、运行循环、工具执行、审批策略 |
+| 入口 | `main.py` | 组装进程级扩展池（builtin/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
+| 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor）、审批扩展（Approval） |
+| 扩展激活 | `infra/extension.py` | ExtensionRegistry（进程级加载器）+ ExtensionRunner（会话级激活层：工具/技能/命令表）+ CommandContext |
+| 底层类型 | `infra/` | Tool、EventBus、HookVerdict、诊断、日志、遥测、指标、LLM Provider |
 | 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
-| 工具系统 | `tools/` | 注册表、MCP 客户端、内置工具、动态工具摄入 |
-| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略（会话实体在 `core/session.py`） |
+| 工具系统 | `tools/` | MCP 客户端（进程级）、技能扫描（Skill.as_ext）、内置工具（builtin/）、define_tool 动态定义 |
+| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略 |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
-| 基础设施 | `infra/` | 日志、遥测、指标、LLM Provider |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -243,10 +257,10 @@ tools:
 | `temperature` | float | 可选，采样温度 |
 | `tools.allow` | list[string] | 可选，允许的工具 glob（默认 `[]` 禁用全部，需显式授权） |
 | `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
-| `output_model` | string | 可选，引用 `.agent/agents/models.yaml` 中同名定义，作为结构化输出模型 |
+| `skills` | list[string] | 可选，技能白名单：`[]` 不注入 / `["*"]` 全部 / 列表仅命中项 |
 
-- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配；工具源实时反映运行时 `define_tool` 新增的工具
-- **输出模型**：`output_model: summary` 会在启动时从 `.agent/agents/models.yaml` 构建 Pydantic 模型，作为 `response_format` 约束；模型定义见 `models.yaml` 内注释
+- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配。Agent 不持有工具源——运行时每轮从会话扩展 runner 取工具表并经 `tools` 过滤
+- **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
