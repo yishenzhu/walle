@@ -128,10 +128,8 @@ class DefinedTool:
 async def define_tool(name: str = "", code: str = "") -> str:
     """定义一个新工具：提交代码（顶层 async def <name> + docstring 即描述）。
 
-    校验通过后持久化并立即注册进当前会话（经 tool_context 的注册通道）。
+    校验通过后持久化并立即注册进当前会话。
     """
-    if not name or not code:
-        return "Error: name 和 code 均为必填"
     try:
         tool = DefinedTool().create(name, code)
     except (ToolCodeError, OSError, ValueError) as e:
