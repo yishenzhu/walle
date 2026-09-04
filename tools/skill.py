@@ -69,7 +69,7 @@ class Skill:
         return metas
 
 
-async def skills_ext(api: ExtensionAPI) -> None:
+async def skill_ext(api: ExtensionAPI) -> None:
     """技能扩展：扫描 .agent/skills/ 把全部技能声明注册进扩展。
 
     会话激活该扩展后，技能清单（名/描述/路径）注入 system prompt，

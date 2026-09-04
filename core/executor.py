@@ -121,6 +121,10 @@ class ToolExecutor:
             return tc_id, reason
 
         channel = ctx.channel
+        # 执行上下文提前注入：审批扩展与 preflight 钩子（事件 handler）都能
+        # 经 tool_context 拿到会话上下文（channel / register_tool 等）交互。
+        # 与原实现一致：每轮 execute 覆盖 set，不显式 reset。
+        tool_context.set(ctx)
 
         if notify and channel is not None:
             await channel.notify(
@@ -167,7 +171,6 @@ class ToolExecutor:
         result = error = None
         elapsed_ms = None
         try:
-            tool_context.set(ctx)
             with tracer.start_as_current_span("tool.execute") as span:
                 span.set_attribute("tool.name", name)
                 start = time.monotonic()

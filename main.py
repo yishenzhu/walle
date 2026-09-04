@@ -11,7 +11,7 @@ from .core import (
 from .channel.cli import CLIChannel
 from .tools import MCPRegistry
 from .tools.builtin.extension import builtin_ext
-from .tools.skill import skills_ext
+from .tools.skill import skill_ext
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def main() -> None:
     extensions = ExtensionRegistry()
     extensions.add("builtin", builtin_ext)
     extensions.add("mcp", mcp.as_ext())  # MCP 远端工具作为扩展声明
-    extensions.add("skills", skills_ext)  # 技能清单作为扩展声明
+    extensions.add("skill", skill_ext)  # 技能清单作为扩展声明
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,

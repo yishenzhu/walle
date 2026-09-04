@@ -4,7 +4,7 @@ import pytest
 
 from ..core import Agent
 from ..infra import Skill
-from ..tools.skill import skills_ext
+from ..tools.skill import skill_ext
 
 
 def _make_skill(root, name: str, description: str) -> None:
@@ -46,7 +46,9 @@ def test_skill_scan_skips_broken(tmp_path, monkeypatch):
     monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
     bad = tmp_path / "skills" / "bad"
     bad.mkdir(parents=True)
-    (bad / "SKILL.md").write_text("---\nname: bad\n---\nno description", encoding="utf-8")
+    (bad / "SKILL.md").write_text(
+        "---\nname: bad\n---\nno description", encoding="utf-8"
+    )
     _make_skill(tmp_path / "skills", "good", "Good skill")
 
     metas = skill_mod.Skill.scan()
@@ -75,9 +77,7 @@ class TestAgentSkillPrompt:
 
     def test_whitelist_filters(self):
         """skills=["*"] 注入全部；具体名只注入命中项。"""
-        all_prompt = Agent(instruction="x", skills=["*"]).skill_prompt(
-            self._skills()
-        )
+        all_prompt = Agent(instruction="x", skills=["*"]).skill_prompt(self._skills())
         assert "- grilling: Grill the user" in all_prompt
         assert "- review: Review code" in all_prompt
         assert "SKILL.md" in all_prompt  # 路径可见，供按需加载
@@ -108,10 +108,7 @@ class TestAgentSkillPrompt:
     def test_whitelist_no_match_returns_empty(self):
         """白名单命中不到任何技能 → 空串。"""
         assert (
-            Agent(instruction="x", skills=["nope"]).skill_prompt(
-                self._skills()
-            )
-            == ""
+            Agent(instruction="x", skills=["nope"]).skill_prompt(self._skills()) == ""
         )
 
 
@@ -126,7 +123,7 @@ async def test_skills_ext_registers_into_session(tmp_path, monkeypatch):
     _make_skill(tmp_path / "skills", "review", "Review code")
 
     loader = ExtensionRegistry()
-    loader.add("skills", skills_ext)
+    loader.add("skills", skill_ext)
     await loader.load()
     assert loader.extensions[0].error is None
 

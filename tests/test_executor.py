@@ -285,6 +285,29 @@ class TestToolHooks:
         )
         assert result == "ran"
 
+    async def test_preflight_hook_sees_tool_context(self, ctx, channel):
+        """preflight 钩子执行时 tool_context 已注入：handler 可拿会话上下文交互。"""
+        from ..core import Event, EventBus
+        from ..infra import tool_context
+
+        executor = ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        )
+
+        seen = {}
+
+        async def check(**kw):
+            seen["ctx"] = tool_context.get()  # 事件 handler 内经上下文拿交互接口
+
+        bus = EventBus()
+        bus.on(Event.TOOL_EXECUTION_START, check)
+        ctx.channel = channel
+        ctx.bus = bus
+
+        tool = make_tool("echo", "ran")
+        await executor.execute_call(make_tool_call(name="echo"), {"echo": tool}, ctx)
+        assert seen["ctx"] is ctx  # handler 拿到的是本次执行的上下文（含 channel）
+
     async def test_after_hook_notified(self, ctx):
         from ..core import Event, EventBus
 
