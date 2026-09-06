@@ -2,7 +2,6 @@ from .agent import Agent, Handoff
 from ..infra import (
     Command,
     DiagnosticType,
-    Event,
     EventBus,
     Extension,
     ExtensionAPI,

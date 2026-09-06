@@ -9,7 +9,6 @@ from .executor import ToolExecutor
 from ..channel import Channel
 from ..messages import Messages, InMemoryMessages
 from ..infra import (
-    Event,
     EventBus,
     ExtensionRunner,
     Job,
@@ -18,6 +17,15 @@ from ..infra import (
     ToolContext,
     tool_context,
     tracer,
+    AgentStartEvent,
+    AgentEndEvent,
+    SessionStartEvent,
+    SessionEndEvent,
+    TurnStartEvent,
+    TurnEndEvent,
+    MessageStartEvent,
+    MessageDeltaEvent,
+    MessageEndEvent,
     AGENT_ITERATIONS,
     HANDOFF,
 )
@@ -95,11 +103,13 @@ class Runner:
         streamed = options.streamed
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
-        await self._bus.emit(Event.SESSION_START, session_id=session_id)
-        await self._bus.emit(Event.MESSAGE_START, input=input, session_id=session_id)
+        await self._bus.emit(SessionStartEvent(session_id=session_id))
+        await self._bus.emit(
+            MessageStartEvent(input=input, session_id=session_id)
+        )
         await history.add([UserMessage(content=input)])
 
-        await self._bus.emit(Event.AGENT_START, agent=agent.name, session_id=session_id)
+        await self._bus.emit(AgentStartEvent(agent=agent.name, session_id=session_id))
 
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("streamed", streamed)
@@ -116,7 +126,7 @@ class Runner:
                 )
                 tools = self._build_tools(agent, tool_source)
 
-                await self._bus.emit(Event.TURN_START, turn=turn, agent=agent.name)
+                await self._bus.emit(TurnStartEvent(turn=turn, agent=agent.name))
 
                 # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用），
                 # 并统一注入 tool_context——整轮工具（含并发、审批扩展 /
@@ -167,12 +177,21 @@ class Runner:
                     AGENT_ITERATIONS.record(turn)
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
-                    await self._bus.emit(Event.TURN_END, turn=turn, agent=agent.name)
                     await self._bus.emit(
-                        Event.MESSAGE_END, output=output, session_id=session_id
+                        TurnEndEvent(
+                            turn=turn,
+                            agent=agent.name,
+                            session_id=session_id,
+                            history=history,
+                            usage=usage,
+                            provider=provider,
+                        )
                     )
-                    await self._bus.emit(Event.AGENT_END, agent=agent.name)
-                    await self._bus.emit(Event.SESSION_END, session_id=session_id)
+                    await self._bus.emit(
+                        MessageEndEvent(output=output, session_id=session_id)
+                    )
+                    await self._bus.emit(AgentEndEvent(agent=agent.name))
+                    await self._bus.emit(SessionEndEvent(session_id=session_id))
                     return RunResult(
                         input=input,
                         last_agent=agent,
@@ -181,16 +200,23 @@ class Runner:
                         completed_turns=turn,
                     )
 
-                await self._bus.emit(Event.TURN_END, turn=turn, agent=agent.name)
+                await self._bus.emit(
+                    TurnEndEvent(
+                        turn=turn,
+                        agent=agent.name,
+                        session_id=session_id,
+                        history=history,
+                        usage=usage,
+                        provider=provider,
+                    )
+                )
 
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
-            await self._bus.emit(
-                Event.MESSAGE_END, output=None, session_id=session_id
-            )
-            await self._bus.emit(Event.AGENT_END, agent=agent.name)
-            await self._bus.emit(Event.SESSION_END, session_id=session_id)
+            await self._bus.emit(MessageEndEvent(output=None, session_id=session_id))
+            await self._bus.emit(AgentEndEvent(agent=agent.name))
+            await self._bus.emit(SessionEndEvent(session_id=session_id))
             return RunResult(
                 input=input,
                 last_agent=agent,
@@ -214,7 +240,7 @@ class Runner:
         ) as stream:
             async for event in stream:
                 if event.type == "content.delta":
-                    await self._bus.emit(Event.MESSAGE_DELTA, delta=event.delta)
+                    await self._bus.emit(MessageDeltaEvent(delta=event.delta))
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message

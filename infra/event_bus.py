@@ -1,79 +1,66 @@
-"""事件总线：agent 生命周期与工具钩子的有序屏障。
+"""事件总线：按事件类型注册与广播。
 
-监听器按注册顺序 await，全部 settle 才进入下一步。before_tool_call /
-after_tool_call 是工具执行前后的屏障，任一 before hook 返回 False 则阻止
-该工具执行。单个插件失败仅记录，不毒化核心循环。
+事件 = dataclass 类（见 infra.events）。订阅用事件类，发射用实例：
+
+    bus.on(TurnEndEvent, handler)      # handler 收 TurnEndEvent 实例
+    await bus.emit(TurnEndEvent(...))  # 按实例类型找订阅者分发
+
+监听器按注册顺序 await，全部 settle 才进入下一步。TOOL_EXECUTION_START
+是工具执行前的屏障：任一监听器返回 HookVerdict，上层据此阻止/改写。
+单个插件失败仅记录，不毒化核心循环。
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from enum import StrEnum
 from typing import Any
 
-Handler = Callable[..., Awaitable[Any]]
-
-
-class Event(StrEnum):
-    """agent 生命周期事件名（session/agent/turn/message/tool）。"""
-
-    SESSION_START = "session_start"
-    SESSION_END = "session_end"
-    AGENT_START = "agent_start"
-    AGENT_END = "agent_end"
-    TURN_START = "turn_start"
-    TURN_END = "turn_end"
-    MESSAGE_START = "message_start"
-    MESSAGE_DELTA = "message_delta"  # 流式输出增量（delta 文本，逐块发）
-    MESSAGE_END = "message_end"
-    TOOL_EXECUTION_START = "tool_execution_start"
-    TOOL_EXECUTION_END = "tool_execution_end"
+Handler = Callable[[Any], Awaitable[Any]]
 
 
 class EventBus:
-    """进程级事件广播器：按注册顺序 await 监听器，失败收集不中断。"""
+    """进程级事件广播器：按事件类注册，按实例分发。"""
 
     def __init__(self) -> None:
-        self._handlers: dict[Event, list[Handler]] = {e: [] for e in Event}
+        self._handlers: dict[type, list[Handler]] = {}
 
-    def on(self, event: Event, handler: Handler) -> None:
-        """订阅一个事件（注册次序即执行次序）。未知事件名报错。"""
-        if event not in self._handlers:
-            raise ValueError(f"unknown event: {event}")
-        self._handlers[event].append(handler)
+    def on(self, event_type: type, handler: Handler) -> None:
+        """订阅一个事件类（注册次序即执行次序）。handler 收该事件实例。"""
+        self._handlers.setdefault(event_type, []).append(handler)
 
-    def off(self, event: Event, handler: Handler) -> None:
-        """退订一个监听器（扩展卸载时精确摘除）。不存在则忽略。"""
-        if event in self._handlers:
+    def off(self, event_type: type, handler: Handler) -> None:
+        """退订（扩展卸载时精确摘除）。不存在则忽略。"""
+        handlers = self._handlers.get(event_type)
+        if handlers:
             try:
-                self._handlers[event].remove(handler)
+                handlers.remove(handler)
             except ValueError:
                 pass
 
-    async def emit(self, event: Event, **ctx: Any) -> list[Any]:
-        """按注册顺序 await 全部监听器。
+    async def emit(self, event: Any) -> list[Any]:
+        """广播一个事件实例：按实例类型分发给订阅者。
 
-        返回值供上层做屏障判断：before_tool_call 场景下，若任一监听器
-        返回 False，上层据此阻止工具执行。监听器抛异常时，作为结果返回
-        并继续（插件失败不中断）。
+        返回值供上层做屏障判断：ToolExecutionStartEvent 场景下，若任一
+        监听器返回 HookVerdict，上层据此阻止工具执行。监听器抛异常时，
+        作为结果返回并继续（插件失败不中断）。
         """
+        handlers = self._handlers.get(type(event), [])
         results: list[Any] = []
-        for handler in self._handlers[event]:
+        for handler in handlers:
             try:
-                results.append(await handler(**ctx))
+                results.append(await handler(event))
             except Exception as exc:  # noqa: BLE001 - 插件失败隔离
                 results.append(exc)
         return results
 
-    def has(self, event: Event) -> bool:
-        """该事件是否有监听器（避免空转 emit）。"""
-        return bool(self._handlers[event])
+    def has(self, event_type: type) -> bool:
+        """该事件类是否有监听器（避免空转 emit）。"""
+        return bool(self._handlers.get(event_type))
 
     def clear(self) -> None:
         """清空全部监听器（停机 / 重载扩展时用）。"""
-        for handlers in self._handlers.values():
-            handlers.clear()
+        self._handlers.clear()
 
-    def handler_count(self) -> dict[Event, int]:
-        """各事件监听器数量（调试 / 测试断言用）。"""
-        return {e: len(h) for e, h in self._handlers.items()}
+    def handler_count(self) -> dict[type, int]:
+        """各事件类监听器数量（调试 / 测试断言用）。"""
+        return {t: len(h) for t, h in self._handlers.items()}

@@ -22,7 +22,7 @@ from .diagnostics import (
 )
 from ..conf import auto_path
 from ..channel import Channel
-from .event_bus import Event, EventBus, Handler
+from .event_bus import EventBus, Handler
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class Extension:
     """一次扩展加载的声明：收集的 handlers / tools / skills / commands + 状态。"""
 
     name: str
-    handlers: dict[Event, list[Handler]] = field(default_factory=dict)
+    handlers: dict[type, list[Handler]] = field(default_factory=dict)
     tools: list[Tool] = field(default_factory=list)
     skills: dict[str, Skill] = field(default_factory=dict)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -91,9 +91,9 @@ class ExtensionAPI:
     def __init__(self, ext: Extension) -> None:
         self._ext = ext
 
-    def on(self, event: Event, handler: Handler) -> None:
-        """订阅生命周期事件（activate 时统一挂到 bus）。"""
-        self._ext.handlers.setdefault(event, []).append(handler)
+    def on(self, event_type: type, handler: Handler) -> None:
+        """订阅一个事件类（activate 时统一挂到 bus）。"""
+        self._ext.handlers.setdefault(event_type, []).append(handler)
 
     def register_tool(self, tool: Tool) -> None:
         """注册一个工具（activate 时统一写入 registry）。"""
@@ -262,10 +262,10 @@ class ExtensionRunner:
                 for name, skill in ext.skills.items():
                     self._skills[name] = skill
                     mount.skills.append(name)
-                for event, handlers in ext.handlers.items():
+                for event_type, handlers in ext.handlers.items():
                     for handler in handlers:
-                        self._bus.on(event, handler)
-                        mount.handlers.append((event, handler))
+                        self._bus.on(event_type, handler)
+                        mount.handlers.append((event_type, handler))
                 for name, cmd in ext.commands.items():
                     self._commands[name] = cmd
                     mount.commands.append(name)
@@ -290,8 +290,8 @@ class ExtensionRunner:
         for name in mount.skills:
             if name in self._skills:  # 技能同名后到覆盖，卸载摘除即可
                 del self._skills[name]
-        for event, handler in mount.handlers:
-            self._bus.off(event, handler)
+        for event_type, handler in mount.handlers:
+            self._bus.off(event_type, handler)
         for name in mount.commands:
             if name in self._commands:
                 del self._commands[name]
@@ -333,7 +333,7 @@ class ExtensionMount:
 
     tools: list[Tool] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
-    handlers: list[tuple[Event, Handler]] = field(default_factory=list)
+    handlers: list[tuple[type, Handler]] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
 
 

@@ -12,7 +12,12 @@ from pydantic import BaseModel
 
 from ..channel import Channel
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
-from ..infra import Event, ExtensionAPI, HookVerdict, tool_context
+from ..infra import (
+    ExtensionAPI,
+    HookVerdict,
+    ToolExecutionStartEvent,
+    tool_context,
+)
 from ..schemas import Approval as ApprovalService, ApprovalRsp
 
 
@@ -163,10 +168,10 @@ class Approval:
 
     async def as_ext(self, api: ExtensionAPI) -> None:
         """把审批 handler 注册进扩展 api（与 mcp/skill 的 as_ext 同形态）。"""
-        async def check(**kw) -> HookVerdict | None:
-            name = kw["tool_name"]
-            args = kw["arguments"]
-            tc_id = kw["tool_call_id"]
+        async def check(evt: ToolExecutionStartEvent) -> HookVerdict | None:
+            name = evt.tool_name
+            args = evt.arguments
+            tc_id = evt.tool_call_id
 
             decision = self._policy.evaluate(name, args)
             if decision == ApprovalDecision.DENY:
@@ -186,4 +191,4 @@ class Approval:
                 block=f"{reason}: {response.reason}" if response.reason else reason
             )
 
-        api.on(Event.TOOL_EXECUTION_START, check)
+        api.on(ToolExecutionStartEvent, check)

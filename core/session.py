@@ -22,15 +22,16 @@ from ..channel import Channel
 from ..conf import ToolConfig
 from ..infra import (
     CommandContext,
-    Event,
     EventBus,
     Extension,
     ExtensionRegistry,
     ExtensionRunner,
     Job,
+    MessageDeltaEvent,
+    MessageEndEvent,
     OpenAIProvider,
 )
-from ..messages import Messages, InMemoryMessages, SQLiteMessages
+from ..messages import Messages, InMemoryMessages, SQLiteMessages, ProjectedMessages
 from ..schemas import Delta, DeltaEnd, UserInput
 from .executor import ToolExecutor
 
@@ -69,17 +70,22 @@ class Session:
         if extensions:
             self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
-        self._bus.on(Event.MESSAGE_DELTA, self._on_delta)
-        self._bus.on(Event.MESSAGE_END, self._on_message_end)
+        self._bus.on(MessageDeltaEvent, self._on_delta)
+        self._bus.on(MessageEndEvent, self._on_message_end)
 
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换
         self._agent = self._build_agent()
         self._provider = provider
-        # 会话状态：历史（每会话隔离）
+        # 会话状态：历史（每会话隔离）。
+        # 对外 _messages 一律包投影视图（模型读到投影，原文在底层全量保留）。
         if storage == "memory":
-            self._messages: Messages = InMemoryMessages()
+            self._messages: ProjectedMessages = ProjectedMessages(
+                InMemoryMessages()
+            )
         else:
-            self._messages = SQLiteMessages(db_path=db_path, session_id=session_id)
+            self._messages = ProjectedMessages(
+                SQLiteMessages(db_path=db_path, session_id=session_id)
+            )
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
         # transport：连接端点（attach/detach 切换），唯一 channel 事实源
@@ -116,13 +122,14 @@ class Session:
         """
         self._agent = self._build_agent(name)
 
-    async def _on_delta(self, delta: str) -> None:
+    async def _on_delta(self, evt: MessageDeltaEvent) -> None:
         """流式增量事件 → 推给当前 transport（无 transport 则丢弃）。"""
         if self._transport is not None:
-            await self._transport.notify(Delta(delta=delta))
+            await self._transport.notify(Delta(delta=evt.delta))
 
-    async def _on_message_end(self, output: Any = None, **_: Any) -> None:
+    async def _on_message_end(self, evt: MessageEndEvent) -> None:
         """消息结束事件 → 文本输出完成时发 DeltaEnd（工具轮不发）。"""
+        output = evt.output
         if output is not None and self._transport is not None:
             await self._transport.notify(DeltaEnd())
 

@@ -10,7 +10,6 @@
 import pytest
 
 from ..core import (
-    Event,
     EventBus,
     ExtensionAPI,
     ExtensionRegistry,
@@ -18,7 +17,7 @@ from ..core import (
     ExtensionState,
     HookVerdict,
 )
-from ..infra import Tool
+from ..infra import AgentStartEvent, ToolExecutionStartEvent, Tool
 
 
 def make_tool(name: str) -> Tool:
@@ -34,7 +33,7 @@ async def test_load_produces_declarations():
     seen = []
 
     async def factory(api: ExtensionAPI):
-        api.on(Event.AGENT_START, lambda **kw: seen.append(kw))
+        api.on(AgentStartEvent, lambda evt: seen.append(evt))
         api.register_tool(make_tool("ext_tool"))
 
     mgr.add("demo", factory)
@@ -43,7 +42,7 @@ async def test_load_produces_declarations():
     ext = mgr.extensions[0]
     assert ext.state is ExtensionState.LOADING  # 加载成功，未激活
     assert any(t.name == "ext_tool" for t in ext.tools)  # 声明里有工具
-    assert Event.AGENT_START in ext.handlers  # 声明里有事件订阅
+    assert AgentStartEvent in ext.handlers  # 声明里有事件订阅
 
 
 async def test_load_and_activate_registers_handlers_and_tools():
@@ -54,14 +53,14 @@ async def test_load_and_activate_registers_handlers_and_tools():
     seen = []
 
     async def factory(api: ExtensionAPI):
-        api.on(Event.AGENT_START, lambda **kw: seen.append(kw))
+        api.on(AgentStartEvent, lambda evt: seen.append(evt))
         api.register_tool(make_tool("ext_tool"))
 
     mgr.add("demo", factory)
     await mgr.load()
 
     runner.activate(mgr.extensions[0])
-    assert bus.has(Event.AGENT_START)  # handler 已挂载
+    assert bus.has(AgentStartEvent)  # handler 已挂载
     assert any(t.name == "ext_tool" for t in runner.all_tools())
 
 
@@ -129,11 +128,11 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
         bus = EventBus()
         blocked: dict = {}
 
-        async def guard(**ctx_):
-            blocked["name"] = ctx_["tool_name"]
+        async def guard(evt):
+            blocked["name"] = evt.tool_name
             return HookVerdict(block="guard 拦截")  # 拦下扩展工具
 
-        bus.on(Event.TOOL_EXECUTION_START, guard)
+        bus.on(ToolExecutionStartEvent, guard)
 
         loader = ExtensionRegistry()
         ext_runner = ExtensionRunner(bus)
@@ -299,16 +298,16 @@ async def test_unload_removes_tools_and_handlers():
 
     async def ext(api: ExtensionAPI):
         api.register_tool(make_tool("ext_tool"))
-        api.on(Event.AGENT_START, lambda **kw: seen.append(kw))
+        api.on(AgentStartEvent, lambda evt: seen.append(evt))
 
     mgr.add("ext", ext)
     await mgr.load()
     runner.activate(mgr.extensions[0])
-    assert bus.has(Event.AGENT_START)
+    assert bus.has(AgentStartEvent)
     assert any(t.name == "ext_tool" for t in runner.all_tools())
 
     runner.unload("ext")
-    assert not bus.has(Event.AGENT_START)
+    assert not bus.has(AgentStartEvent)
     assert not any(t.name == "ext_tool" for t in runner.all_tools())
     assert runner.active_names == set()
 
@@ -326,14 +325,14 @@ async def test_reactivate_swaps_to_new_version():
         tool = make_tool("dyn")
         tool.description = f"dyn-{state['desc']}"
         api.register_tool(tool)
-        api.on(Event.AGENT_START, lambda **kw: None)
+        api.on(AgentStartEvent, lambda evt: None)
 
     mgr.add("ext", ext)
     await mgr.load()
     runner.activate(mgr.extensions[0])
     first = next(t for t in runner.all_tools() if t.name == "dyn")
     assert first.description == "dyn-v1"
-    assert bus.has(Event.AGENT_START)
+    assert bus.has(AgentStartEvent)
 
     # 换新版声明：重新 load（同 factory 名但产出不同）
     state["desc"] = "v2"
@@ -489,7 +488,7 @@ async def test_session_context_activates_into_own_bus_and_registry():
 
     async def factory(api: ExtensionAPI):
         api.register_tool(make_tool("ext_tool"))
-        api.on(Event.AGENT_START, lambda **kw: None)
+        api.on(AgentStartEvent, lambda evt: None)
 
     # 用 ExtensionRegistry 加载出声明
     loader = ExtensionRegistry()
@@ -501,14 +500,14 @@ async def test_session_context_activates_into_own_bus_and_registry():
     ctx1.activate(ext)
     ctx2.activate(ext)
 
-    assert bus1.has(Event.AGENT_START) and bus2.has(Event.AGENT_START)
+    assert bus1.has(AgentStartEvent) and bus2.has(AgentStartEvent)
     assert any(t.name == "ext_tool" for t in ctx1.all_tools())
     assert any(t.name == "ext_tool" for t in ctx2.all_tools())
 
     # 卸载 ctx1 不影响 ctx2
     ctx1.unload("demo")
-    assert not bus1.has(Event.AGENT_START)
-    assert bus2.has(Event.AGENT_START)
+    assert not bus1.has(AgentStartEvent)
+    assert bus2.has(AgentStartEvent)
     assert ctx1.all_tools() == []
     assert any(t.name == "ext_tool" for t in ctx2.all_tools())
 

@@ -2,10 +2,11 @@
 
 import pytest
 
-from ..core import Agent, Event, Session, SessionRegistry
+from ..core import Agent, Session, SessionRegistry
+from ..infra import MessageDeltaEvent, MessageEndEvent, AgentStartEvent
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..schemas import UserMessage
-from ..messages import SQLiteMessages, InMemoryMessages
+from ..messages import SQLiteMessages, InMemoryMessages, ProjectedMessages
 
 from .conftest import FakeChannel, FakeProvider
 
@@ -45,14 +46,16 @@ class TestSessionStorage:
     async def test_default_storage_is_sqlite(self, tmp_path):
         """默认存储后端是 SQLite（跨连接持久化）。"""
         s = make_session("s1", str(tmp_path / "s.db"))
-        assert isinstance(s._messages, SQLiteMessages)
-        assert not isinstance(s._messages, InMemoryMessages)
+        assert isinstance(s._messages, ProjectedMessages)
+        assert isinstance(s._messages.underlying, SQLiteMessages)
+        assert not isinstance(s._messages.underlying, InMemoryMessages)
         await s.close()
 
     async def test_memory_storage_when_configured(self, tmp_path):
         """显式配置 memory 时用内存存储。"""
         s = make_session("s1", str(tmp_path / "s.db"), storage="memory")
-        assert isinstance(s._messages, InMemoryMessages)
+        assert isinstance(s._messages, ProjectedMessages)
+        assert isinstance(s._messages.underlying, InMemoryMessages)
         await s.close()
 
     async def test_history_persists_across_session_instances(self, tmp_path):
@@ -253,8 +256,8 @@ class TestSessionStreamForward:
         ch = FakeChannel()
         s = self._session(tmp_path, ch)
         try:
-            await s._bus.emit(Event.MESSAGE_DELTA, delta="你好")
-            await s._bus.emit(Event.MESSAGE_END, output="你好")
+            await s._bus.emit(MessageDeltaEvent(delta="你好"))
+            await s._bus.emit(MessageEndEvent(output="你好", session_id=None))
             types = [type(e).__name__ for e in ch.events]
             assert types == ["Delta", "DeltaEnd"]
             assert ch.events[0].delta == "你好"
@@ -266,7 +269,7 @@ class TestSessionStreamForward:
         ch = FakeChannel()
         s = self._session(tmp_path, ch)
         try:
-            await s._bus.emit(Event.MESSAGE_END, output=None)
+            await s._bus.emit(MessageEndEvent(output=None, session_id=None))
             assert ch.events == []
         finally:
             await s.close()
@@ -284,7 +287,7 @@ class TestSessionStreamForward:
             api.register_tool(
                 Tool(name="tool_a", description="a", parameters={}, fn=fa)
             )
-            api.on(Event.AGENT_START, lambda **kw: None)
+            api.on(AgentStartEvent, lambda evt: None)
 
         async def ext_b(api: ExtensionAPI):
             async def fb(args):

@@ -354,13 +354,14 @@ class TestRunnerToolHooks:
     """Runner 贯通 bus 到工具层（before/after 钩子）。"""
 
     async def test_tool_blocked_by_before_hook(self, provider, env):
-        from ..core import Event, EventBus
+        from ..core import EventBus
+        from ..infra import ToolExecutionStartEvent
 
-        async def block(**ctx_):
+        async def block(evt):
             return HookVerdict(block="runner 层拦截")
 
         bus = EventBus()
-        bus.on(Event.TOOL_EXECUTION_START, block)
+        bus.on(ToolExecutionStartEvent, block)
 
         runner = Runner(
             executor=ToolExecutor(
@@ -390,15 +391,16 @@ class TestRunnerToolHooks:
         assert result.output == "done"
 
     async def test_tool_after_hook_notified(self, provider, env):
-        from ..core import Event, EventBus, ExtensionRunner
+        from ..core import EventBus, ExtensionRunner
+        from ..infra import ToolExecutionEndEvent
 
         seen: list[str] = []
 
-        async def record(**ctx_):
-            seen.append(ctx_["tool_name"])
+        async def record(evt):
+            seen.append(evt.tool_name)
 
         bus = EventBus()
-        bus.on(Event.TOOL_EXECUTION_END, record)
+        bus.on(ToolExecutionEndEvent, record)
 
         runner = Runner(
             executor=ToolExecutor(

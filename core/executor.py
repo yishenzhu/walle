@@ -9,7 +9,15 @@ from typing import Any
 from ..schemas import ToolResult, ToolStart
 from ..channel import Channel
 from ..conf import ToolConfig
-from ..infra import Event, HookVerdict, TOOL_CALLS, TOOL_ERRORS, TOOL_DURATION, tracer
+from ..infra import (
+    HookVerdict,
+    ToolExecutionStartEvent,
+    ToolExecutionEndEvent,
+    TOOL_CALLS,
+    TOOL_ERRORS,
+    TOOL_DURATION,
+    tracer,
+)
 from ..infra import Job, JobStatus, Tool, ToolContext, tool_context
 
 logger = logging.getLogger(__name__)
@@ -72,10 +80,11 @@ class ToolExecutor:
         # block → 阻止执行；arguments → 按注册顺序改写参数（后者覆盖前者）。
         if ctx is not None and ctx.bus is not None:
             for verdict in await ctx.bus.emit(
-                Event.TOOL_EXECUTION_START,
-                tool_name=name,
-                arguments=args,
-                tool_call_id=tc_id,
+                ToolExecutionStartEvent(
+                    tool_name=name,
+                    arguments=args,
+                    tool_call_id=tc_id,
+                )
             ):
                 if not isinstance(verdict, HookVerdict):
                     continue  # None 放行
@@ -128,12 +137,13 @@ class ToolExecutor:
             # 工具未找到 / 审批拒绝 / 被扩展阻止的路径不经过 try，不发 after。
             if ctx is not None and ctx.bus is not None:
                 await ctx.bus.emit(
-                    Event.TOOL_EXECUTION_END,
-                    tool_name=name,
-                    tool_call_id=tc_id,
-                    result=result,
-                    error=error,
-                    elapsed_ms=elapsed_ms,
+                    ToolExecutionEndEvent(
+                        tool_name=name,
+                        tool_call_id=tc_id,
+                        result=result,
+                        error=error,
+                        elapsed_ms=elapsed_ms,
+                    )
                 )
         return tc_id, result if error is None else error
 
