@@ -14,7 +14,7 @@ import subprocess
 import pytest
 
 from ..conf import PROJ_ROOT
-from ..infra import Sandbox, SandboxConfig
+from ..tools import Sandbox, SandboxConfig
 
 HAVE_BWRAP = shutil.which("bwrap") is not None
 
@@ -98,7 +98,7 @@ class TestSandbox:
 
 class TestSandboxExt:
     def test_registers_tool_named_bash(self, monkeypatch):
-        monkeypatch.setattr("walle.infra.sandbox.shutil.which", lambda _: "/usr/bin/bwrap")
+        monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: "/usr/bin/bwrap")
 
         class FakeAPI:
             def __init__(self):
@@ -116,7 +116,7 @@ class TestSandboxExt:
         assert [t.name for t in api.tools] == ["bash"]
 
     def test_missing_bwrap_raises(self, monkeypatch):
-        monkeypatch.setattr("walle.infra.sandbox.shutil.which", lambda _: None)
+        monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: None)
 
         async def run():
             await Sandbox().as_ext(object())  # noqa: BLE001

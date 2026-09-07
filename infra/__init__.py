@@ -40,9 +40,4 @@ from .metrics import (
 )
 from .provider import OpenAIProvider
 from .prompts import load_prompt
-from .sandbox import (
-    DEFAULT_HIDDEN_PATHS,
-    Sandbox,
-    SandboxConfig,
-)
 from .sqlite_store import SQLiteStore

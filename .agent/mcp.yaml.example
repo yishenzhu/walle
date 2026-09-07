@@ -1,0 +1,24 @@
+# MCP server 配置模板：复制为 mcp.yaml 后填入自己的凭据。
+# 注意：mcp.yaml 已 gitignore（可能含明文 key），请勿入库。
+#
+# 两种 server 形态：
+#   - stdio: command + args（本地子进程），可选 env / cwd
+#   - HTTP : url（streamable http），可选 headers（如 Authorization: Bearer xxx）/ timeout
+# enabled: false 的 server 不会被连接（connect 时跳过）。
+
+amap:
+  url: https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY
+  enabled: false
+
+QwenImage:
+  url: https://dashscope.aliyuncs.com/api/v1/mcps/QwenImage/mcp
+  headers:
+    Authorization: Bearer YOUR_DASHSCOPE_API_KEY
+  timeout: 30
+  enabled: false
+
+tavily:
+  url: https://mcp.tavily.com/mcp
+  headers:
+    Authorization: Bearer YOUR_TAVILY_API_KEY
+  enabled: false

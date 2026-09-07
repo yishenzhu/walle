@@ -13,14 +13,13 @@
 沙箱依赖会话工作目录（cwd）：无 cwd 时沙箱工具直接报错，不回退。
 """
 
-import asyncio
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .extension import ExtensionAPI
-from .tool import Tool, tool_context
+from ..infra.extension import ExtensionAPI
+from ..infra.tool import Tool, tool_context
+from .builtin.bash import run_command
 
 # 沙箱内默认隐藏的凭据路径（目录或文件均可，不存在则忽略）
 DEFAULT_HIDDEN_PATHS = ["~/.ssh", "~/.netrc"]
@@ -86,12 +85,7 @@ class Sandbox:
             cwd = ctx.cwd if ctx is not None else None
             if not cwd:
                 return "Error: 沙箱 bash 需要会话工作目录（cwd）"
-            proc = await asyncio.create_subprocess_exec(
-                *self.argv(cwd, cmd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            stdout, _ = await proc.communicate()
-            return stdout.decode("utf-8", errors="replace")
+            # 复用内置 bash 的执行原语（超时 killpg + 输出上限），argv 直传不经 shell
+            return await run_command(self.argv(cwd, cmd))
 
         api.register_tool(Tool.from_function(bash))

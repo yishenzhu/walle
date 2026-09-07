@@ -2,13 +2,13 @@ import asyncio
 import logging
 
 from .conf import Config
-from .infra import setup_logger, setup_telemetry, OpenAIProvider, Sandbox
+from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import (
     ExtensionRegistry,
     SessionRegistry,
 )
 from .channel.cli import CLIChannel
-from .tools import MCPRegistry, Approval
+from .tools import MCPRegistry, Approval, Sandbox
 from .messages import Compaction, PromptLimitPolicy, SummaryCompressor
 from .tools.builtin.extension import builtin_ext
 from .tools.skill import Skill

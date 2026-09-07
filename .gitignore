@@ -20,3 +20,6 @@ eval/data/out/
 datasets/
 # Command Code 本地配置（会话 / taste / 缓存，不入库）
 .commandcode/
+
+# MCP server 配置（可含明文 API key / token，一律不入库；参照 .agent/mcp.yaml.example）
+.agent/mcp.yaml

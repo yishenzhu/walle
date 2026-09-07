@@ -86,7 +86,11 @@ class TrackedProvider:
 
 
 class RecordingExecutor(ToolExecutor):
-    """记录每次工具调用（名字/参数/结果）与工具级错误数。"""
+    """记录每次工具调用（名字/参数/结果）与工具级错误数。
+
+    只作观察：不 override execute_tool（签名已演进为 tool_context 注入、
+    无 ctx 位置参数），直接继承基类实现，从返回的 (tc_id, result) 记录。
+    """
 
     def __init__(self, config: ToolConfig | None = None):
         super().__init__(config)
@@ -99,12 +103,11 @@ class RecordingExecutor(ToolExecutor):
         args: dict[str, Any],
         tc_id: str,
         tools: dict[str, Tool],
-        ctx: Any,
         *,
         notify: bool = True,
     ) -> tuple[str, Any]:
         result = await super().execute_tool(
-            name, args, tc_id, tools, ctx, notify=notify
+            name, args, tc_id, tools, notify=notify
         )
         value = result[1] if isinstance(result, tuple) else result
         if isinstance(value, str) and value.startswith("Error"):
