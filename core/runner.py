@@ -64,6 +64,7 @@ class SessionContext:
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
     ext_runner: ExtensionRunner | None = None  # 会话扩展激活层（工具可动态注册）
+    cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
 
 
 class RunResult(BaseModel):
@@ -135,6 +136,7 @@ class Runner:
                     channel=channel,
                     jobs=env.jobs,
                     bus=self._bus,
+                    cwd=env.cwd,
                     register_tool=(
                         env.ext_runner.register_tool if env.ext_runner else None
                     ),

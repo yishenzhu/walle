@@ -10,6 +10,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -44,8 +45,10 @@ class CLIConn:
         chat_id: str,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
+        cwd: str | None = None,
     ) -> None:
         self.chat_id = chat_id
+        self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
         self._reader = reader
         self._writer = writer
         self._pending: dict[str, asyncio.Future] = {}
@@ -218,8 +221,9 @@ class CLIChannel:
             chat_id = msg.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
             attach = bool(msg.get("attach", False))
             ext_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
+            cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
 
-            conn = CLIConn(chat_id, reader, writer)
+            conn = CLIConn(chat_id, reader, writer, cwd=cwd)
 
             if attach:
                 # resume：从 registry 取已存在会话，绑定新 transport
@@ -278,12 +282,14 @@ class CLIClient:
         port: int = PORT,
         attach: str = "",
         extensions: list[str] | None = None,
+        dir: str | None = None,
     ):
         self._host = host
         self._port = port
         self._chat_id = attach or f"cli-{uuid.uuid4().hex[:12]}"
         self._attach = bool(attach)
         self._extensions = extensions  # 可选：新会话要激活的扩展名
+        self._dir = dir or os.getcwd()  # 工作目录（会话 bash/沙箱基准；默认客户端启动目录）
         self._reply_done = asyncio.Event()  # 回复完成（delta_end）信号
 
     @staticmethod
@@ -315,6 +321,7 @@ class CLIClient:
             "type": "hello",
             "chat_id": self._chat_id,
             "attach": bool(self._attach),
+            "cwd": self._dir,  # 客户端工作目录（服务端建新会话时作为会话 cwd）
         }
         if self._extensions:
             hello["extensions"] = self._extensions
@@ -469,6 +476,11 @@ def main() -> None:
         default="",
         help="新会话激活的扩展名（逗号分隔，缺省全部）",
     )
+    parser.add_argument(
+        "--dir",
+        default="",
+        help="会话工作目录（缺省 = 客户端启动目录；bash 执行与沙箱可写区基准）",
+    )
     parser.add_argument("--list", action="store_true", help="浏览会话（仅元数据）")
     args = parser.parse_args()
 
@@ -476,7 +488,9 @@ def main() -> None:
         asyncio.run(CLIClient.list_sessions())
     else:
         exts = [e.strip() for e in args.extensions.split(",") if e.strip()] or None
-        asyncio.run(CLIClient(attach=args.attach, extensions=exts).run())
+        asyncio.run(
+            CLIClient(attach=args.attach, extensions=exts, dir=args.dir or None).run()
+        )
 
 
 if __name__ == "__main__":

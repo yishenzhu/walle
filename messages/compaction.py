@@ -73,6 +73,10 @@ class Compaction:
             if summary is None:
                 return  # 摘要失败不写投影，保持现状
             await history.set_projection(cut, summary)
+            logger.info(
+                f"compact: turn={evt.turn} agent={evt.agent} "
+                f"session={evt.session_id} messages={len(raw)}->{cut}"
+            )
             COMPRESS.add(1, {"messages.before": len(raw), "messages.after": cut})
 
         api.on(TurnEndEvent, maybe_compact)

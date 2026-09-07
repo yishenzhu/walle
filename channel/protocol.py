@@ -14,6 +14,17 @@ class Channel(Protocol):
     async def call(self, service: ServiceUnion) -> Any: ...               # 点对点，有返回
 
 
+class SessionConn(Protocol):
+    """新建会话的连接：承载会话身份（chat_id）与工作目录（cwd）。
+
+    由各通道实现（如 CLIConn），SessionRegistry.create 依赖此结构。
+    纯类型标注（不 runtime_checkable——属性型协议对实例属性检查不可靠）。
+    """
+
+    chat_id: str
+    cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
+
+
 @runtime_checkable
 class SessionRegistry(Protocol):
     """会话注册表协议：CLIChannel 对会话管理的唯一依赖（duck typing）。
@@ -24,7 +35,7 @@ class SessionRegistry(Protocol):
     """
 
     def get(self, session_id: str) -> Any: ...
-    def create(self, conn: Any) -> Any: ...   # 新建会话（经注入 factory）并注册
+    def create(self, conn: SessionConn, ext_names: list[str] | None = None) -> Any: ...
     def register(self, session: Any) -> None: ...
     def list(self) -> list[dict]: ...
     def remove(self, session_id: str) -> Any: ...

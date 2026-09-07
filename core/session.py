@@ -18,7 +18,7 @@ from typing import Any
 
 from .agent import Agent
 from .runner import Runner, RunOptions, SessionContext
-from ..channel import Channel
+from ..channel import Channel, SessionConn
 from ..conf import ToolConfig
 from ..infra import (
     CommandContext,
@@ -53,15 +53,18 @@ class Session:
         provider: OpenAIProvider | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
+        cwd: str | None = None,
         created_at: float | None = None,
     ) -> None:
         self.id = session_id
         # 创建时间内聚在 Session（注册表/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
+        # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
+        self._cwd = cwd
 
         # ── 会话级运行时（每会话独立：bus/agent 循环/扩展激活）──
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
-        # 工具执行器按会话实例化、只交给 Runner（Session 不持有）
+        # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
         executor = ToolExecutor(tool_config or ToolConfig())
         self._agent_runner = Runner(executor=executor, bus=self._bus)
         self._ext_runner = ExtensionRunner(
@@ -79,9 +82,7 @@ class Session:
         # 会话状态：历史（每会话隔离）。
         # 对外 _messages 一律包投影视图（模型读到投影，原文在底层全量保留）。
         if storage == "memory":
-            self._messages: ProjectedMessages = ProjectedMessages(
-                InMemoryMessages()
-            )
+            self._messages = ProjectedMessages(InMemoryMessages())
         else:
             self._messages = ProjectedMessages(
                 SQLiteMessages(db_path=db_path, session_id=session_id)
@@ -104,6 +105,7 @@ class Session:
             session_id=self.id,
             jobs=self._jobs,
             ext_runner=self._ext_runner,  # 工具执行期动态注册通道
+            cwd=self._cwd,
         )
 
     def _build_agent(self, name: str | None = None) -> Agent:
@@ -199,7 +201,7 @@ class SessionRegistry:
 
     def create(
         self,
-        conn: Any,
+        conn: SessionConn,
         ext_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。
@@ -215,6 +217,7 @@ class SessionRegistry:
             provider=self._provider,
             storage=self._storage,
             db_path=self._db_path,
+            cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
         )
         session.attach(conn)
         self.register(session)

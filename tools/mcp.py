@@ -4,7 +4,6 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 from contextlib import AsyncExitStack
 
 import httpx
@@ -18,6 +17,10 @@ from ..conf import DOT_AGENT, MCPConfig
 from ..infra import ExtensionAPI, Tool
 
 logger = logging.getLogger(__name__)
+
+# MCP server 连接/握手超时（秒）：server 不可达时快速失败，
+# 避免拖住 agent 启动。stdio 与 HTTP 型统一。
+CONNECT_TIMEOUT = 15
 
 
 class MCPRegistry:
@@ -148,7 +151,11 @@ class MCPClient:
                 )
                 self._session_id = get_session_id()
 
-            await self._session.initialize()
+            # 握手加显式超时：server 不可达时（如 HTTP 半开、子进程起不来）
+            # 快速失败，避免拖住 agent 启动。stdio 与 HTTP 型统一。
+            timeout_s = self._conf.timeout or CONNECT_TIMEOUT
+            async with asyncio.timeout(timeout_s):
+                await self._session.initialize()
             logger.info(f"mcp connected: {self._name}")
             return self
         except (Exception, asyncio.CancelledError) as e:

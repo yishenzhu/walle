@@ -319,6 +319,7 @@ class TestSessionStreamForward:
         class Conn:
             def __init__(self, chat_id):
                 self.chat_id = chat_id
+                self.cwd = None
 
         s1 = reg.create(Conn("s1"))  # 默认：全部扩展
         s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
@@ -376,6 +377,7 @@ class TestSessionStreamForward:
 
         class Conn:
             chat_id = "mcp-1"
+            cwd = None
 
         s = reg.create(Conn())
         names = {t.name for t in s.context.ext_runner.all_tools()}
