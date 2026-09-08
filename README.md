@@ -21,6 +21,7 @@
 |  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
+| 🪟 **上下文窗口管理** | 对齐 Codex 思路：模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、切点 SQLite 持久化 |
 
 ---
 
@@ -276,7 +277,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs）
+    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / ext / history / notes）
     return f"result: {query}"
 ```
 
@@ -339,6 +340,17 @@ async def weather(city: str) -> str:
 
 重启自动恢复，无需手动配置。
 
+### 🪟 上下文窗口管理（模型主动换窗口，对齐 note.md + history 思路）
+
+工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在 SQLite 全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩扩展、无 token 阈值自动折叠。
+
+| 能力 | 说明 |
+|---|---|
+| `.agent/note.md` | 普通 md 工作笔记：模型 `read` 读、`edit` 局部更新（todo/goal/决策） |
+| `edit` 工具 | 通用文件局部替换（与 `read` 对称；写入默认需审批，note.md 可白名单放行） |
+| `new_window` | 模型主动硬切：推进投影切点，窗口只剩当前轮 |
+| `history` 工具 | 只读检索当前会话完整原文（原始措辞/命令/数值），切窗后回源 |
+
 ### 配置多智能体 Handoff
 
 ```python
@@ -393,20 +405,21 @@ walle/
 │   └── builtin/               #   内置工具扩展
 │       ├── bash.py            #     Bash 执行
 │       ├── read.py            #     文件读取
+│       ├── edit.py            #     文件局部替换
 │       ├── ask_user.py        #     向用户提问
 │       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       └── extension.py       #     builtin 扩展声明
 
 ├── messages/                  # 消息存储
-│   ├── protocol.py            #   Messages Protocol
 │   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化
-│   ├── compressible.py        #   可压缩消息装饰器
-│   ├── compressors.py         #   摘要压缩器
-│   └── policies.py            #   压缩触发策略
+│   ├── projected.py           #   投影视图（切点截断模型视野）
+│   ├── meta.py                #   切点持久化
+│   └── tool.py                #   history / new_window 工具
 ├── schemas/                   # 数据模型
 │   ├── message.py             #   消息类型
+│   ├── protocols.py           #   跨层协议（Messages/Projection/ExtRunner）
 │   ├── events.py              #   判别联合事件（通知/服务）
 │   ├── channel.py             #   服务载荷（UserInput / ApprovalRsp）
 │   └── usage.py               #   Token 用量

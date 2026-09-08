@@ -31,7 +31,13 @@ from ..infra import (
     MessageEndEvent,
     OpenAIProvider,
 )
-from ..messages import Messages, InMemoryMessages, SQLiteMessages, ProjectedMessages
+from ..messages import (
+    Messages,
+    InMemoryMessages,
+    SQLiteMessages,
+    ProjectedMessages,
+    SQLiteProjectionStore,
+)
 from ..schemas import Delta, DeltaEnd, UserInput
 from .executor import ToolExecutor
 
@@ -84,8 +90,12 @@ class Session:
         if storage == "memory":
             self._messages = ProjectedMessages(InMemoryMessages())
         else:
+            # sqlite：底层原文持久化 + 投影切点落 meta 表，重启后懒恢复
             self._messages = ProjectedMessages(
-                SQLiteMessages(db_path=db_path, session_id=session_id)
+                SQLiteMessages(db_path=db_path, session_id=session_id),
+                projection_store=SQLiteProjectionStore(
+                    db_path=db_path, session_id=session_id
+                ),
             )
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
@@ -147,9 +157,16 @@ class Session:
         if self._transport is None:
             raise RuntimeError(f"session '{self.id}' is detached, attach first")
         content = user_input.content or ""
-        # 命令执行上下文：暴露 transport（推送/提问）与事件总线，用法自决
+        # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
+        # （messages/provider），命令 handler 按需自取。
         if await self._ext_runner.dispatch(
-            content, CommandContext(channel=self._transport, bus=self._bus)
+            content,
+            CommandContext(
+                channel=self._transport,
+                bus=self._bus,
+                messages=self._messages,
+                provider=self._provider,
+            ),
         ):
             return
         await self._agent_runner.run(

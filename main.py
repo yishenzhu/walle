@@ -9,7 +9,6 @@ from .core import (
 )
 from .channel.cli import CLIChannel
 from .tools import MCPRegistry, Approval, Sandbox
-from .messages import Compaction, PromptLimitPolicy, SummaryCompressor
 from .tools.builtin.extension import builtin_ext
 from .tools.skill import Skill
 
@@ -34,19 +33,12 @@ async def main() -> None:
     # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
     extensions = ExtensionRegistry()
     extensions.add("builtin", builtin_ext)
-    extensions.add("sandbox", Sandbox().as_ext)  # 沙箱：同名覆盖内置工具（须在 builtin 后）
+    extensions.add(
+        "sandbox", Sandbox().as_ext
+    )  # 沙箱：同名覆盖内置工具（须在 builtin 后）
     extensions.add("mcp", mcp.as_ext)  # MCP 远端工具作为扩展声明
     extensions.add("skill", Skill.as_ext)  # 技能清单作为扩展声明
     extensions.add("approval", Approval(conf.tool.approval).as_ext)  # 审批作为扩展
-    # 压缩框架：默认策略（token 阈值）+ 默认压缩方法（LLM 摘要）。
-    # 替换/扩展压缩行为 = 在此注入不同 policy/compressor。
-    extensions.add(
-        "compaction",
-        Compaction(
-            policy=PromptLimitPolicy(),
-            compressor=SummaryCompressor(),
-        ).as_ext,  # 超长历史投影压缩
-    )
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,

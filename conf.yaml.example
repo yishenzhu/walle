@@ -21,8 +21,12 @@ tool:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la*)]    # 安全命令自动放行（ls -la 开头）
       - [ask, jupyter]                 # 代码执行默认需人工确认
+      - [ask, edit]                    # 编辑文件默认需人工确认（改动可见）
+      - [allow, "edit(path=.agent/note.md)"]  # 工作笔记 note.md 自动放行
       - [allow, ask_user]             # 提问工具自动放行
       - [allow, read]                 # 读文件自动放行（技能按需加载）
+      - [allow, history]              # 历史检索只读，自动放行
+      - [allow, new_window]           # 模型主动开新窗口（仅改模型视野，不删原文）
     default: ask
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）

@@ -13,8 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..schemas import Usage
-from ..schemas.protocols import Messages
+from ..schemas import Messages, Usage
 from .provider import OpenAIProvider
 
 

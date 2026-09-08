@@ -7,6 +7,12 @@ from .message import (
     MessageAdapter,
 )
 from .usage import Usage
+from .protocols import (
+    Messages,
+    Projection,
+    ProjectionStore,
+    ExtRunner,
+)
 from .events import (
     Notification,
     Delta,

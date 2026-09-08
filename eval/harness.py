@@ -193,7 +193,7 @@ async def run_task(
         )
     )
     # 会话扩展 runner 持有工具表：初集注册进工具表，define_tool 等运行时
-    # 动态注册也落这里（ToolContext.register_tool 绑它）
+    # 动态注册也落这里（ToolContext.ext 绑它，见 runner 每轮组装）
     ext_runner = ExtensionRunner(EventBus())
     ext_runner.register_tool(*tools_src())
     env = SessionContext(

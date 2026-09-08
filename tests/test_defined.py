@@ -61,7 +61,7 @@ async def test_define_tool_registers_via_context(tmp_path, monkeypatch):
     monkeypatch.setattr("walle.tools.builtin.defined.DOT_AGENT", tmp_path)
 
     runner = ExtensionRunner(EventBus())
-    ctx = ToolContext(register_tool=runner.register_tool)
+    ctx = ToolContext(ext=runner)
     token = tool_context.set(ctx)
     try:
         out = await define_tool(

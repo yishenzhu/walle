@@ -22,7 +22,9 @@ from .diagnostics import (
 )
 from ..conf import auto_path
 from ..channel import Channel
+from ..schemas import Messages
 from .event_bus import EventBus, Handler
+from .provider import OpenAIProvider
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -60,12 +62,15 @@ class CommandContext:
     """命令执行上下文：暴露会话底层能力，用法由命令自己决定。
 
     channel = 会话 transport：notify(Delta/DeltaEnd...) 推送、call(Inquiry)
-    向用户提问；bus = 会话事件总线（消息输出等事件）。命令按需自取，
-    不预设 UI 语义。
+    向用户提问；bus = 会话事件总线（消息输出等事件）。messages/
+    provider 为会话注入的底层状态（命令需要时可取，未注入则 None）。
+    命令按需自取，不预设 UI 语义。
     """
 
     channel: Channel | None
     bus: EventBus
+    messages: Messages | None = None  # 会话历史（可投影视图）
+    provider: OpenAIProvider | None = None  # 模型接入
 
 
 @dataclass(frozen=True)
@@ -230,7 +235,7 @@ class ExtensionRunner:
         self._commands: dict[str, Command] = {}
         self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
 
-    # ── 工具表（add/remove/query，替代 ToolRegistry）──────
+    # ── 工具表（add/remove/query，实现 ExtRunner 能力面）────
     def register_tool(self, *tools: Tool) -> None:
         """注册工具：同名后到者覆盖先到者。同批重名视为编程错误。"""
         names = [t.name for t in tools]

@@ -137,9 +137,8 @@ class Runner:
                     jobs=env.jobs,
                     bus=self._bus,
                     cwd=env.cwd,
-                    register_tool=(
-                        env.ext_runner.register_tool if env.ext_runner else None
-                    ),
+                    ext=env.ext_runner,
+                    history=history,
                 )
                 tool_context.set(ctx)
                 if streamed:

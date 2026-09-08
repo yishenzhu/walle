@@ -42,6 +42,54 @@ class SQLiteMessages(SQLiteStore):
 
         return await asyncio.to_thread(_query)
 
+    async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:
+        """窗口查询：按 id 顺序取 [offset, offset+limit) 的原文。"""
+        if offset < 0 or limit < 0:
+            raise ValueError("offset/limit must be >= 0")
+        conn = await self._get_conn()
+
+        def _query():
+            sql = (
+                "SELECT data FROM messages WHERE session_id = ? "
+                "ORDER BY id ASC LIMIT ? OFFSET ?"
+            )
+            rows = conn.execute(sql, (self._session_id, limit, offset)).fetchall()
+            return [MessageAdapter.validate_json(row[0]) for row in rows]
+
+        return await asyncio.to_thread(_query)
+
+    async def search(self, query: str = "", limit: int = 20) -> list[Message]:
+        """关键词检索：词间 AND 的 LIKE 子串匹配，返回最近 limit 条（倒序）。"""
+        words = [w for w in query.split() if w]
+        conn = await self._get_conn()
+
+        def _search():
+            # 大小写不敏感子串匹配（ASCII 折叠；中文按原样子串命中）
+            sql = (
+                "SELECT data FROM messages WHERE session_id = ?"
+                + "".join(" AND LOWER(data) LIKE ?" for _ in words)
+                + " ORDER BY id DESC LIMIT ?"
+            )
+            params: list[str | int] = [self._session_id]
+            params += [f"%{w.lower()}%" for w in words]
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall()
+            return [MessageAdapter.validate_json(row[0]) for row in rows]
+
+        return await asyncio.to_thread(_search)
+
+    async def count(self) -> int:
+        conn = await self._get_conn()
+
+        def _count():
+            row = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                (self._session_id,),
+            ).fetchone()
+            return int(row[0])
+
+        return await asyncio.to_thread(_count)
+
     async def add(self, items: Sequence[Message], usage: Usage | None = None):
         if not items:
             return

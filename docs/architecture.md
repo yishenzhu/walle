@@ -90,12 +90,26 @@ Agent **不持有工具**：`Agent.available_tools(source)` 只做 `tool_filter`
 
 ### 工具执行期动态注册通道（define_tool）
 ```
-SessionContext.ext_runner.register_tool（Session 组装时放入 env）
-   └─ runner 每轮 ──▶ ToolContext.register_tool（execute 前 set）
-        └─ define_tool 经 tool_context.get().register_tool(tool) 就地注册
+SessionContext.ext_runner（Session 组装时放入 env，满足 ExtRunner 能力面）
+   └─ runner 每轮 ──▶ ToolContext.ext（execute 前 set，同一实例）
+        └─ define_tool 经 tool_context.get().ext.register_tool(tool) 就地注册
 ```
-注册回调在 env 与每轮 ctx 各出现一次，是**同一 bound method**；不把
-register_tool 放进 executor 构造参数。
+ToolContext 不依赖具体 ExtensionRunner——只依赖 `ExtRunner` 协议
+（schemas/protocols.py：register_tool/remove_tool），避免 infra/tool 与
+infra/extension 相互 import 成环。注册通道在 env 与每轮 ctx 各出现一次，
+是**同一实例**；不把注册通道放进 executor 构造参数。
+
+### 历史回源与工作笔记（history 工具 + .agent/note.md 文件）
+```
+ToolContext.history ──► Messages 协议（search/count/query，查底层原文，
+                        不经投影）── 供 history 工具回源折叠前的细节
+工作笔记 = 工作目录下普通文件 .agent/note.md（无专用存储/协议/注入）：
+模型用通用 read 读、edit 局部更新（todo/goal/决策用 md 结构组织）
+```
+history 工具定义在 messages/tool.py（消息层能力，不经工具注册链可直接
+复用）；new_window 同文件——模型维护好 note.md 后主动硬切窗口
+（折叠旧轮，投影只留当前轮）。Runner 每轮把 env.messages 注入
+ToolContext.history；笔记文件不经会话上下文（模型按需 read）。
 
 ## 5. 一次输入的执行链（数据流）
 
@@ -112,8 +126,9 @@ CLIChannel.on_input
               2. tool_source = env.ext_runner.all_tools()
                  tools = _build_tools(agent, tool_source)  # available_tools 过滤 + handoffs
               3. ctx = ToolContext(channel=env.channel, jobs=env.jobs,
-                     bus=self._bus, register_tool=env.ext_runner.register_tool)
-                 tool_context.set(ctx)          # 本轮统一注入一次
+                     bus=self._bus, ext=env.ext_runner,
+                     history=env.messages)
+                     tool_context.set(ctx)          # 本轮统一注入一次
               4. 有 tool_calls：
                    execute_calls(tool_calls, tools)   # 并发，as_completed
                      └─ execute_tool 内 tool_context.get() → ctx
