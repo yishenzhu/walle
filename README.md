@@ -18,10 +18,11 @@
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
 | 🔌 **MCP 协议集成** | MCP 作为扩展声明（stdio / Streamable HTTP），连接进程级共享，工具随扩展进会话 |
 | 🛡️ **工具治理** | 审批即扩展：conf 规则（allow/deny/ask）由 `Approval` 扩展订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
-|  **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
+| 🔒 **OS 级沙箱** | 可选 bwrap 沙箱扩展：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
+| 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
-| 🪟 **上下文窗口管理** | 对齐 Codex 思路：模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、切点 SQLite 持久化 |
+| 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、切点 SQLite 持久化 |
 
 ---
 
@@ -32,7 +33,7 @@
 ```mermaid
 flowchart TD
     Main["main.py<br/>组装扩展池 · 启动"]
-    Reg["ExtensionRegistry<br/>进程级加载器<br/>builtin / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
+    Reg["ExtensionRegistry<br/>进程级加载器<br/>builtin / sandbox / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
     SR["SessionRegistry<br/>会话注册表 · 工厂<br/>持扩展声明池 / tool_config"]
     S["Session<br/>会话运行时容器<br/>bus · executor · runner · ext_runner"]
     ER["ExtensionRunner<br/>会话级激活层<br/>工具表 / 技能表 / 命令表"]
@@ -103,13 +104,13 @@ sequenceDiagram
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 入口 | `main.py` | 组装进程级扩展池（builtin/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
+| 入口 | `main.py` | 组装进程级扩展池（builtin/sandbox/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
 | 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor） |
-| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp（MCP 客户端）、skill（技能）、approval（审批扩展：规则 + 人工确认）、define_tool 动态定义 |
+| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp（MCP 客户端）、skill（技能）、approval（审批扩展：规则 + 人工确认）、sandbox（bwrap 沙箱：同名覆盖内置工具）、define_tool 动态定义 |
 | 扩展激活 | `infra/extension.py` | ExtensionRegistry（进程级加载器）+ ExtensionRunner（会话级激活层：工具/技能/命令表）+ CommandContext |
 | 底层类型 | `infra/` | Tool、EventBus、HookVerdict、诊断、日志、遥测、指标、LLM Provider |
 | 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
-| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、压缩策略 |
+| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、投影切点（模型视野截断） |
 | 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
@@ -121,6 +122,7 @@ sequenceDiagram
 ### 前置条件
 
 - **Python ≥ 3.12**（pyproject.toml 要求）
+- **bubblewrap**（可选，启用 OS 级沙箱：`apt install bubblewrap`；缺失时沙箱扩展自动跳过）
 - **Docker + Docker Compose**（可选，用于可观测性栈）
 
 ### 安装
@@ -153,7 +155,15 @@ cp .env.example .env             # LLM API Key
 ```
 
 启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
-`PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。
+`PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。客户端参数：
+
+```bash
+PYTHONPATH=.. python -m walle.channel.cli                    # 新建会话（默认全部扩展）
+PYTHONPATH=.. python -m walle.channel.cli --attach <id>      # 恢复已有会话
+PYTHONPATH=.. python -m walle.channel.cli --list             # 浏览会话（仅元数据）
+PYTHONPATH=.. python -m walle.channel.cli --extensions a,b   # 新会话只激活指定扩展
+PYTHONPATH=.. python -m walle.channel.cli --dir /path/proj   # 会话工作目录（bash 与沙箱可写区基准）
+```
 
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
@@ -165,7 +175,7 @@ cp .env.example .env             # LLM API Key
 | Tempo | http://localhost:3200 | - |
 | Mimir | http://localhost:9009 | - |
 
-可查看：Agent 每轮迭代耗时与 Span、工具调用次数/耗时/错误率、会话压缩触发、Handoff 事件。
+可查看：Agent 每轮迭代耗时与 Span、工具调用次数/耗时/错误率、Handoff 事件。
 
 ---
 
@@ -204,6 +214,11 @@ session:
   storage: "sqlite"                   # sqlite | memory
   db_path: "data/session.db"          # sqlite 存储路径（相对项目根）
 
+extension:
+  dir: ".agent/extensions"            # 用户扩展目录
+  enabled: []                         # 空 = 全部启用；非空 = 白名单
+  disabled: []                        # disabled 优先于 enabled
+
 # MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）
 ```
 
@@ -228,6 +243,8 @@ session:
 | `.agent/agents/` | Agent 定义（frontmatter Markdown，文件名即 agent 名） | 手动编辑 |
 | `.agent/skills/` | 技能（SKILL.md + 可选 scripts/assets） | `skill-creator` 或手动 |
 | `.agent/tools/` | 模型定义的代码工具 | `define_tool` |
+| `.agent/extensions/` | 用户扩展（Python，可同名覆盖内置工具） | 手动编辑 |
+| `.agent/note.md` | 工作笔记（todo / goal / 决策；位于会话工作目录下） | 模型 `read` / `edit` |
 | `.agent/mcp.yaml` | MCP Server 配置 | 手动编辑 |
 
 以上均在下次启动自动恢复。
@@ -277,14 +294,14 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / ext / history / notes）
+    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / bus / ext / cwd / history）
     return f"result: {query}"
 ```
 
 ```python
 # main.py 引导扩展里注册（内置工具也走扩展系统，先于用户扩展）
 async def builtin_ext(api) -> None:
-    for fn in (bash, ask_user, my_tool, ...):
+    for fn in (bash, ask_user, read, edit, write, ..., history, new_window):
         api.register_tool(Tool.from_function(fn))
 ```
 
@@ -397,22 +414,25 @@ walle/
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   ├── protocol.py            #   Channel Protocol (notify/call)
-│   └── cli.py                 #   CLI 多会话服务端（JSON-line 协议）
+│   └── cli/                   #   CLI 多会话（JSON-line 协议）
+│       ├── server.py          #     服务端（CLIChannel）
+│       ├── client.py          #     交互客户端（CLIClient）
+│       └── __main__.py        #     客户端入口（python -m walle.channel.cli）
 ├── tools/                     # 工具与扩展声明
 │   ├── mcp.py                 #   MCP 配置 + 客户端（Registry.as_ext）
 │   ├── skill.py               #   技能扫描（Skill.as_ext）
 │   ├── approval.py            #   审批扩展（Approval.as_ext：规则 + 人工确认）
+│   ├── sandbox.py             #   沙箱扩展（bwrap 同名覆盖内置 bash）
 │   ├── __init__.py            #   tools 公共导出
 │   └── builtin/               #   内置工具扩展
 │       ├── bash.py            #     Bash 执行
 │       ├── read.py            #     文件读取
-│       ├── edit.py            #     文件局部替换
+│       ├── edit.py            #     文件局部替换（降级匹配 + 换行/BOM 保真）
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
 │       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       └── extension.py       #     builtin 扩展声明
-
 ├── messages/                  # 消息存储
 │   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化
@@ -426,6 +446,11 @@ walle/
 │   ├── channel.py             #   服务载荷（UserInput / ApprovalRsp）
 │   └── usage.py               #   Token 用量
 ├── infra/                     # 基础设施
+│   ├── extension.py           #   ExtensionRegistry / ExtensionRunner / CommandContext
+│   ├── event_bus.py           #   会话事件总线
+│   ├── events.py              #   钩子事件与 HookVerdict
+│   ├── tool.py                #   Tool / Job / ToolContext
+│   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化
 │   ├── metrics.py             #   指标定义
@@ -434,8 +459,12 @@ walle/
 ├── conf/                      # 配置
 │   └── config.py              #   Pydantic 配置模型
 ├── eval/                      # 评测套件（自建任务 + τ-bench 适配）
+│   ├── spec.py                #   任务 schema（YAML → TaskSpec）
 │   ├── tasks/                 #   任务定义（YAML）
 │   ├── harness.py             #   无头执行器
+│   ├── graders.py             #   规则评分器
+│   ├── metrics.py             #   指标聚合
+│   ├── report.py              #   报告渲染
 │   ├── run.py                 #   评测入口
 │   └── bench/                 #   τ-bench 公开基准适配
 ├── tests/                     # 测试（pytest + pytest-asyncio）
@@ -446,6 +475,8 @@ walle/
 │   ├── agents/                #   Agent 定义（frontmatter Markdown）
 │   ├── skills/                #   技能（skill-creator 生成）
 │   ├── tools/                 #   模型定义的工具（define_tool）
+│   ├── extensions/            #   用户扩展（.py，可同名覆盖内置）
+│   ├── note.md                #   工作笔记（模型 read/edit 维护，运行时生成）
 │   └── mcp.yaml               #   MCP Server 配置（手动编辑）
 └── scripts/
     └── run.sh                 # 一键启动脚本
