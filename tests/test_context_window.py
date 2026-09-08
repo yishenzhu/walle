@@ -79,7 +79,7 @@ class TestNewWindowTool:
         proj = await self._projected()
         token = tool_context.set(ToolContext(history=proj))
         try:
-            out = await new_window(reason="phase done")
+            out = await new_window()
         finally:
             tool_context.reset(token)
         assert "window reset" in out
@@ -120,7 +120,7 @@ class TestNewWindowTool:
 
         token = tool_context.set(ToolContext())
         try:
-            assert "Error" in await new_window("x")
+            assert "Error" in await new_window()
         finally:
             tool_context.reset(token)
 
@@ -130,7 +130,7 @@ class TestNewWindowTool:
 
         token = tool_context.set(ToolContext(history=InMemoryMessages()))
         try:
-            assert "Error" in await new_window("x")
+            assert "Error" in await new_window()
         finally:
             tool_context.reset(token)
 

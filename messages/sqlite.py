@@ -58,23 +58,29 @@ class SQLiteMessages(SQLiteStore):
 
         return await asyncio.to_thread(_query)
 
-    async def search(self, query: str = "", limit: int = 20) -> list[Message]:
-        """关键词检索：词间 AND 的 LIKE 子串匹配，返回最近 limit 条（倒序）。"""
+    async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
+        """关键词检索：词间 AND 的 LIKE 子串匹配，返回 (绝对序号, 消息) 倒序。"""
         words = [w for w in query.split() if w]
         conn = await self._get_conn()
 
         def _search():
-            # 大小写不敏感子串匹配（ASCII 折叠；中文按原样子串命中）
+            # 会话内先按 id 排号（seq），再做词过滤；seq 同 query 的 offset 寻址
             sql = (
-                "SELECT data FROM messages WHERE session_id = ?"
+                "WITH ranked AS ("
+                "  SELECT data, ROW_NUMBER() OVER (ORDER BY id) - 1 AS seq "
+                "  FROM messages WHERE session_id = ?"
+                ")"
+                "SELECT data, seq FROM ranked WHERE 1=1"
                 + "".join(" AND LOWER(data) LIKE ?" for _ in words)
-                + " ORDER BY id DESC LIMIT ?"
+                + " ORDER BY seq DESC LIMIT ?"
             )
             params: list[str | int] = [self._session_id]
             params += [f"%{w.lower()}%" for w in words]
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
-            return [MessageAdapter.validate_json(row[0]) for row in rows]
+            return [
+                (int(row[1]), MessageAdapter.validate_json(row[0])) for row in rows
+            ]
 
         return await asyncio.to_thread(_search)
 

@@ -28,8 +28,12 @@ class Messages(Protocol):
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:
         """窗口查询：按追加顺序取 [offset, offset+limit) 的底层原文。"""
 
-    async def search(self, query: str = "", limit: int = 20) -> list[Message]:
-        """关键词检索：匹配 query 的最近 limit 条原文（倒序），空 = 最近。"""
+    async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
+        """关键词检索：词间 AND 子串匹配，返回 (绝对序号, 消息) 倒序最近 limit 条。
+
+        绝对序号 = 消息在会话中的位置（同 query 的 offset 寻址），命中后
+        可直接用该序号查看附近窗口。
+        """
 
     async def count(self) -> int:
         """底层原文总条数。"""

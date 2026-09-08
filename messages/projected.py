@@ -101,8 +101,8 @@ class ProjectedMessages(Projection):
         # 窗口查询永远查底层原文（不经投影）：history 回源工具读折叠前细节
         return await self._messages.query(offset, limit)
 
-    async def search(self, query: str = "", limit: int = 20) -> list[Message]:
-        # 检索永远查底层原文（不经投影），倒序最近 limit 条
+    async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
+        # 检索永远查底层原文（不经投影），返回 (绝对序号, 消息) 倒序
         return await self._messages.search(query, limit)
 
     async def count(self) -> int:

@@ -7,42 +7,57 @@ MAX_LIMIT = 50
 DEFAULT_LIMIT = 20
 
 
-async def history(query: str = "", limit: int = DEFAULT_LIMIT) -> str:
-    """Search this session's raw conversation history (read-only, newest first).
+async def history(
+    query: str = "",
+    offset: int | None = None,
+    limit: int = DEFAULT_LIMIT,
+) -> str:
+    """Read this session's raw conversation history (read-only).
 
-    Use to recall messages that were cut out of the model window verbatim.
+    Keyword search (newest first) or, when `offset` is set, a message-index
+    window from the oldest message upward.
     Args:
         query: Space-separated words, all must appear (case-insensitive); empty = recent.
+        offset: Start at this message index (0 = oldest); ignores query, ascending.
         limit: Max messages (default 20, max 50).
     """
     ctx = tool_context.get()
     if ctx is None or ctx.history is None:
         return "Error: no session history available"
     limit = max(1, min(int(limit), MAX_LIMIT))
+    total = await ctx.history.count()
+
+    def line(m, index=None):
+        prefix = f"[{index}] " if index is not None else ""
+        return (
+            f"{prefix}[tool:{m.tool_call_id}] {m.content}"
+            if isinstance(m, ToolMessage)
+            else f"{prefix}[{m.role}] {m.content or ''}"
+        )
+
+    if offset is not None:
+        # 序号窗口：正序取 [offset, offset+limit)，每条带绝对序号
+        offset = max(0, int(offset))
+        matches = await ctx.history.query(offset, limit)
+        if not matches:
+            return f"(history: no messages at index {offset} of {total})"
+        head = f"(history: messages {offset}..{offset + len(matches) - 1} of {total}, ascending)"
+        return "\n".join(
+            [head, *[line(m, offset + i) for i, m in enumerate(matches)]]
+        )
 
     matches = await ctx.history.search(query=query, limit=limit)
-    total = await ctx.history.count()
     if not matches:
         label = f" for '{query}'" if query else ""
         return f"(history: 0 matched{label}, total {total} messages)"
-
-    def line(m):
-        return (
-            f"[tool:{m.tool_call_id}] {m.content}"
-            if isinstance(m, ToolMessage)
-            else f"[{m.role}] {m.content or ''}"
-        )
-
     head = f"(history: {len(matches)} matched of {total} messages, newest first)"
-    return "\n".join([head, *[line(m) for m in matches]])
+    return "\n".join([head, *[line(m, i) for i, m in matches]])
 
 
-async def new_window(reason: str = "") -> str:
+async def new_window() -> str:
     """Hard-cut to a fresh window (older turns leave the model view).
 
     Call after writing anything still needed into .agent/note.md via `edit`.
-    Args:
-        reason: Why resetting (e.g. 'segment done, continuing next phase').
     """
     ctx = tool_context.get()
     if ctx is None or ctx.history is None:
@@ -68,8 +83,7 @@ async def new_window(reason: str = "") -> str:
 
     await history.set_projection(new_cut)  # 纯截断：旧轮移出模型视野
     kept = len(raw) - new_cut
-    note = f" (reason: {reason})" if reason else ""
     return (
-        f"(window reset: fresh window{note}; {kept} messages remain visible — "
+        f"(window reset: fresh window; {kept} messages remain visible — "
         f"the current turn. Recall anything older via `history`.)"
     )

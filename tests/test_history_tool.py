@@ -71,14 +71,16 @@ class TestStorageSearchQuery:
         await store.add(sample_messages())
         matches = await store.search("重试")
         assert len(matches) == 1
-        assert "重试上限" in matches[0].content
+        assert "重试上限" in matches[0][1].content
+        assert matches[0][0] == 4  # 命中条是会话内第 4 条（含 0 基序号）
 
     async def test_search_empty_returns_recent(self, kind, tmp_path):
         store = make_storage(kind, tmp_path)
         await store.add(sample_messages())
         matches = await store.search("", limit=2)
         assert len(matches) == 2
-        assert matches[0].content == "确认重试上限是 3 次"  # 最新在前
+        assert matches[0][1].content == "确认重试上限是 3 次"  # 最新在前
+        assert matches[0][0] == 4  # 且带绝对序号
 
     async def test_search_limit(self, kind, tmp_path):
         store = make_storage(kind, tmp_path)
@@ -86,7 +88,8 @@ class TestStorageSearchQuery:
             await store.add([UserMessage(content=f"item {i}")])
         matches = await store.search("item", limit=3)
         assert len(matches) == 3
-        assert matches[0].content == "item 9"
+        assert matches[0][1].content == "item 9"
+        assert matches[0][0] == 9  # 绝对序号与内容对应
 
 
 async def test_search_scope_isolation(tmp_path):
@@ -113,7 +116,18 @@ class TestHistoryTool:
         proj = await self._projected(kind, tmp_path)
         out = await with_history_tool(proj, history, "重试")
         assert "确认重试上限是 3 次" in out
-        assert "[user]" in out
+        assert "[4]" in out  # 命中带绝对序号，可据此翻附近窗口
+
+    async def test_search_hit_index_leads_to_around_window(self, kind, tmp_path):
+        """搜到命中序号后，用 offset 查看该条附近的上下文窗口。"""
+        proj = await self._projected(kind, tmp_path)
+        out = await with_history_tool(proj, history, "deploy 脚本失败")
+        assert "[1]" in out  # 命中在第 1 条
+        # 用命中序号往前翻：看 [0,2) 的上下文
+        around = await with_history_tool(proj, history, offset=0, limit=3)
+        assert "messages 0..2 of 5" in around
+        assert "把超时改成 30 秒" in around  # 命中前一条
+        assert "deploy 脚本失败" in around
 
     async def test_empty_query_returns_recent(self, kind, tmp_path):
         proj = await self._projected(kind, tmp_path)
@@ -125,6 +139,22 @@ class TestHistoryTool:
         proj = await self._projected(kind, tmp_path)
         out = await with_history_tool(proj, history, "不存在的词xyz")
         assert "0 matched" in out
+
+    async def test_offset_window_ascending_with_indexes(self, kind, tmp_path):
+        proj = await self._projected(kind, tmp_path)
+        # offset=1：从第 1 条起正序看 2 条，带绝对序号
+        out = await with_history_tool(proj, history, offset=1, limit=2)
+        assert "messages 1..2 of 5" in out
+        assert "deploy 脚本失败" in out  # 原第 1 条
+        assert "我用 bash 查了日志" in out  # 原第 2 条（assistant）
+        assert "[1]" in out and "[2]" in out
+        # 升序：deploy 在 assistant 之前
+        assert out.index("deploy") < out.index("bash 查了日志")
+
+    async def test_offset_beyond_end_empty(self, kind, tmp_path):
+        proj = await self._projected(kind, tmp_path)
+        out = await with_history_tool(proj, history, offset=100)
+        assert "no messages at index 100" in out
 
     async def test_recovers_folded_details(self, kind, tmp_path):
         """硬切（new_window 推进切点）后模型可见区收窄，history 仍查回原文。"""
