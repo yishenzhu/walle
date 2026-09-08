@@ -15,7 +15,7 @@ class TestEdit:
         assert f.read_text(encoding="utf-8") == "## Todo\n- [x] ship\n- [x] done\n"
 
     async def test_append_via_tail_anchor(self, tmp_path):
-        """追加新小节：old_string 用文件末尾锚点（普通文件语义）。"""
+        """追加新小节：old_text 用文件末尾锚点（普通文件语义）。"""
         f = tmp_path / ".agent" / "note.md"
         f.parent.mkdir(parents=True)
         f.write_text("## Todo\n- task1\n", encoding="utf-8")
@@ -50,11 +50,11 @@ class TestEdit:
         out = await edit(str(tmp_path / "nope.md"), "a", "b")
         assert "not found" in out
 
-    async def test_empty_old_string_rejected(self, tmp_path):
+    async def test_empty_old_text_rejected(self, tmp_path):
         f = tmp_path / "note.md"
         f.write_text("x\n", encoding="utf-8")
         out = await edit(str(f), "", "y")
-        assert "old_string must not be empty" in out
+        assert "old_text must not be empty" in out
 
     async def test_keeps_unrelated_content(self, tmp_path):
         """只动目标片段，其余原文原样保留（局部替换核心语义）。"""
@@ -65,3 +65,57 @@ class TestEdit:
         assert f.read_text(encoding="utf-8") == (
             "## A\n- keep1\n## B\n- changed\n## C\n- keep2\n"
         )
+
+    async def test_ignores_trailing_whitespace(self, tmp_path):
+        """模型抄来的 old 丢了行尾空格，仍应命中（降级 1）。"""
+        f = tmp_path / "note.md"
+        f.write_text("def f():   \n    pass\t\n", encoding="utf-8")
+        out = await edit(str(f), "def f():\n    pass", "def g():\n    pass")
+        assert "ignored trailing whitespace" in out
+        assert f.read_text(encoding="utf-8") == "def g():\n    pass\n"
+
+    async def test_ignores_indentation_and_reindents(self, tmp_path):
+        """缩进不匹配时按命中处重排新内容（降级 2）。"""
+        f = tmp_path / "note.md"
+        f.write_text("class A:\n        def m(self):\n            pass\n", encoding="utf-8")
+        out = await edit(
+            str(f),
+            "def m(self):\n    pass",
+            "def m(self):\n    return 1",
+        )
+        assert "ignored indentation" in out
+        assert f.read_text(encoding="utf-8") == (
+            "class A:\n        def m(self):\n            return 1\n"
+        )
+
+    async def test_preserves_crlf(self, tmp_path):
+        """CRLF 文件编辑后仍是 CRLF。"""
+        f = tmp_path / "note.md"
+        f.write_bytes(b"## A\r\n- old\r\n## B\r\n")
+        out = await edit(str(f), "- old", "- new")
+        assert "edited" in out
+        assert f.read_bytes() == b"## A\r\n- new\r\n## B\r\n"
+
+    async def test_preserves_bom(self, tmp_path):
+        """带 BOM 的文件编辑后 BOM 仍在。"""
+        f = tmp_path / "note.md"
+        f.write_bytes(b"\xef\xbb\xbf- old\n")
+        out = await edit(str(f), "- old", "- new")
+        assert "edited" in out
+        assert f.read_bytes() == b"\xef\xbb\xbf- new\n"
+
+    async def test_crlf_old_text_matches_lf_file(self, tmp_path):
+        """old 带 CRLF 而文件是 LF，也能命中（模型输出风格混杂）。"""
+        f = tmp_path / "note.md"
+        f.write_text("a\nb\n", encoding="utf-8")
+        out = await edit(str(f), "a\r\nb", "c\nd")
+        assert "edited" in out
+        assert f.read_text(encoding="utf-8") == "c\nd\n"
+
+    async def test_fuzzy_match_still_rejects_ambiguous(self, tmp_path):
+        """降级匹配命中多处时，仍按歧义拒绝。"""
+        f = tmp_path / "note.md"
+        f.write_text("  x  \n  x  \n", encoding="utf-8")
+        out = await edit(str(f), "x", "y")
+        assert "matches 2 times" in out
+        assert f.read_text(encoding="utf-8") == "  x  \n  x  \n"

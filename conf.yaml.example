@@ -22,6 +22,7 @@ tool:
       - [allow, bash(cmd=ls -la*)]    # 安全命令自动放行（ls -la 开头）
       - [ask, jupyter]                 # 代码执行默认需人工确认
       - [ask, edit]                    # 编辑文件默认需人工确认（改动可见）
+      - [ask, write]                   # 整文件写入默认需人工确认（可覆盖全文）
       - [allow, edit(path=.agent/note.md)]  # 工作笔记 note.md 自动放行
       - [allow, ask_user]             # 提问工具自动放行
       - [allow, read]                 # 读文件自动放行（技能按需加载）

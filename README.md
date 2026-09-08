@@ -348,6 +348,7 @@ async def weather(city: str) -> str:
 |---|---|
 | `.agent/note.md` | 普通 md 工作笔记：模型 `read` 读、`edit` 局部更新（todo/goal/决策） |
 | `edit` 工具 | 通用文件局部替换（与 `read` 对称；写入默认需审批，note.md 可白名单放行） |
+| `write` 工具 | 整文件写入（新建/覆盖，目录自动创建；换行与 BOM 沿用原文件；默认需审批） |
 | `new_window` | 模型主动硬切：推进投影切点，窗口只剩当前轮 |
 | `history` 工具 | 只读检索当前会话完整原文（原始措辞/命令/数值），切窗后回源 |
 
@@ -406,6 +407,7 @@ walle/
 │       ├── bash.py            #     Bash 执行
 │       ├── read.py            #     文件读取
 │       ├── edit.py            #     文件局部替换
+│       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
 │       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
