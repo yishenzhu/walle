@@ -6,9 +6,9 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
 
@@ -42,20 +42,54 @@ class Job:
     error: str | None = None  # error：错误信息
 
 
+class SessionView(Protocol):
+    """会话能力面：工具执行期可见的会话状态（SessionContext 即实现）。
+
+    仅声明属性、只用于类型标注，故不加 runtime_checkable。
+    """
+
+    channel: Channel | None
+    jobs: dict[str, Job]
+    cwd: str | None
+    history: Messages
+    ext_runner: ExtRunner | None
+
+
 @dataclass
 class ToolContext:
-    # 会话 channel：工具按需发起 notify / call（如 ask_user 提问）
-    channel: Channel | None = None
-    # 后台作业表：跨轮存活（Session 持有并传入），job_id → Job
-    jobs: dict[str, Job] = field(default_factory=dict)
+    """工具执行上下文：会话视图 + 本轮事件总线。
+
+    不复制会话字段，只按工具视角换个名字暴露（history/ext）。
+    """
+
+    session: SessionView
     # 进程级事件总线：工具执行钩子（before/after）屏障来源
     bus: EventBus | None = None
-    # 会话扩展激活层（ExtRunner 能力面）：动态工具（define_tool）经此注册
-    ext: ExtRunner | None = None
-    # 会话工作目录（bash 执行位置 / 沙箱可写区；无则不设）
-    cwd: str | None = None
-    # 会话历史存储（history 回源工具读底层原文；只读查询）
-    history: Messages | None = None
+
+    @property
+    def channel(self) -> Channel | None:
+        """会话 channel：工具按需发起 notify / call（如 ask_user 提问）。"""
+        return self.session.channel
+
+    @property
+    def jobs(self) -> dict[str, Job]:
+        """后台作业表：跨轮存活，job_id → Job。"""
+        return self.session.jobs
+
+    @property
+    def cwd(self) -> str | None:
+        """会话工作目录（bash 执行位置 / 沙箱可写区；无则不设）。"""
+        return self.session.cwd
+
+    @property
+    def history(self) -> Messages:
+        """会话历史存储（history 回源工具读底层原文）。"""
+        return self.session.history
+
+    @property
+    def ext(self) -> ExtRunner | None:
+        """会话扩展激活层：动态工具（define_tool）经此注册。"""
+        return self.session.ext_runner
 
     def add_pending(self, tool_name: str, args: dict[str, Any] | None = None) -> str:
         """登记一个待启动的后台作业（executor 在本轮工具跑完后拉起）。"""

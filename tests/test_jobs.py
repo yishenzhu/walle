@@ -27,6 +27,7 @@ from .conftest import (
     FakeMessage,
     FakeProvider,
     FakeToolCall,
+    make_tool_context,
 )
 
 
@@ -53,7 +54,7 @@ def make_tool(name: str, result: str = "ok", delay: float = 0.0) -> Tool:
 
 
 def make_ctx(jobs: dict | None = None, channel=None) -> ToolContext:
-    return ToolContext(channel=channel, jobs=jobs or {})
+    return make_tool_context(channel=channel, jobs=jobs or {})
 
 
 def tool_call(name: str, arguments: str, id: str = "tc-1") -> FakeToolCall:
@@ -225,7 +226,7 @@ class TestRunnerIntegration:
         channel = FakeChannel()
         env = SessionContext(
             channel=channel,
-            messages=InMemoryMessages(),
+            history=InMemoryMessages(),
             jobs={},
         )
 
@@ -284,7 +285,7 @@ class TestRunnerIntegration:
         runner = Runner(executor=executor)
         env = SessionContext(
             channel=FakeChannel(),
-            messages=InMemoryMessages(),
+            history=InMemoryMessages(),
             jobs={},
         )
 
@@ -356,7 +357,7 @@ class TestSessionCloseCancels:
         async def never(args):
             await asyncio.Event().wait()
 
-        ctx = ToolContext(jobs=s.context.jobs)
+        ctx = make_tool_context(jobs=s.context.jobs)
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="never", args={})

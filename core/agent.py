@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 from pathlib import Path
 from typing import Any
@@ -58,7 +59,9 @@ class Agent(BaseModel):
     name: str | None = None
     description: str | None = None
     instruction: str | None = None
-    handoffs: list[Handoff] = Field(default_factory=list)
+    # 可移交 / 可派发的目标 agent 名（运行时按会话 agent 注册表解析构造工具）
+    handoffs: list[str] = Field(default_factory=list)
+    subagents: list[str] = Field(default_factory=list)
     temperature: float | None = None
     output_type: type[BaseModel] | None = None
     # 工具筛选配置：运行时从扩展 runner 取全部工具后按名字过滤
@@ -85,7 +88,7 @@ class Agent(BaseModel):
         ]
         if not lines:
             return ""
-        return "可用技能（任务匹配时加载对应技能后执行）：\n" + "\n".join(lines)
+        return "Available skills (load the matching skill before proceeding):\n" + "\n".join(lines)
 
     @classmethod
     def load(
@@ -95,9 +98,9 @@ class Agent(BaseModel):
     ) -> Agent:
         """按名加载 Agent（.agent/agents/<name>.md）。
 
-        frontmatter 支持 name/description/temperature/skills/tools(筛选)，
-        正文即 instruction。root 缺省用 DOT_AGENT/agents。工具不经 agent
-        配置——运行时由会话扩展 runner 提供。
+        frontmatter 支持 name/description/temperature/skills/tools(筛选)/
+        handoffs/subagents(目标 agent 名)，正文即 instruction。工具不经
+        agent 配置——运行时由会话扩展 runner 提供。
         """
         name = name or "default"
         root = root or DOT_AGENT / "agents"
@@ -117,6 +120,8 @@ class Agent(BaseModel):
             instruction=instruction,
             temperature=meta.get("temperature"),
             skills=meta.get("skills") or [],
+            handoffs=meta.get("handoffs") or [],
+            subagents=meta.get("subagents") or [],
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
         )
 
@@ -128,20 +133,32 @@ class Agent(BaseModel):
         if self.name is None or self.description is None:
             raise ValueError("Agent must have a name and description")
 
-    def as_tool(self) -> Tool:
+    def as_tool(self, env):
+        """派发子 agent 的工具：隔离历史，继承 provider/ext/cwd/agents。
+
+        env 为 SessionContext（此处不标注类型：core.agent 不能反向 import
+        core.runner，会成环）。深度由子环境 +1 承担，供 runner 卡住递归。
+        子 agent headless：不继承 channel（无 ask_user / 交互式审批）。
+        """
         self._validate_as_tool()
         agent = self
 
-        async def fn(input: str):
+        async def fn(input: str) -> str:
             from .runner import Runner, SessionContext
             from ..messages import InMemoryMessages
 
-            # 嵌套 Runner 显式构造隔离环境（独立历史）：与父执行实体互不污染
-            runner = Runner()
-            env = SessionContext(messages=InMemoryMessages())
-            result = await runner.run(agent, input, env=env)
-            return result.output
+            child = SessionContext(
+                history=InMemoryMessages(),  # 子 agent 独立历史，不继承父对话
+                provider=env.provider,
+                ext_runner=env.ext_runner,
+                cwd=env.cwd,
+                agents=env.agents,
+                depth=env.depth + 1,
+            )
+            # 独立 task：子 run 对 tool_context 的写入不泄漏到父的同批工具调用
+            result = await asyncio.create_task(Runner().run(agent, input, env=child))
+            return str(result.output or "")
 
         return Tool.from_function(
-            fn, name=f"call_{self.name}", description=self.description
+            fn, name=f"call_{self.name}", description=self.description or ""
         )

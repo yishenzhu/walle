@@ -82,16 +82,18 @@ class Session:
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
 
-        # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换
+        # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
+        # 注册表缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
+        self._agents: dict[str, Agent] = {}
         self._agent = self._build_agent()
         self._provider = provider
         # 会话状态：历史（每会话隔离）。
-        # 对外 _messages 一律包投影视图（模型读到投影，原文在底层全量保留）。
+        # 对外 _history 一律包投影视图（模型读到投影，原文在底层全量保留）。
         if storage == "memory":
-            self._messages = ProjectedMessages(InMemoryMessages())
+            self._history = ProjectedMessages(InMemoryMessages())
         else:
             # sqlite：底层原文持久化 + 投影切点落 meta 表，重启后懒恢复
-            self._messages = ProjectedMessages(
+            self._history = ProjectedMessages(
                 SQLiteMessages(db_path=db_path, session_id=session_id),
                 projection_store=SQLiteProjectionStore(
                     db_path=db_path, session_id=session_id
@@ -111,16 +113,20 @@ class Session:
         return SessionContext(
             provider=self._provider,
             channel=self._transport,
-            messages=self._messages,
+            history=self._history,
             session_id=self.id,
             jobs=self._jobs,
             ext_runner=self._ext_runner,  # 工具执行期动态注册通道
             cwd=self._cwd,
+            agents=self._agents,  # handoff/subagent 按名查表
         )
 
     def _build_agent(self, name: str | None = None) -> Agent:
-        """按名加载 agent（工具不经 agent——运行时由扩展 runner 提供）。"""
-        return Agent.load(name)
+        """按名加载 agent 并缓存（工具不经 agent——运行时由扩展 runner 提供）。"""
+        name = name or "default"
+        if name not in self._agents:
+            self._agents[name] = Agent.load(name)
+        return self._agents[name]
 
     @property
     def attached(self) -> bool:
@@ -164,7 +170,7 @@ class Session:
             CommandContext(
                 channel=self._transport,
                 bus=self._bus,
-                messages=self._messages,
+                messages=self._history,
                 provider=self._provider,
             ),
         ):
@@ -188,7 +194,7 @@ class Session:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._jobs.clear()
-        await self._messages.close()
+        await self._history.close()
 
 
 class SessionRegistry:

@@ -2,6 +2,8 @@ import asyncio
 
 from ..tools.builtin.defined import DefinedTool, ToolCodeError
 
+from .conftest import make_tool_context
+
 
 def test_create_ok(tmp_path):
     """create 校验通过并返回可运行的 Tool。"""
@@ -61,7 +63,7 @@ async def test_define_tool_registers_via_context(tmp_path, monkeypatch):
     monkeypatch.setattr("walle.tools.builtin.defined.DOT_AGENT", tmp_path)
 
     runner = ExtensionRunner(EventBus())
-    ctx = ToolContext(ext=runner)
+    ctx = make_tool_context(ext=runner)
     token = tool_context.set(ctx)
     try:
         out = await define_tool(

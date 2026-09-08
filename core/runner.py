@@ -40,7 +40,7 @@ from ..schemas import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TURNS = 10
+DEFAULT_MAX_TURNS = 64
 
 
 @dataclass
@@ -56,15 +56,19 @@ class SessionContext:
     """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。
 
     携带会话的扩展激活层（ext_runner）：工具执行期经它动态注册新工具。
+    agents 为会话 agent 注册表（name→Agent），handoff/subagent 工具按名
+    在此查表构造；depth 为派发深度（0=顶层会话），用于卡住子 agent 递归。
     """
 
-    messages: Messages  # 会话历史（必填）
+    history: Messages  # 会话历史（必填）
     provider: OpenAIProvider = None  # 模型接入（None 用 Runner 默认）
     channel: Channel = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
     ext_runner: ExtensionRunner | None = None  # 会话扩展激活层（工具可动态注册）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
+    agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
+    depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
 
 
 class RunResult(BaseModel):
@@ -100,14 +104,12 @@ class Runner:
         provider = env.provider or OpenAIProvider.get_default()
         if provider is None:
             raise RuntimeError("no invalid provider")
-        channel, history = env.channel, env.messages
+        history = env.history
         streamed = options.streamed
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
         await self._bus.emit(SessionStartEvent(session_id=session_id))
-        await self._bus.emit(
-            MessageStartEvent(input=input, session_id=session_id)
-        )
+        await self._bus.emit(MessageStartEvent(input=input, session_id=session_id))
         await history.add([UserMessage(content=input)])
 
         await self._bus.emit(AgentStartEvent(agent=agent.name, session_id=session_id))
@@ -125,21 +127,13 @@ class Runner:
                 tool_source = (
                     env.ext_runner.all_tools() if env.ext_runner is not None else []
                 )
-                tools = self._build_tools(agent, tool_source)
+                tools = self._build_tools(agent, tool_source, env)
 
                 await self._bus.emit(TurnStartEvent(turn=turn, agent=agent.name))
 
-                # 本轮执行上下文：分支前统一拼接（两处 _run_turn* 共用），
-                # 并统一注入 tool_context——整轮工具（含并发、审批扩展 /
-                # preflight 钩子）经它拿会话上下文，executor 不再每工具设置。
-                ctx = ToolContext(
-                    channel=channel,
-                    jobs=env.jobs,
-                    bus=self._bus,
-                    cwd=env.cwd,
-                    ext=env.ext_runner,
-                    history=history,
-                )
+                # 本轮执行上下文：会话视图 + 本轮 bus。工具经它拿会话状态，
+                # executor 不再每工具设置——整轮统一注入一次。
+                ctx = ToolContext(session=env, bus=self._bus)
                 tool_context.set(ctx)
                 if streamed:
                     completion, message, tool_results = await self._run_turn_streamed(
@@ -269,10 +263,7 @@ class Runner:
         message = completion.choices[0].message
         if message.tool_calls:
             tool_results = [
-                r
-                async for r in self._executor.execute_calls(
-                    message.tool_calls, tools
-                )
+                r async for r in self._executor.execute_calls(message.tool_calls, tools)
             ]
         return completion, message, tool_results
 
@@ -332,13 +323,26 @@ class Runner:
                 messages += [SystemMessage(content=skill_prompt)]
         return messages
 
-    def _build_tools(self, agent: Agent, source: list[Tool]) -> dict[str, Tool]:
+    def _build_tools(
+        self, agent: Agent, source: list[Tool], env: SessionContext
+    ) -> dict[str, Tool]:
         # 按 agent 的可用工具（源经 tool_filter 过滤）构造工具表；工具不经
         # agent 配置——源来自会话扩展 runner，每轮实时取。
         tools: dict[str, Tool] = {}
         for t in agent.available_tools(source):
             tools[t.name] = t
-        for h in agent.handoffs:
-            t = h.as_tool()
-            tools[t.name] = t
+        # handoff / subagent 只存目标名，此处按会话 agent 注册表解析构造工具
+        # （注册表是同一批 Agent 实例，不重复加载）。depth>=1 时不再挂派发
+        # 工具，避免子 agent 无限套娃。
+        for name in agent.handoffs:
+            target = env.agents.get(name)
+            if target is not None:
+                t = Handoff(target=target).as_tool()
+                tools[t.name] = t
+        if env.depth == 0:
+            for name in agent.subagents:
+                target = env.agents.get(name)
+                if target is not None:
+                    t = target.as_tool(env)
+                    tools[t.name] = t
         return tools

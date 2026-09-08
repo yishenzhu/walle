@@ -282,7 +282,7 @@ async def test_cli_disconnect_detaches_not_closes(tmp_path):
         sess = reg.get("sess-2")
         assert sess is not None
         # 断开前先写一条历史
-        await sess._messages.add([UserMessage(content="before-disconnect")])
+        await sess._history.add([UserMessage(content="before-disconnect")])
         w.close()
         await w.wait_closed()
         # 等服务端读到 EOF 并 detach
@@ -295,7 +295,7 @@ async def test_cli_disconnect_detaches_not_closes(tmp_path):
         sess2 = reg.get("sess-2")
         assert sess2 is not None
         assert sess2.attached is False
-        msgs = await sess2._messages.get()
+        msgs = await sess2._history.get()
         assert len(msgs) == 1 and msgs[0].content == "before-disconnect"
     finally:
         await server.stop()

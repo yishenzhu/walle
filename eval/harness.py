@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ..core import Agent, EventBus, ExtensionRunner, Handoff
+from ..core import Agent, EventBus, ExtensionRunner
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
@@ -148,10 +148,11 @@ def build_tool_system() -> Callable[[], list[Tool]]:
     return source
 
 
-def build_agent(task: TaskSpec) -> Agent:
+def build_agent(task: TaskSpec) -> tuple[Agent, dict[str, Agent]]:
     """按任务规格构造 Agent（含 handoff 多智能体）。
 
-    - handoff 任务：按 AgentSpec 程序化构造，先建全部 agent 再挂 handoff 边
+    - handoff 任务：按 AgentSpec 程序化构造全部 agent（handoffs 存目标名），
+      返回 (入口 agent, name→Agent 注册表) 供 SessionContext.agents 查表
     - 普通任务：加载 frontmatter agent（如 default），仅覆写工具 allowlist 与温度
 
     工具不经 agent——由调用方挂到会话扩展 runner（env.ext_runner）。
@@ -164,19 +165,15 @@ def build_agent(task: TaskSpec) -> Agent:
                 description=spec.description or f"{spec.name} agent",
                 instruction=spec.instruction,
                 temperature=task.temperature,
+                handoffs=spec.handoffs,
                 tool_filter=ToolFilter(allow=spec.tools),
             )
-        for spec in task.agents:
-            if spec.handoffs:
-                agents[spec.name].handoffs = [
-                    Handoff(target=agents[t]) for t in spec.handoffs
-                ]
-        return agents[task.agents[0].name]
+        return agents[task.agents[0].name], agents
 
     agent = Agent.load(task.agent)
     agent.tool_filter = ToolFilter(allow=task.tools)
     agent.temperature = task.temperature
-    return agent
+    return agent, {agent.name: agent}
 
 
 async def run_task(
@@ -196,14 +193,15 @@ async def run_task(
     # 动态注册也落这里（ToolContext.ext 绑它，见 runner 每轮组装）
     ext_runner = ExtensionRunner(EventBus())
     ext_runner.register_tool(*tools_src())
+    agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,
         channel=None,
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
         jobs={},
         ext_runner=ext_runner,
+        agents=agents,
     )
-    agent = build_agent(task)
     runner = Runner(executor=executor)
 
     start = time.monotonic()

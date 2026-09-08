@@ -1,4 +1,7 @@
 """pytest 共享 fixture 与 mock 对象。"""
+from dataclasses import dataclass, field
+from typing import Any
+
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
@@ -53,19 +56,24 @@ class FakeCompletion:
 
 
 class FakeCompletions:
-    """可预编程的 chat.completions mock。"""
+    """可预编程的 chat.completions mock（记录每次调用收到的工具名）。"""
 
     def __init__(self):
         self._responses: list[FakeCompletion] = []
         self._call_count = 0
+        self.seen_tools: list[list[str]] = []  # 每次 create 传入的工具名
 
     def set_responses(self, *responses: FakeCompletion):
         self._responses = list(responses)
         self._call_count = 0
+        self.seen_tools = []
 
     async def create(self, **kwargs):
         if self._call_count >= len(self._responses):
             raise RuntimeError("No more mock responses")
+        self.seen_tools.append(
+            [t["function"]["name"] for t in kwargs.get("tools") or []]
+        )
         resp = self._responses[self._call_count]
         self._call_count += 1
         return resp
@@ -153,6 +161,39 @@ def executor(allow_all_config):
     return ToolExecutor(ToolConfig(approval=allow_all_config))
 
 
+@dataclass
+class FakeSession:
+    """满足 SessionView 的测试替身：工具执行上下文只需这五项。"""
+
+    channel: Any = None
+    jobs: dict = field(default_factory=dict)
+    cwd: str | None = None
+    history: Any = None
+    ext_runner: Any = None
+
+
+def make_tool_context(
+    *,
+    channel=None,
+    jobs=None,
+    cwd=None,
+    history=None,
+    ext=None,
+    bus=None,
+) -> ToolContext:
+    """按旧字段名构造 ToolContext（内部组装 FakeSession）。"""
+    return ToolContext(
+        session=FakeSession(
+            channel=channel,
+            jobs=jobs if jobs is not None else {},
+            cwd=cwd,
+            history=history,
+            ext_runner=ext,
+        ),
+        bus=bus,
+    )
+
+
 @pytest.fixture
 def tool_context(fake_channel):
-    return ToolContext()
+    return make_tool_context(channel=fake_channel)

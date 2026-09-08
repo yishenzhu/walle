@@ -3,7 +3,7 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, Handoff, HookVerdict, Runner, RunOptions, SessionContext, ToolExecutor
+from ..core import Agent, HookVerdict, Runner, RunOptions, RunResult, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..schemas import UserMessage
 from ..messages import InMemoryMessages
@@ -52,7 +52,7 @@ def env(channel):
 
     return SessionContext(
         channel=channel,
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
         ext_runner=ExtensionRunner(EventBus()),
     )
 
@@ -95,7 +95,7 @@ class TestRunnerSimple:
         await runner.run(agent, "hello", env=env)
 
         # _build_messages 返回会话历史 + system instruction
-        messages = await runner._build_messages(agent, env.messages, env)
+        messages = await runner._build_messages(agent, env.history, env)
         roles = [m.role for m in messages]
         assert "system" in roles
 
@@ -251,8 +251,9 @@ class TestRunnerHandoff:
             name="main",
             description="main agent",
             instruction="helpful",
-            handoffs=[Handoff(target=researcher)],
+            handoffs=["researcher"],
         )
+        env.agents = {"main": main_agent, "researcher": researcher}
 
         result = await runner.run(
             main_agent,
@@ -262,6 +263,122 @@ class TestRunnerHandoff:
         assert result.completed_turns == 2
         assert result.last_agent.name == "researcher"
         assert result.output == "researched!"
+
+
+class TestRunnerSubagent:
+    """子 agent 派发（call_<name>）测试：隔离历史、返回结论、可继承工具。"""
+
+    async def test_subagent_runs_isolated_and_returns(self, provider, env, runner):
+        # 父：调 call_helper → 子跑一轮 → 父拿结论收尾
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            id="tc1",
+                            name="call_helper",
+                            arguments='{"input": "compute 2+2"}',
+                        )
+                    ]
+                )
+            ),
+            FakeCompletion(FakeMessage(content="child answer")),  # 子 agent 轮
+            FakeCompletion(FakeMessage(content="final answer")),  # 父收尾轮
+        )
+
+        helper = Agent(
+            name="helper",
+            description="compute helper",
+            instruction="you compute things",
+        )
+        main_agent = Agent(
+            name="main",
+            description="main agent",
+            instruction="helpful",
+            subagents=["helper"],
+        )
+        env.agents = {"main": main_agent, "helper": helper}
+
+        result = await runner.run(main_agent, "do it", env=env)
+
+        assert result.output == "final answer"
+        # 子 agent 的结论作为工具结果回到父，父历史里能看到
+        contents = [m.content for m in await env.history.get()]
+        assert any("child answer" in str(c) for c in contents)
+
+    async def test_subagent_inherits_ext_tools(self, provider, env, runner):
+        """子 agent 继承父会话的工具源（否则派发出去无工具可用）。"""
+        provider.client.chat.completions.set_responses(
+            FakeCompletion(
+                FakeMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            id="tc1", name="call_helper", arguments='{"input": "go"}'
+                        )
+                    ]
+                )
+            ),
+            FakeCompletion(FakeMessage(content="child done")),  # 子 agent 轮
+            FakeCompletion(FakeMessage(content="done")),  # 父收尾轮
+        )
+        env.ext_runner.register_tool(make_echo_tool("echoed-in-child"))
+
+        helper = Agent(
+            name="helper",
+            description="helper",
+            instruction="use tools",
+            tool_filter=ToolFilter(allow=["echo"]),
+        )
+        main_agent = Agent(
+            name="main",
+            description="main agent",
+            instruction="helpful",
+            subagents=["helper"],
+        )
+        env.agents = {"main": main_agent, "helper": helper}
+
+        await runner.run(main_agent, "do it", env=env)
+
+        # 第 2 次 LLM 调用是子 agent 的轮次：工具表必须含继承来的 echo
+        seen = provider.client.chat.completions.seen_tools
+        assert "echo" in seen[1], f"子 agent 未继承工具源: {seen[1]}"
+
+    async def test_subagent_env_inherits_capabilities(self, monkeypatch):
+        """子环境继承 provider/cwd/ext_runner/agents，隔离历史与 channel，深度 +1。"""
+        from ..core import runner as runner_mod
+
+        captured: list[SessionContext] = []
+
+        class SpyRunner:
+            async def run(self, agent, input, env, options=None):
+                captured.append(env)
+                return RunResult(input=input, max_turns=1, output="ok")
+
+        monkeypatch.setattr(runner_mod, "Runner", SpyRunner)
+
+        helper = Agent(name="helper", description="helper")
+        ext = runner_mod.ExtensionRunner(runner_mod.EventBus())
+        parent = SessionContext(
+            history=InMemoryMessages(),
+            provider="fake-provider",
+            channel="parent-channel",
+            ext_runner=ext,
+            cwd="/tmp/proj",
+            agents={"helper": helper},
+            depth=2,
+        )
+
+        tool = helper.as_tool(parent)
+        assert await tool.run({"input": "go"}) == "ok"
+
+        child = captured[0]
+        assert child.provider == "fake-provider"
+        assert child.ext_runner is ext
+        assert child.cwd == "/tmp/proj"
+        assert child.agents == {"helper": helper}
+        assert child.depth == 3  # 父 depth + 1
+        assert child.history is not parent.history  # 历史隔离
+        assert child.channel is None  # headless：子 agent 不继承交互通道
 
 
 class TestRunnerModelParams:
@@ -294,6 +411,13 @@ class TestRunnerModelParams:
 class TestRunnerBuildTools:
     """_build_tools 方法测试：源 = 会话工具列表（调用方从扩展 runner 取）。"""
 
+    def _env(self, agents: dict | None = None, depth: int = 0) -> SessionContext:
+        return SessionContext(
+            history=InMemoryMessages(),
+            agents=agents or {},
+            depth=depth,
+        )
+
     def test_includes_agent_tools(self, provider):
         tool = make_echo_tool()
         agent = Agent(
@@ -301,33 +425,56 @@ class TestRunnerBuildTools:
             tool_filter=ToolFilter(allow=["*"]),
         )
         runner = Runner()
-        tools = runner._build_tools(agent, [tool])
+        tools = runner._build_tools(agent, [tool], self._env())
         assert "echo" in tools
 
     def test_includes_handoff_tools(self, provider):
         researcher = Agent(name="researcher", description="research")
-        agent = Agent(
-            instruction="helpful",
-            handoffs=[Handoff(target=researcher)],
-        )
+        agent = Agent(instruction="helpful", handoffs=["researcher"])
         runner = Runner()
-        tools = runner._build_tools(agent, [])
+        tools = runner._build_tools(
+            agent, [], self._env({"researcher": researcher})
+        )
         assert "transfer_to_researcher" in tools
+
+    def test_handoff_missing_target_skipped(self, provider):
+        """目标名不在注册表 → 跳过，不报错（配置与注册表解耦）。"""
+        agent = Agent(instruction="helpful", handoffs=["ghost"])
+        runner = Runner()
+        assert runner._build_tools(agent, [], self._env()) == {}
+
+    def test_includes_subagent_tool(self, provider):
+        """subagents 按名解析为 call_<name> 派发工具。"""
+        helper = Agent(name="helper", description="helper")
+        agent = Agent(instruction="helpful", subagents=["helper"])
+        runner = Runner()
+        tools = runner._build_tools(agent, [], self._env({"helper": helper}))
+        assert "call_helper" in tools
+
+    def test_subagent_not_nested(self, provider):
+        """depth>=1 不再挂派发工具，避免子 agent 无限套娃。"""
+        helper = Agent(name="helper", description="helper")
+        agent = Agent(instruction="helpful", subagents=["helper"])
+        runner = Runner()
+        tools = runner._build_tools(
+            agent, [], self._env({"helper": helper}, depth=1)
+        )
+        assert "call_helper" not in tools
 
     def test_tool_filter_applied(self, provider):
         """agent.tool_filter 从会话工具源中筛选（allow/deny）。"""
         tool = make_echo_tool()
         agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["echo"]))
         runner = Runner()
-        assert "echo" in runner._build_tools(agent, [tool])
+        assert "echo" in runner._build_tools(agent, [tool], self._env())
         agent2 = Agent(instruction="helpful", tool_filter=ToolFilter(allow=[]))
-        assert runner._build_tools(agent2, [tool]) == {}
+        assert runner._build_tools(agent2, [tool], self._env()) == {}
 
     def test_no_tools_returns_empty(self, provider):
         """空源（无 ext_runner / 无工具）→ 空工具。"""
         agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
         runner = Runner()
-        assert runner._build_tools(agent, []) == {}
+        assert runner._build_tools(agent, [], self._env()) == {}
 
 
 class TestRunnerNoProvider:
@@ -344,7 +491,7 @@ class TestRunnerNoProvider:
                 await Runner().run(
                     agent,
                     "hi",
-                    env=SessionContext(messages=InMemoryMessages()),
+                    env=SessionContext(history=InMemoryMessages()),
                 )
         finally:
             OpenAIProvider._default = backup

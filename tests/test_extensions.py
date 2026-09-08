@@ -174,7 +174,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
             "use guard",
             env=SessionContext(
                 channel=FakeChannel(),
-                messages=InMemoryMessages(),
+                history=InMemoryMessages(),
                 ext_runner=ext_runner,
             ),
         )

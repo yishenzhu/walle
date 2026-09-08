@@ -123,7 +123,7 @@ async def run_tau_case(
     walle_env = SessionContext(
         provider=tracked,
         channel=None,
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
         jobs={},
         ext_runner=ext_runner,
     )

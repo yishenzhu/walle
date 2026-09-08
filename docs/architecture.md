@@ -12,8 +12,8 @@ walle 的运行时模型：**进程共享声明（扩展/MCP），会话自持�
 | `Session` | core | 会话实体 = 运行时容器：组装 bus / executor / runner / ext_runner，持历史与作业 | 每连接一个 |
 | `Runner` | core | Agent 循环：多轮调 LLM → 工具执行 → handoff；只发事件不碰 transport | 每会话一个（Session 组装） |
 | `ToolExecutor` | core | 工具执行器：preflight 事件屏障 → 执行（超时）；**审批是扩展**（订阅 TOOL_EXECUTION_START），不内置 | 每会话一个 |
-| `SessionContext` | core | Session 每次 `run()` 传给 Runner 的**环境包**（消息/channel/jobs/ext_runner） | Session 持一份，随 attach 更新 |
-| `ToolContext` | infra | **工具执行期上下文**：经 `tool_context` ContextVar 注入，工具/审批扩展/钩子原地 `get()` | runner 每轮构造一次 |
+| `SessionContext` | core | Session 每次 `run()` 传给 Runner 的**环境包**（history/channel/jobs/ext_runner/agents） | Session 持一份，随 attach 更新 |
+| `ToolContext` | infra | **工具执行期上下文**：持有 SessionContext（满足 `SessionView`）+ 本轮 bus，工具/审批扩展/钩子原地 `get()` | runner 每轮构造一次 |
 | `CommandContext` | infra | **命令执行上下文**：暴露 channel/bus，用法由命令自决 | handle 每次构造 |
 
 ## 2. 会话装配（Session 私有件）
@@ -41,8 +41,8 @@ ExtensionRunner 激活落点 = 每轮 ToolContext.bus = 命令 CommandContext.bu
 
 | 上下文 | 给谁 | 使命 | 何时构造/注入 |
 |---|---|---|---|
-| `SessionContext`(context/env) | Runner.run、外部访问 | 跨**轮**的会话状态（消息/jobs/工具源） | Session property，每次访问现造视图（channel 取当前 _transport） |
-| `ToolContext`(tool_context) | 工具 / 审批扩展 / 钩子 | 跨**单轮内所有工具执行**的会话能力 | runner 每轮构造并 `set`；后台作业 run_job 内自设 |
+| `SessionContext`(context/env) | Runner.run、外部访问 | 跨**轮**的会话状态（history/jobs/工具源） | Session property，每次访问现造视图（channel 取当前 _transport） |
+| `ToolContext`(tool_context) | 工具 / 审批扩展 / 钩子 | 跨**单轮内所有工具执行**的会话能力（转发 session + 本轮 bus） | runner 每轮构造并 `set`；后台作业 run_job 内自设 |
 | `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次构造（channel 取 context.channel） |
 
 **判定规则**：
@@ -108,8 +108,8 @@ ToolContext.history ──► Messages 协议（search/count/query，查底层�
 ```
 history 工具定义在 messages/tool.py（消息层能力，不经工具注册链可直接
 复用）；new_window 同文件——模型维护好 note.md 后主动硬切窗口
-（折叠旧轮，投影只留当前轮）。Runner 每轮把 env.messages 注入
-ToolContext.history；笔记文件不经会话上下文（模型按需 read）。
+（折叠旧轮，投影只留当前轮）。ToolContext.history 直接转发
+SessionContext.history；笔记文件不经会话上下文（模型按需 read）。
 
 ## 5. 一次输入的执行链（数据流）
 
@@ -124,11 +124,10 @@ CLIChannel.on_input
               1. _build_messages（history + instruction + 技能清单[经
                  env.ext_runner.skills × agent.skills 白名单]）
               2. tool_source = env.ext_runner.all_tools()
-                 tools = _build_tools(agent, tool_source)  # available_tools 过滤 + handoffs
-              3. ctx = ToolContext(channel=env.channel, jobs=env.jobs,
-                     bus=self._bus, ext=env.ext_runner,
-                     history=env.messages)
-                     tool_context.set(ctx)          # 本轮统一注入一次
+                 tools = _build_tools(agent, tool_source, env)  # 过滤 + handoff/subagent
+              3. ctx = ToolContext(session=env, bus=self._bus)
+                 tool_context.set(ctx)          # 本轮统一注入一次
+                 # 工具视角别名：ctx.channel/jobs/cwd/history/ext 转发到 env
               4. 有 tool_calls：
                    execute_calls(tool_calls, tools)   # 并发，as_completed
                      └─ execute_tool 内 tool_context.get() → ctx

@@ -138,7 +138,7 @@ async def test_runner_emits_lifecycle(allow_executor):
     env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
     )
     result = await runner.run(
         Agent(name="default", tools=lambda: [echo_tool()]),
@@ -189,7 +189,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
     env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
         session_id="s1",
     )
     result = await runner.run(
@@ -219,7 +219,7 @@ async def test_runner_no_events_when_no_subscribers(allow_executor):
     env = SessionContext(
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
-        messages=InMemoryMessages(),
+        history=InMemoryMessages(),
     )
     result = await runner.run(
         Agent(name="default", tools=lambda: [echo_tool()]), "hi", env=env

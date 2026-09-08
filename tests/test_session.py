@@ -46,16 +46,16 @@ class TestSessionStorage:
     async def test_default_storage_is_sqlite(self, tmp_path):
         """默认存储后端是 SQLite（跨连接持久化）。"""
         s = make_session("s1", str(tmp_path / "s.db"))
-        assert isinstance(s._messages, ProjectedMessages)
-        assert isinstance(s._messages.underlying, SQLiteMessages)
-        assert not isinstance(s._messages.underlying, InMemoryMessages)
+        assert isinstance(s._history, ProjectedMessages)
+        assert isinstance(s._history.underlying, SQLiteMessages)
+        assert not isinstance(s._history.underlying, InMemoryMessages)
         await s.close()
 
     async def test_memory_storage_when_configured(self, tmp_path):
         """显式配置 memory 时用内存存储。"""
         s = make_session("s1", str(tmp_path / "s.db"), storage="memory")
-        assert isinstance(s._messages, ProjectedMessages)
-        assert isinstance(s._messages.underlying, InMemoryMessages)
+        assert isinstance(s._history, ProjectedMessages)
+        assert isinstance(s._history.underlying, InMemoryMessages)
         await s.close()
 
     async def test_history_persists_across_session_instances(self, tmp_path):
@@ -63,12 +63,12 @@ class TestSessionStorage:
         db = str(tmp_path / "s.db")
 
         s1 = make_session("reconnect", db)
-        await s1._messages.add([UserMessage(content="hello")])
+        await s1._history.add([UserMessage(content="hello")])
         await s1.close()
 
         # 重新连接：新 Session 实例，同一 db + session_id，历史仍在
         s2 = make_session("reconnect", db)
-        msgs = await s2._messages.get()
+        msgs = await s2._history.get()
         assert len(msgs) == 1
         assert msgs[0].content == "hello"
         await s2.close()
@@ -79,11 +79,11 @@ class TestSessionStorage:
 
         s1 = make_session("a", db)
         s2 = make_session("b", db)
-        await s1._messages.add([UserMessage(content="from-a")])
-        await s2._messages.add([UserMessage(content="from-b")])
+        await s1._history.add([UserMessage(content="from-a")])
+        await s2._history.add([UserMessage(content="from-b")])
 
-        r1 = await s1._messages.get()
-        r2 = await s2._messages.get()
+        r1 = await s1._history.get()
+        r2 = await s2._history.get()
         assert len(r1) == 1 and r1[0].content == "from-a"
         assert len(r2) == 1 and r2[0].content == "from-b"
         await s1.close()
@@ -99,14 +99,14 @@ class TestSessionLifecycle:
         s.detach()
         assert s.attached is False
         # detach 后状态仍在（消息可读）
-        await s._messages.add([UserMessage(content="after-detach")])
-        msgs = await s._messages.get()
+        await s._history.add([UserMessage(content="after-detach")])
+        msgs = await s._history.get()
         assert len(msgs) == 1
 
         # 重连：attach 新 transport，状态还在
         s.attach(FakeChannel())
         assert s.attached is True
-        msgs = await s._messages.get()
+        msgs = await s._history.get()
         assert msgs[0].content == "after-detach"
         await s.close()
 

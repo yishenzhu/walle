@@ -8,7 +8,7 @@ from ..core.executor import ToolExecutor
 from ..schemas import ApprovalRsp
 from ..infra import Tool, ToolContext
 
-from .conftest import FakeChannel, FakeToolCall, FakeProvider
+from .conftest import FakeChannel, FakeToolCall, FakeProvider, make_tool_context
 
 
 def make_tool(name, result="ok"):
@@ -62,7 +62,7 @@ def channel():
 
 @pytest.fixture
 def ctx():
-    return ToolContext()
+    return make_tool_context()
 
 
 class TestExecute:
@@ -81,7 +81,7 @@ class TestExecute:
             rules=[RawRule(ApprovalDecision.DENY, "bash")],
             default=ApprovalDecision.ALLOW,
         )
-        ctx = ToolContext()
+        ctx = make_tool_context()
         await mount_approval(ctx, config)
         executor = ToolExecutor()
         tool = make_tool("bash")
@@ -116,7 +116,7 @@ class TestExecute:
 
     async def test_execute_user_approves(self, channel):
         channel.set_approval(approved=True)
-        ctx = ToolContext(channel=channel)
+        ctx = make_tool_context(channel=channel)
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
@@ -128,7 +128,7 @@ class TestExecute:
 
     async def test_execute_user_denies(self, channel):
         channel.set_approval(approved=False, reason="dangerous")
-        ctx = ToolContext(channel=channel)
+        ctx = make_tool_context(channel=channel)
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
@@ -140,7 +140,7 @@ class TestExecute:
         assert "dangerous" in result
 
     async def test_execute_ask_no_approver(self):
-        ctx = ToolContext()
+        ctx = make_tool_context()
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash")
@@ -326,11 +326,8 @@ class TestToolHooks:
 
         bus = EventBus()
         bus.on(ToolExecutionStartEvent, check)
-        ctx.channel = channel
-        ctx.bus = bus
-        from ..infra import tool_context
+        ctx = make_tool_context(channel=channel, bus=bus)
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
-        tool_context.set(ctx)  # 模拟 runner 每轮统一注入
 
         tool = make_tool("echo", "ran")
         await executor.execute_call(make_tool_call(name="echo"), {"echo": tool})

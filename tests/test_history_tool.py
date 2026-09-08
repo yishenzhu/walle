@@ -5,7 +5,7 @@
 """
 import pytest
 
-from ..infra import ToolContext, tool_context
+from ..infra import tool_context
 from ..messages import (
     InMemoryMessages,
     ProjectedMessages,
@@ -13,6 +13,8 @@ from ..messages import (
 )
 from ..messages.tool import history
 from ..schemas import UserMessage
+
+from .conftest import make_tool_context
 
 
 def make_storage(kind, tmp_path, session_id="s1"):
@@ -40,7 +42,7 @@ def sample_messages():
 
 async def with_history_tool(messages, fn, *args, **kwargs):
     """在指定 messages 存储下调用 history 工具（注入 ToolContext）。"""
-    token = tool_context.set(ToolContext(history=messages))
+    token = tool_context.set(make_tool_context(history=messages))
     try:
         return await fn(*args, **kwargs)
     finally:
