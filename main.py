@@ -54,7 +54,7 @@ async def main() -> None:
         storage=conf.session.storage,
         db_path=conf.session.db_path,
     )
-    channel = CLIChannel(registry=sessions)
+    channel = CLIChannel(sessions=sessions)
     await channel.start()
 
     try:

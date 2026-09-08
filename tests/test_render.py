@@ -2,22 +2,25 @@
 import pytest
 
 from walle.channel.cli import CLIClient
+from walle.schemas import Delta, DeltaEnd, Error, ToolStart
 
 
 @pytest.mark.asyncio
 async def test_cli_stream_render(capsys):
     """Delta 连续不换行，DeltaEnd 换行（AI 回答结束）。"""
-    CLIClient.render_notification({"type": "delta", "delta": "你"})
-    CLIClient.render_notification({"type": "delta", "delta": "好"})
-    CLIClient.render_notification({"type": "delta_end"})
+    CLIClient.render_notification(Delta(delta="你"))
+    CLIClient.render_notification(Delta(delta="好"))
+    CLIClient.render_notification(DeltaEnd())
     assert capsys.readouterr().out == "你好\n"
 
 
 @pytest.mark.asyncio
 async def test_cli_tool_event_render(capsys):
     """工具事件独立成行，带 icon 与颜色。"""
-    CLIClient.render_notification({"type": "tool_start", "tool_name": "bash", "arguments": {"cmd": "ls"}})
-    CLIClient.render_notification({"type": "error", "message": "oops"})
+    CLIClient.render_notification(
+        ToolStart(tool_name="bash", arguments={"cmd": "ls"}, tool_call_id="t1")
+    )
+    CLIClient.render_notification(Error(message="oops"))
     out = capsys.readouterr().out
     assert "🔧 bash" in out
     assert "⚠️ oops" in out

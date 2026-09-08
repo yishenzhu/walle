@@ -202,7 +202,7 @@ class _TestServer:
             ),
             db_path=db_path,
         )
-        self.channel = CLIChannel(registry=self.registry)
+        self.channel = CLIChannel(sessions=self.registry)
 
     async def start(self):
         # 用端口 0 让内核分配空闲端口
