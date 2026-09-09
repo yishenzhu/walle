@@ -128,7 +128,7 @@ async def test_runner_emits_lifecycle(allow_executor):
     for et in (AgentStartEvent, TurnStartEvent, TurnEndEvent, AgentEndEvent):
         bus.on(et, lambda evt: events.append(type(evt).__name__))
 
-    runner = Runner(executor=allow_executor, bus=bus)
+    runner = Runner(executor=allow_executor)
 
     provider = FakeProvider()
     provider.client.chat.completions.set_responses(
@@ -139,6 +139,7 @@ async def test_runner_emits_lifecycle(allow_executor):
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
         history=InMemoryMessages(),
+        bus=bus,
     )
     result = await runner.run(
         Agent(name="default", tools=lambda: [echo_tool()]),
@@ -181,7 +182,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
     ):
         listen(et)
 
-    runner = Runner(executor=allow_executor, bus=bus)
+    runner = Runner(executor=allow_executor)
     provider = FakeProvider()
     provider.client.chat.completions.set_responses(
         FakeCompletion(FakeMessage(content="final"), FakeUsage())
@@ -191,6 +192,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
         provider=provider,  # type: ignore[arg-type]
         history=InMemoryMessages(),
         session_id="s1",
+        bus=bus,
     )
     result = await runner.run(
         Agent(name="default", tools=lambda: [echo_tool()]),
@@ -211,7 +213,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
 
 async def test_runner_no_events_when_no_subscribers(allow_executor):
     """没有监听器时，run 全程不抛、正常返回。"""
-    runner = Runner(executor=allow_executor, bus=EventBus())
+    runner = Runner(executor=allow_executor)
     provider = FakeProvider()
     provider.client.chat.completions.set_responses(
         FakeCompletion(FakeMessage(content="x"), FakeUsage())
@@ -220,6 +222,7 @@ async def test_runner_no_events_when_no_subscribers(allow_executor):
         channel=FakeChannel(),
         provider=provider,  # type: ignore[arg-type]
         history=InMemoryMessages(),
+        bus=EventBus(),
     )
     result = await runner.run(
         Agent(name="default", tools=lambda: [echo_tool()]), "hi", env=env

@@ -70,7 +70,7 @@ class ProjectionStore(Protocol):
 
 @runtime_checkable
 class ExtRunner(Protocol):
-    """扩展激活层（ExtensionRunner 的能力面，工具执行期经 ctx.ext 使用）。
+    """扩展激活层（ExtensionRunner 的能力面，工具执行期经 ctx.ext_runner 使用）。
 
     协议只暴露工具表管理，供 define_tool 等动态注册；ExtensionRunner 是
     实现。放最底层避免 infra/tool 与 infra/extension 相互 import 成环。

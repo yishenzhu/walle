@@ -91,8 +91,8 @@ Agent **不持有工具**：`Agent.available_tools(source)` 只做 `tool_filter`
 ### 工具执行期动态注册通道（define_tool）
 ```
 SessionContext.ext_runner（Session 组装时放入 env，满足 ExtRunner 能力面）
-   └─ runner 每轮 ──▶ ToolContext.ext（execute 前 set，同一实例）
-        └─ define_tool 经 tool_context.get().ext.register_tool(tool) 就地注册
+   └─ runner 每轮 ──▶ ToolContext.ext_runner（转发 session，同一实例）
+        └─ define_tool 经 tool_context.get().ext_runner.register_tool(tool) 就地注册
 ```
 ToolContext 不依赖具体 ExtensionRunner——只依赖 `ExtRunner` 协议
 （schemas/protocols.py：register_tool/remove_tool），避免 infra/tool 与

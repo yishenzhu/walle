@@ -12,7 +12,7 @@ from .events import (
     ToolExecutionStartEvent,
     ToolExecutionEndEvent,
 )
-from .tool import Job, JobStatus, Tool, ToolContext, tool_context
+from .tool import Job, JobStatus, SessionView, Tool, tool_context
 from .diagnostics import DiagnosticType, ResourceDiagnostic
 from .extension import (
     Command,

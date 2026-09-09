@@ -514,8 +514,8 @@ class TestRunnerToolHooks:
             executor=ToolExecutor(
                 ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
             ),
-            bus=bus,
         )
+        env.bus = bus  # 会话总线（钩子屏障来源）
 
         provider.client.chat.completions.set_responses(
             FakeCompletion(
@@ -553,8 +553,8 @@ class TestRunnerToolHooks:
             executor=ToolExecutor(
                 ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
             ),
-            bus=bus,
         )
+        env.bus = bus  # 会话总线（钩子屏障来源）
 
         provider.client.chat.completions.set_responses(
             FakeCompletion(

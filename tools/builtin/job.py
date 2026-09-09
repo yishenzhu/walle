@@ -4,8 +4,9 @@ background 只登记 pending 作业到 ctx.jobs（不碰 executor）；本轮工
 完后由 executor.launch_pending 统一拉起，结果用 job_result 稍后查询取回。
 """
 
-from ...infra import tool_context
-from ...infra import JobStatus
+import uuid
+
+from ...infra import Job, JobStatus, tool_context
 from ...schemas import JobDispatch, JobResult
 
 
@@ -17,8 +18,11 @@ async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
     ctx = tool_context.get()
     if ctx is None:
         return JobDispatch(job_id="", status=JobStatus.ERROR, error="background 不可用：无执行上下文")
-    job_id = ctx.add_pending(tool_name, args)
     # 仅登记待启动：executor 在本轮工具跑完后才拉起，故报 pending（非 running）
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    ctx.jobs[job_id] = Job(
+        status=JobStatus.PENDING, tool_name=tool_name, args=args or {}
+    )
     return JobDispatch(job_id=job_id, status=JobStatus.PENDING)
 
 

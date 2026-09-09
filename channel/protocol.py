@@ -5,7 +5,7 @@ Runner / Executor / 工具只认识 notify（广播）与 call（点对点）两
 """
 from typing import Any, Protocol, runtime_checkable
 
-from ..schemas import NotificationUnion, ServiceUnion
+from ..schemas import ModelConfig, NotificationUnion, ServiceUnion
 
 
 @runtime_checkable
@@ -15,14 +15,17 @@ class Channel(Protocol):
 
 
 class SessionConn(Protocol):
-    """新建会话的连接：承载会话身份（chat_id）与工作目录（cwd）。
+    """新建会话的连接：承载会话身份（chat_id）、工作目录（cwd）与模型配置。
 
     由各通道实现（如 CLIConn），SessionRegistry.create 依赖此结构。
+    model 由客户端随握手提供——不同连接可指向不同 OpenAI 兼容端点；
+    缺省（None）回退进程默认 provider。
     纯类型标注（不 runtime_checkable——属性型协议对实例属性检查不可靠）。
     """
 
     chat_id: str
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
+    model: ModelConfig | None  # 模型接入配置（None = 用进程默认）
 
 
 @runtime_checkable

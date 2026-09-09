@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ...schemas import NotificationUnion, ServiceUnion, UserInput, Error
+from ...schemas import ModelConfig, NotificationUnion, ServiceUnion, UserInput, Error
 from ..protocol import Sessions
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,11 @@ class CLIConn:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         cwd: str | None = None,
+        model: ModelConfig | None = None,
     ) -> None:
         self.chat_id = chat_id
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
+        self.model = model  # 客户端模型配置（会话级 provider；None = 进程默认）
         self._reader = reader
         self._writer = writer
         self._pending: dict[str, asyncio.Future] = {}
@@ -213,8 +215,16 @@ class CLIChannel:
             attach = bool(msg.get("attach", False))
             ext_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
             cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
+            # 客户端模型配置（可选；非法/缺失回退进程默认 provider）
+            model = None
+            raw_model = msg.get("model")
+            if isinstance(raw_model, dict):
+                try:
+                    model = ModelConfig.model_validate(raw_model)
+                except Exception:
+                    logger.warning(f"ignoring invalid model config: {raw_model}")
 
-            conn = CLIConn(chat_id, reader, writer, cwd=cwd)
+            conn = CLIConn(chat_id, reader, writer, cwd=cwd, model=model)
 
             if attach:
                 # resume：取已存在会话，绑定新 transport

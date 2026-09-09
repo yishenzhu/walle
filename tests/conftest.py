@@ -8,7 +8,7 @@ from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
 from ..infra import OpenAIProvider
 from ..schemas import Approval, ApprovalRsp, Inquiry, Receive, UserInput
-from ..infra import ToolContext
+from ..infra import SessionView
 
 
 # ── Mock LLM 响应对象 ──────────────────────────────────
@@ -163,16 +163,17 @@ def executor(allow_all_config):
 
 @dataclass
 class FakeSession:
-    """满足 SessionView 的测试替身：工具执行上下文只需这五项。"""
+    """满足 SessionView 的测试替身：工具执行期可见的会话状态。"""
 
     channel: Any = None
     jobs: dict = field(default_factory=dict)
     cwd: str | None = None
     history: Any = None
     ext_runner: Any = None
+    bus: Any = None
 
 
-def make_tool_context(
+def make_session(
     *,
     channel=None,
     jobs=None,
@@ -180,20 +181,18 @@ def make_tool_context(
     history=None,
     ext=None,
     bus=None,
-) -> ToolContext:
-    """按旧字段名构造 ToolContext（内部组装 FakeSession）。"""
-    return ToolContext(
-        session=FakeSession(
-            channel=channel,
-            jobs=jobs if jobs is not None else {},
-            cwd=cwd,
-            history=history,
-            ext_runner=ext,
-        ),
+) -> FakeSession:
+    """构造测试用会话视图（tool_context 注入它）。"""
+    return FakeSession(
+        channel=channel,
+        jobs=jobs if jobs is not None else {},
+        cwd=cwd,
+        history=history,
+        ext_runner=ext,
         bus=bus,
     )
 
 
 @pytest.fixture
 def tool_context(fake_channel):
-    return make_tool_context(channel=fake_channel)
+    return make_session(channel=fake_channel)

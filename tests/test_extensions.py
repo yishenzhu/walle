@@ -155,7 +155,6 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
             executor=ToolExecutor(
                 ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
             ),
-            bus=bus,
         )
 
         provider.client.chat.completions.set_responses(
@@ -176,6 +175,7 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
                 channel=FakeChannel(),
                 history=InMemoryMessages(),
                 ext_runner=ext_runner,
+                bus=bus,
             ),
         )
 

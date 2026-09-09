@@ -14,7 +14,6 @@ from ..infra import (
     Job,
     OpenAIProvider,
     Tool,
-    ToolContext,
     tool_context,
     tracer,
     AgentStartEvent,
@@ -58,6 +57,7 @@ class SessionContext:
     携带会话的扩展激活层（ext_runner）：工具执行期经它动态注册新工具。
     agents 为会话 agent 注册表（name→Agent），handoff/subagent 工具按名
     在此查表构造；depth 为派发深度（0=顶层会话），用于卡住子 agent 递归。
+    bus 为会话事件总线（Runner 发事件、工具执行钩子屏障共用同一实例）。
     """
 
     history: Messages  # 会话历史（必填）
@@ -69,6 +69,7 @@ class SessionContext:
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
+    bus: EventBus | None = None  # 会话事件总线（None 时 run 内现造）
 
 
 class RunResult(BaseModel):
@@ -82,16 +83,14 @@ class RunResult(BaseModel):
 
 
 class Runner:
-    """Agent 执行器：持有工具执行器 / 事件总线；provider 由 run 时 env 提供。"""
+    """Agent 执行器：持有工具执行器；provider/bus 由 run 时 env 提供。"""
 
     def __init__(
         self,
         executor: ToolExecutor | None = None,
-        bus: EventBus | None = None,
     ) -> None:
-        # provider 不经构造——run 时由 env 提供（env 缺省回退默认实例）
+        # provider / bus 不经构造——run 时由 env 提供
         self._executor = executor or ToolExecutor()
-        self._bus = bus or EventBus()
 
     async def run(
         self,
@@ -105,14 +104,15 @@ class Runner:
         if provider is None:
             raise RuntimeError("no invalid provider")
         history = env.history
+        bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造
         streamed = options.streamed
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
-        await self._bus.emit(SessionStartEvent(session_id=session_id))
-        await self._bus.emit(MessageStartEvent(input=input, session_id=session_id))
+        await bus.emit(SessionStartEvent(session_id=session_id))
+        await bus.emit(MessageStartEvent(input=input, session_id=session_id))
         await history.add([UserMessage(content=input)])
 
-        await self._bus.emit(AgentStartEvent(agent=agent.name, session_id=session_id))
+        await bus.emit(AgentStartEvent(agent=agent.name, session_id=session_id))
 
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("streamed", streamed)
@@ -129,15 +129,13 @@ class Runner:
                 )
                 tools = self._build_tools(agent, tool_source, env)
 
-                await self._bus.emit(TurnStartEvent(turn=turn, agent=agent.name))
+                await bus.emit(TurnStartEvent(turn=turn, agent=agent.name))
 
-                # 本轮执行上下文：会话视图 + 本轮 bus。工具经它拿会话状态，
-                # executor 不再每工具设置——整轮统一注入一次。
-                ctx = ToolContext(session=env, bus=self._bus)
-                tool_context.set(ctx)
+                # 本轮执行上下文：会话本身即工具可见视图，整轮统一注入一次
+                tool_context.set(env)
                 if streamed:
                     completion, message, tool_results = await self._run_turn_streamed(
-                        agent, messages, tools, provider
+                        agent, messages, tools, provider, bus
                     )
                 else:
                     completion, message, tool_results = await self._run_turn(
@@ -172,7 +170,7 @@ class Runner:
                     AGENT_ITERATIONS.record(turn)
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
-                    await self._bus.emit(
+                    await bus.emit(
                         TurnEndEvent(
                             turn=turn,
                             agent=agent.name,
@@ -182,11 +180,11 @@ class Runner:
                             provider=provider,
                         )
                     )
-                    await self._bus.emit(
+                    await bus.emit(
                         MessageEndEvent(output=output, session_id=session_id)
                     )
-                    await self._bus.emit(AgentEndEvent(agent=agent.name))
-                    await self._bus.emit(SessionEndEvent(session_id=session_id))
+                    await bus.emit(AgentEndEvent(agent=agent.name))
+                    await bus.emit(SessionEndEvent(session_id=session_id))
                     return RunResult(
                         input=input,
                         last_agent=agent,
@@ -195,7 +193,7 @@ class Runner:
                         completed_turns=turn,
                     )
 
-                await self._bus.emit(
+                await bus.emit(
                     TurnEndEvent(
                         turn=turn,
                         agent=agent.name,
@@ -209,9 +207,9 @@ class Runner:
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
-            await self._bus.emit(MessageEndEvent(output=None, session_id=session_id))
-            await self._bus.emit(AgentEndEvent(agent=agent.name))
-            await self._bus.emit(SessionEndEvent(session_id=session_id))
+            await bus.emit(MessageEndEvent(output=None, session_id=session_id))
+            await bus.emit(AgentEndEvent(agent=agent.name))
+            await bus.emit(SessionEndEvent(session_id=session_id))
             return RunResult(
                 input=input,
                 last_agent=agent,
@@ -225,6 +223,7 @@ class Runner:
         messages: list,
         tools: dict[str, Tool],
         provider,
+        bus: EventBus,
     ):
         # 流式增量只发事件（MESSAGE_DELTA）——推给 channel 由监听者负责
         tool_results: list = []
@@ -235,7 +234,7 @@ class Runner:
         ) as stream:
             async for event in stream:
                 if event.type == "content.delta":
-                    await self._bus.emit(MessageDeltaEvent(delta=event.delta))
+                    await bus.emit(MessageDeltaEvent(delta=event.delta))
 
             completion = await stream.get_final_completion()
             message = completion.choices[0].message

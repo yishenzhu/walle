@@ -118,7 +118,8 @@ async def run_tau_case(
             timeout=TimeoutConfig(default=120.0),
         )
     )
-    ext_runner = ExtensionRunner(EventBus())
+    bus = EventBus()
+    ext_runner = ExtensionRunner(bus)
     ext_runner.register_tool(*tools_src())
     walle_env = SessionContext(
         provider=tracked,
@@ -126,6 +127,7 @@ async def run_tau_case(
         history=InMemoryMessages(),
         jobs={},
         ext_runner=ext_runner,
+        bus=bus,
     )
     agent = Agent(
         name="tau",

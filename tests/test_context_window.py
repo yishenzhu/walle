@@ -14,7 +14,7 @@ from ..messages import (
 )
 from ..schemas import UserMessage
 
-from .conftest import make_tool_context
+from .conftest import make_session
 
 
 class TestProjectionPersistence:
@@ -79,7 +79,7 @@ class TestNewWindowTool:
         from ..messages.tool import new_window
 
         proj = await self._projected()
-        token = tool_context.set(make_tool_context(history=proj))
+        token = tool_context.set(make_session(history=proj))
         try:
             out = await new_window()
         finally:
@@ -97,7 +97,7 @@ class TestNewWindowTool:
         proj = ProjectedMessages(InMemoryMessages())
         for i in range(3):
             await proj.add([UserMessage(content=f"u{i}")])
-        token = tool_context.set(make_tool_context(history=proj))
+        token = tool_context.set(make_session(history=proj))
         try:
             out = await new_window()
         finally:
@@ -110,7 +110,7 @@ class TestNewWindowTool:
 
         proj = ProjectedMessages(InMemoryMessages())
         await proj.add([UserMessage(content="u0")])
-        token = tool_context.set(make_tool_context(history=proj))
+        token = tool_context.set(make_session(history=proj))
         try:
             out = await new_window()
         finally:
@@ -120,7 +120,7 @@ class TestNewWindowTool:
     async def test_no_context_returns_error(self):
         from ..messages.tool import new_window
 
-        token = tool_context.set(make_tool_context())
+        token = tool_context.set(make_session())
         try:
             assert "Error" in await new_window()
         finally:
@@ -130,7 +130,7 @@ class TestNewWindowTool:
         """裸存储（无 Projection）无法硬切，工具报错而非崩溃。"""
         from ..messages.tool import new_window
 
-        token = tool_context.set(make_tool_context(history=InMemoryMessages()))
+        token = tool_context.set(make_session(history=InMemoryMessages()))
         try:
             assert "Error" in await new_window()
         finally:
@@ -141,7 +141,7 @@ class TestNewWindowTool:
         from ..messages.tool import new_window
 
         proj = await self._projected(with_turns=6)
-        token = tool_context.set(make_tool_context(history=proj))
+        token = tool_context.set(make_session(history=proj))
         try:
             await new_window()
             visible = await proj.get()

@@ -88,7 +88,10 @@ class Agent(BaseModel):
         ]
         if not lines:
             return ""
-        return "Available skills (load the matching skill before proceeding):\n" + "\n".join(lines)
+        return (
+            "Available skills (load the matching skill before proceeding):\n"
+            + "\n".join(lines)
+        )
 
     @classmethod
     def load(
@@ -134,10 +137,9 @@ class Agent(BaseModel):
             raise ValueError("Agent must have a name and description")
 
     def as_tool(self, env):
-        """派发子 agent 的工具：隔离历史，继承 provider/ext/cwd/agents。
+        """派发子 agent 的工具：隔离历史，继承 provider/ext/cwd/agents/bus。
 
-        env 为 SessionContext（此处不标注类型：core.agent 不能反向 import
-        core.runner，会成环）。深度由子环境 +1 承担，供 runner 卡住递归。
+        深度由子环境 +1 承担，供 runner 卡住递归。
         子 agent headless：不继承 channel（无 ask_user / 交互式审批）。
         """
         self._validate_as_tool()
@@ -154,6 +156,7 @@ class Agent(BaseModel):
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,
+                bus=env.bus,  # 继承总线：治理钩子（审批/preflight）不绕过
             )
             # 独立 task：子 run 对 tool_context 的写入不泄漏到父的同批工具调用
             result = await asyncio.create_task(Runner().run(agent, input, env=child))

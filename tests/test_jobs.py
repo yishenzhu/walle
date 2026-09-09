@@ -18,7 +18,7 @@ from ..core.agent import ToolFilter
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
 from ..schemas import ToolStart, ToolResult
-from ..infra import JobStatus, Tool, ToolContext, tool_context
+from ..infra import JobStatus, Tool, tool_context
 from ..tools.builtin import background, job_result
 
 from .conftest import (
@@ -27,7 +27,7 @@ from .conftest import (
     FakeMessage,
     FakeProvider,
     FakeToolCall,
-    make_tool_context,
+    make_session,
 )
 
 
@@ -53,8 +53,8 @@ def make_tool(name: str, result: str = "ok", delay: float = 0.0) -> Tool:
     )
 
 
-def make_ctx(jobs: dict | None = None, channel=None) -> ToolContext:
-    return make_tool_context(channel=channel, jobs=jobs or {})
+def make_ctx(jobs: dict | None = None, channel=None):
+    return make_session(channel=channel, jobs=jobs or {})
 
 
 def tool_call(name: str, arguments: str, id: str = "tc-1") -> FakeToolCall:
@@ -357,7 +357,7 @@ class TestSessionCloseCancels:
         async def never(args):
             await asyncio.Event().wait()
 
-        ctx = make_tool_context(jobs=s.context.jobs)
+        ctx = make_session(jobs=s.context.jobs)
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="never", args={})

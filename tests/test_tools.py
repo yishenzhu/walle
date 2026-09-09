@@ -3,7 +3,7 @@
 import pytest
 
 from ..core import ExtensionRunner
-from ..infra import EventBus, Tool, ToolContext, tool_context
+from ..infra import EventBus, Tool, tool_context
 
 
 class TestTool:

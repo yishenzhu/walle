@@ -5,7 +5,7 @@ import pytest
 from ..core import Agent, Session, SessionRegistry
 from ..infra import MessageDeltaEvent, MessageEndEvent, AgentStartEvent
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
-from ..schemas import UserMessage
+from ..schemas import ModelConfig, UserMessage
 from ..messages import SQLiteMessages, InMemoryMessages, ProjectedMessages
 
 from .conftest import FakeChannel, FakeProvider
@@ -238,6 +238,71 @@ class TestSessionCommandDispatch:
             await s.close()
 
 
+class TestSessionModelConfig:
+    """客户端随握手提供模型配置 → 会话级 provider（可指向不同端点）。"""
+
+    class Conn:
+        def __init__(self, chat_id, model=None):
+            self.chat_id = chat_id
+            self.cwd = None
+            self.model = model
+
+    def _registry(self, tmp_path):
+        return SessionRegistry(
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            storage="memory",
+            db_path=str(tmp_path / "s.db"),
+        )
+
+    async def test_conn_model_creates_session_provider(self, tmp_path):
+        reg = self._registry(tmp_path)
+        cfg = ModelConfig(
+            api_key="sk-a", base_url="https://a.example/v1", model="model-a"
+        )
+        s = reg.create(self.Conn("cfg-1", cfg))
+        try:
+            p = s.context.provider
+            assert p is not None
+            assert p.model == "model-a"
+            # 客户端配置优先于进程默认 provider
+            assert p is not reg._provider
+        finally:
+            await s.close()
+
+    async def test_no_conn_model_uses_default(self, tmp_path):
+        reg = self._registry(tmp_path)
+        s = reg.create(self.Conn("cfg-2"))
+        try:
+            assert s.context.provider is reg._provider
+        finally:
+            await s.close()
+
+    async def test_sessions_isolated_providers(self, tmp_path):
+        """两个会话各自的模型配置互不影响。"""
+        reg = self._registry(tmp_path)
+        s1 = reg.create(
+            self.Conn(
+                "iso-1",
+                ModelConfig(api_key="k1", base_url="https://a/v1", model="m1"),
+            )
+        )
+        s2 = reg.create(
+            self.Conn(
+                "iso-2",
+                ModelConfig(api_key="k2", base_url="https://b/v1", model="m2"),
+            )
+        )
+        try:
+            assert s1.context.provider.model == "m1"
+            assert s2.context.provider.model == "m2"
+            assert s1.context.provider is not s2.context.provider
+        finally:
+            await s1.close()
+            await s2.close()
+
+
 class TestSessionStreamForward:
     """Runner 只发事件，Session 监听 MESSAGE_DELTA/END 转发给 transport。"""
 
@@ -320,6 +385,7 @@ class TestSessionStreamForward:
             def __init__(self, chat_id):
                 self.chat_id = chat_id
                 self.cwd = None
+                self.model = None
 
         s1 = reg.create(Conn("s1"))  # 默认：全部扩展
         s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
@@ -378,6 +444,7 @@ class TestSessionStreamForward:
         class Conn:
             chat_id = "mcp-1"
             cwd = None
+            model = None
 
         s = reg.create(Conn())
         names = {t.name for t in s.context.ext_runner.all_tools()}

@@ -72,7 +72,7 @@ class Session:
         self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
         # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
         executor = ToolExecutor(tool_config or ToolConfig())
-        self._agent_runner = Runner(executor=executor, bus=self._bus)
+        self._agent_runner = Runner(executor=executor)
         self._ext_runner = ExtensionRunner(
             self._bus
         )  # 会话级扩展激活（含工具表/命令表）
@@ -119,6 +119,7 @@ class Session:
             ext_runner=self._ext_runner,  # 工具执行期动态注册通道
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
+            bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
         )
 
     def _build_agent(self, name: str | None = None) -> Agent:
@@ -230,14 +231,25 @@ class SessionRegistry:
         """新建会话并注册。
 
         ext_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
-        （跳过加载失败的声明）。
+        （跳过加载失败的声明）。模型接入：客户端随握手提供则为本会话新建
+        provider（可指向不同端点），否则沿用进程默认。
         """
         extensions = self.active_ext(ext_names)
+        model_cfg = conn.model
+        provider = (
+            OpenAIProvider(
+                api_key=model_cfg.api_key,
+                base_url=model_cfg.base_url,
+                model=model_cfg.model,
+            )
+            if model_cfg is not None
+            else self._provider
+        )
         session = Session(
             session_id=conn.chat_id,
             tool_config=self._tool_config,
             extensions=extensions,
-            provider=self._provider,
+            provider=provider,
             storage=self._storage,
             db_path=self._db_path,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）

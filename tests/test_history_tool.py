@@ -14,7 +14,7 @@ from ..messages import (
 from ..messages.tool import history
 from ..schemas import UserMessage
 
-from .conftest import make_tool_context
+from .conftest import make_session
 
 
 def make_storage(kind, tmp_path, session_id="s1"):
@@ -41,8 +41,8 @@ def sample_messages():
 
 
 async def with_history_tool(messages, fn, *args, **kwargs):
-    """在指定 messages 存储下调用 history 工具（注入 ToolContext）。"""
-    token = tool_context.set(make_tool_context(history=messages))
+    """在指定 messages 存储下调用 history 工具（注入会话视图）。"""
+    token = tool_context.set(make_session(history=messages))
     try:
         return await fn(*args, **kwargs)
     finally:

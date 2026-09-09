@@ -30,6 +30,7 @@ from .events import (
     JobResult,
 )
 from .channel import (
+    ModelConfig,
     UserInput,
     ApprovalRsp,
 )

@@ -6,9 +6,9 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
 from ..schemas import ApprovalRsp
-from ..infra import Tool, ToolContext
+from ..infra import Tool, SessionView
 
-from .conftest import FakeChannel, FakeToolCall, FakeProvider, make_tool_context
+from .conftest import FakeChannel, FakeToolCall, FakeProvider, make_session
 
 
 def make_tool(name, result="ok"):
@@ -62,7 +62,7 @@ def channel():
 
 @pytest.fixture
 def ctx():
-    return make_tool_context()
+    return make_session()
 
 
 class TestExecute:
@@ -81,7 +81,7 @@ class TestExecute:
             rules=[RawRule(ApprovalDecision.DENY, "bash")],
             default=ApprovalDecision.ALLOW,
         )
-        ctx = make_tool_context()
+        ctx = make_session()
         await mount_approval(ctx, config)
         executor = ToolExecutor()
         tool = make_tool("bash")
@@ -116,7 +116,7 @@ class TestExecute:
 
     async def test_execute_user_approves(self, channel):
         channel.set_approval(approved=True)
-        ctx = make_tool_context(channel=channel)
+        ctx = make_session(channel=channel)
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
@@ -128,7 +128,7 @@ class TestExecute:
 
     async def test_execute_user_denies(self, channel):
         channel.set_approval(approved=False, reason="dangerous")
-        ctx = make_tool_context(channel=channel)
+        ctx = make_session(channel=channel)
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
@@ -140,7 +140,7 @@ class TestExecute:
         assert "dangerous" in result
 
     async def test_execute_ask_no_approver(self):
-        ctx = make_tool_context()
+        ctx = make_session()
         await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
         executor = ToolExecutor()
         tool = make_tool("bash")
@@ -326,7 +326,7 @@ class TestToolHooks:
 
         bus = EventBus()
         bus.on(ToolExecutionStartEvent, check)
-        ctx = make_tool_context(channel=channel, bus=bus)
+        ctx = make_session(channel=channel, bus=bus)
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "ran")

@@ -18,13 +18,13 @@ from ..infra import (
     TOOL_DURATION,
     tracer,
 )
-from ..infra import Job, JobStatus, Tool, ToolContext, tool_context
+from ..infra import Job, JobStatus, SessionView, Tool, tool_context
 
 logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    """工具执行器：无状态，通知渠道来自每次 execute 的 ToolContext。
+    """工具执行器：无状态，通知渠道来自每次 execute 的会话上下文。
 
     审批不在此内置——由审批扩展（tools.approval.Approval）订阅
     TOOL_EXECUTION_START 承担（preflight 事件是唯一审批屏障）。
@@ -179,7 +179,7 @@ class ToolExecutor:
         job_id: str,
         job: Job,
         tools: dict[str, Tool],
-        ctx: ToolContext,
+        ctx: SessionView,
     ) -> None:
         """后台作业执行体：执行工具并写回结果（done）或错误（error）。
 

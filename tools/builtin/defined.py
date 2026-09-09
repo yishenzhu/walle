@@ -135,7 +135,7 @@ async def define_tool(name: str = "", code: str = "") -> str:
     except (ToolCodeError, OSError, ValueError) as e:
         return f"定义失败: {e}"
     ctx = tool_context.get()
-    if ctx is None or ctx.ext is None:
+    if ctx is None or ctx.ext_runner is None:
         return f"定义失败: 当前无会话注册通道（{name} 已持久化）"
-    ctx.ext.register_tool(tool)
+    ctx.ext_runner.register_tool(tool)
     return f"工具已定义并生效: {name}"

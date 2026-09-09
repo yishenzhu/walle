@@ -163,7 +163,10 @@ PYTHONPATH=.. python -m walle.channel.cli --attach <id>      # 恢复已有会�
 PYTHONPATH=.. python -m walle.channel.cli --list             # 浏览会话（仅元数据）
 PYTHONPATH=.. python -m walle.channel.cli --extensions a,b   # 新会话只激活指定扩展
 PYTHONPATH=.. python -m walle.channel.cli --dir /path/proj   # 会话工作目录（bash 与沙箱可写区基准）
+PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.openai.com/v1 --model gpt-4o  # 本会话模型配置
 ```
+
+`--api-key/--base-url/--model` 三项齐全时，服务端为该会话新建 provider——不同连接可指向不同 OpenAI 兼容端点；缺省回退服务端 `.env` 配置。
 
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
@@ -294,7 +297,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / bus / ext / cwd / history）
+    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / bus / ext_runner / cwd / history）
     return f"result: {query}"
 ```
 
