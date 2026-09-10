@@ -4,12 +4,10 @@ from typing import Any
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
+from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import ToolExecutor
 from ..infra import OpenAIProvider
 from ..spec import Approval, ApprovalRsp, Inquiry, Receive, UserInput
-from ..infra import SessionView
-
 
 # ── Mock LLM 响应对象 ──────────────────────────────────
 

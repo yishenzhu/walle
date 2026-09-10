@@ -16,9 +16,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from ..spec import DiagnosticType, ResourceDiagnostic
 from ..conf import auto_path
-from ..spec import Channel, Messages
+from ..spec import Channel, DiagnosticType, Messages, ResourceDiagnostic
 from .event_bus import EventBus, Handler
 from .provider import OpenAIProvider
 from .tool import Tool

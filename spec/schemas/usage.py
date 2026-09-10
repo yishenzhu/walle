@@ -1,5 +1,6 @@
-from pydantic import BaseModel, ConfigDict
 from typing import Self
+
+from pydantic import BaseModel, ConfigDict
 
 
 class Usage(BaseModel):

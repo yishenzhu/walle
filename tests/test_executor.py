@@ -1,14 +1,13 @@
 """ToolExecutor 测试。"""
 
 import json
+
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
-from ..spec import ApprovalRsp
-from ..infra import Tool, SessionView
-
-from .conftest import FakeChannel, FakeToolCall, FakeProvider, make_session
+from ..infra import Tool
+from .conftest import FakeChannel, FakeProvider, FakeToolCall, make_session
 
 
 def make_tool(name, result="ok"):
@@ -312,8 +311,7 @@ class TestToolHooks:
     async def test_preflight_hook_sees_tool_context(self, ctx, channel):
         """preflight 钩子执行时 tool_context 已注入：handler 可拿会话上下文交互。"""
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent
-        from ..infra import tool_context
+        from ..infra import ToolExecutionStartEvent, tool_context
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -369,7 +367,7 @@ class TestToolHooks:
     async def test_before_hook_block_with_reason(self, ctx):
         """TOOL_EXECUTION_START 监听器返回 HookVerdict(block=reason) → 阻止执行。"""
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent, HookVerdict
+        from ..infra import HookVerdict, ToolExecutionStartEvent
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -395,7 +393,7 @@ class TestToolHooks:
     async def test_before_hook_rewrites_arguments(self, ctx):
         """TOOL_EXECUTION_START 监听器返回 HookVerdict(arguments=...) → 改写本次调用。"""
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent, HookVerdict
+        from ..infra import HookVerdict, ToolExecutionStartEvent
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))

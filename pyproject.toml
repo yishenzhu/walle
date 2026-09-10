@@ -22,20 +22,67 @@ dependencies = [
     "opentelemetry-instrumentation-openai>=0.40b0",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["walle*"]
+# 仓库根目录本身即 walle 包（run.sh 以 PYTHONPATH=<父目录> -m walle.main 运行），
+# setuptools 的自动发现只扫子目录、找不到根包，故显式列出包与目录映射。
+# 新增子包时需在此同步补充两处。
+[tool.setuptools]
+packages = [
+    "walle",
+    "walle.spec",
+    "walle.spec.protocol",
+    "walle.spec.schemas",
+    "walle.infra",
+    "walle.messages",
+    "walle.core",
+    "walle.tools",
+    "walle.tools.builtin",
+    "walle.channel",
+    "walle.channel.cli",
+    "walle.conf",
+    "walle.eval",
+    "walle.eval.bench",
+]
+
+[tool.setuptools.package-dir]
+walle = "."
+"walle.spec" = "spec"
+"walle.spec.protocol" = "spec/protocol"
+"walle.spec.schemas" = "spec/schemas"
+"walle.infra" = "infra"
+"walle.messages" = "messages"
+"walle.core" = "core"
+"walle.tools" = "tools"
+"walle.tools.builtin" = "tools/builtin"
+"walle.channel" = "channel"
+"walle.channel.cli" = "channel/cli"
+"walle.conf" = "conf"
+"walle.eval" = "eval"
+"walle.eval.bench" = "eval/bench"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
+    "ruff>=0.6",
 ]
 bench = [
     "tau-bench @ git+https://github.com/sierra-research/tau-bench.git",
     "litellm>=1.41.0",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "graphify-out", "data", "datasets", "logs"]
+
+[tool.ruff.lint]
+# E/F 基础检查 + I import 排序 + UP 语法现代化 + B 常见缺陷
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# user simulator 的 prompt 为 tau-bench 官方模板，逐字保留不改动换行
+"eval/bench/tau_adapter.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

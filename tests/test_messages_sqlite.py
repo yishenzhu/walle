@@ -1,8 +1,8 @@
 """SQLiteMessages 测试。"""
 import pytest
 
-from ..spec import UserMessage, SystemMessage, AssistantMessage
 from ..messages import SQLiteMessages
+from ..spec import AssistantMessage, SystemMessage, UserMessage
 
 
 @pytest.fixture

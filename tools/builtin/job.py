@@ -17,7 +17,9 @@ async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
     """
     ctx = tool_context.get()
     if ctx is None:
-        return JobDispatch(job_id="", status=JobStatus.ERROR, error="background 不可用：无执行上下文")
+        return JobDispatch(
+            job_id="", status=JobStatus.ERROR, error="background 不可用：无执行上下文"
+        )
     # 仅登记待启动：executor 在本轮工具跑完后才拉起，故报 pending（非 running）
     job_id = f"job_{uuid.uuid4().hex[:8]}"
     ctx.jobs[job_id] = Job(

@@ -1,6 +1,7 @@
-from openai import AsyncOpenAI
 import os
 from typing import Self
+
+from openai import AsyncOpenAI
 
 
 class OpenAIProvider:

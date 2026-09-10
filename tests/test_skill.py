@@ -1,6 +1,5 @@
 """技能（Skill）扩展 + Agent 技能提示词拼接测试。"""
 
-import pytest
 
 from ..core import Agent
 from ..infra import Skill

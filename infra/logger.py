@@ -2,7 +2,7 @@ import logging
 import logging.handlers
 from pathlib import Path
 
-from ..conf import PROJ_ROOT, auto_path, LogConfig
+from ..conf import PROJ_ROOT, LogConfig, auto_path
 
 
 class TraceInjectingFilter(logging.Filter):

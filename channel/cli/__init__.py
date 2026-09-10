@@ -4,6 +4,6 @@
 """
 
 from .client import CLIClient
-from .server import CLIChannel, CLIConn, HOST, PORT
+from .server import HOST, PORT, CLIChannel, CLIConn
 
 __all__ = ["CLIChannel", "CLIClient", "CLIConn", "HOST", "PORT"]

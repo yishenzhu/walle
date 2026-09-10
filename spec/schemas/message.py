@@ -1,5 +1,6 @@
+from typing import Annotated, Any, Literal, Self
+
 from pydantic import BaseModel, Field, TypeAdapter
-from typing import Any, Literal, Annotated, Self
 
 
 class Message(BaseModel):

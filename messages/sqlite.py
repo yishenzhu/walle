@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from collections.abc import Sequence
+
 from ..infra import SQLiteStore
 from ..spec import Message, MessageAdapter, Usage
 

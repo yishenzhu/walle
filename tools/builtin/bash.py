@@ -38,7 +38,7 @@ async def run_command(
     )
     try:
         out = await asyncio.wait_for(proc.communicate(), timeout)
-    except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+    except (TimeoutError, asyncio.CancelledError) as exc:
         # executor 的 wait_for 超时取消本协程时，这里负责杀掉进程组防孤儿
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)

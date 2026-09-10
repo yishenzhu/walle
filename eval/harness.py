@@ -10,22 +10,21 @@
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
 from ..core import Agent, EventBus, ExtensionRunner
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
-from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ..infra import OpenAIProvider
+from ..infra import OpenAIProvider, Tool
 from ..messages import InMemoryMessages
 from ..spec import Usage
-from ..infra import Tool
 from ..tools.builtin import background, bash, job_result
 from ..tools.builtin.defined import DefinedTool, ToolCodeError
-
 from .graders import grade
 from .spec import TaskSpec
 
@@ -219,7 +218,7 @@ async def run_task(
             ),
             timeout=task.timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         error = f"timeout after {task.timeout:.0f}s"
     except Exception as e:  # provider / 引擎级错误
         error = f"{type(e).__name__}: {e}"

@@ -11,9 +11,11 @@ import json
 
 import pytest
 
-from ..channel.cli import CLIConn
+from ..channel.cli import CLIChannel, CLIConn
+from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
+from ..core import SessionRegistry
+from ..spec import Approval, ApprovalRsp, UserMessage
 from ..tools.approval import ChannelApprover
-from ..spec import Approval, ApprovalRsp
 
 
 async def test_conn_run_processes_reply_while_input_in_flight():
@@ -75,7 +77,6 @@ async def test_conn_run_notifies_error_on_input_failure():
     客户端在发送 input 后会等回复完成（delta_end）再提示下一行；处理失败时
     必须通知（error 帧），否则客户端永远等不到回复信号而"卡住"。
     """
-    notifications: list[dict] = []
 
     async def handle_client(reader, writer):
         conn = CLIConn("err-conn", reader, writer)
@@ -185,11 +186,6 @@ async def test_channel_approver_passthrough_model_reply():
 
 
 # ── 轮3：attach/resume + 断开 detach 保留 + list 帧 ─────────────────────────
-
-from ..core import SessionRegistry, Session
-from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
-from ..channel.cli import CLIChannel
-from ..spec import UserMessage
 
 
 class _TestServer:

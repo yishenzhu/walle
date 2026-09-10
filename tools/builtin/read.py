@@ -9,7 +9,8 @@ async def read(path: str = "") -> str:
     """Read a text file and return its content.
 
     Args:
-        path: Absolute or project-relative path to the file (e.g. '.agent/skills/grilling/SKILL.md').
+        path: Absolute or project-relative path to the file
+            (e.g. '.agent/skills/grilling/SKILL.md').
     """
     if not path:
         return "Error: path is required"

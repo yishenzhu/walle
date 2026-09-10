@@ -18,14 +18,14 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+from tau_bench.types import Action
 
 from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ...infra import OpenAIProvider
 from ...core import EventBus, ExtensionRunner
 from ...core.agent import Agent
 from ...core.runner import Runner, RunOptions, SessionContext
+from ...infra import OpenAIProvider
 from ...messages import InMemoryMessages
-
 from ..harness import RecordingExecutor, TaskResult, TrackedProvider
 from ..metrics import Pricing, aggregate
 from ..report import (
@@ -37,14 +37,12 @@ from ..report import (
     save_results_json,
     write_results_csv,
 )
-
 from .tau_adapter import (
     DEFAULT_MAX_TURNS,
     WalleUserSimulationEnv,
     build_tau_tools,
     make_task_spec,
 )
-from tau_bench.types import Action
 
 DEFAULT_OUTDIR = Path(__file__).resolve().parent.parent / "report" / "tau"
 
@@ -174,7 +172,7 @@ async def run_tau_case(
             else:
                 # 无文本输出：只能是轮次耗尽（模型一直调工具）
                 break
-    except asyncio.TimeoutError:
+    except TimeoutError:
         error = "timeout after 900s"
     except Exception as e:
         error = f"{type(e).__name__}: {e}"

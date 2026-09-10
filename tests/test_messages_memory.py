@@ -1,8 +1,8 @@
 """InMemoryMessages 测试。"""
 import pytest
 
-from ..spec import UserMessage, SystemMessage, Usage
 from ..messages import InMemoryMessages
+from ..spec import SystemMessage, Usage, UserMessage
 
 
 @pytest.fixture

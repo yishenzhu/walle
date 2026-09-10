@@ -2,8 +2,8 @@
 
 import pytest
 
-from ..spec import Projection, UserMessage, Usage
-from ..messages import ProjectedMessages, InMemoryMessages, SQLiteMessages
+from ..messages import InMemoryMessages, ProjectedMessages, SQLiteMessages
+from ..spec import Projection, Usage, UserMessage
 
 
 def make_storage(kind, tmp_path=None):

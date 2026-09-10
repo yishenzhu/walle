@@ -1,8 +1,7 @@
-from typing import NamedTuple
-
 import logging
 from enum import StrEnum
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 from pydantic import BaseModel, Field

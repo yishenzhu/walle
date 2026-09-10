@@ -8,31 +8,27 @@
 
 import pytest
 
-from ..core import Agent, EventBus, Runner, RunOptions, SessionContext, ToolExecutor
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..messages import InMemoryMessages
-from ..spec import UserMessage
+from ..core import Agent, EventBus, Runner, SessionContext, ToolExecutor
 from ..infra import (
-    Tool,
-    AgentStartEvent,
     AgentEndEvent,
-    TurnStartEvent,
-    TurnEndEvent,
-    SessionStartEvent,
-    SessionEndEvent,
-    MessageStartEvent,
+    AgentStartEvent,
     MessageEndEvent,
+    MessageStartEvent,
+    SessionEndEvent,
+    SessionStartEvent,
+    Tool,
+    TurnEndEvent,
+    TurnStartEvent,
 )
-
+from ..messages import InMemoryMessages
 from .conftest import (
     FakeChannel,
     FakeCompletion,
     FakeMessage,
     FakeProvider,
-    FakeToolCall,
     FakeUsage,
 )
-
 
 # ── EventBus 单元 ──────────────────────────────────────
 

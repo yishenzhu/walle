@@ -6,18 +6,22 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..spec import Channel, ToolResult, ToolStart
 from ..conf import ToolConfig
 from ..infra import (
-    HookVerdict,
-    ToolExecutionStartEvent,
-    ToolExecutionEndEvent,
     TOOL_CALLS,
-    TOOL_ERRORS,
     TOOL_DURATION,
+    TOOL_ERRORS,
+    HookVerdict,
+    Job,
+    JobStatus,
+    SessionView,
+    Tool,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+    tool_context,
     tracer,
 )
-from ..infra import Job, JobStatus, SessionView, Tool, tool_context
+from ..spec import ToolResult, ToolStart
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +121,7 @@ class ToolExecutor:
             logger.debug(f"{name}: {elapsed_ms:.0f}ms")
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, result=result))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout = self._timeout_policy.resolve(name)
             logger.warning(f"{name}: timeout after {timeout}s")
             TOOL_ERRORS.add(1, attrs)

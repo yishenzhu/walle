@@ -1,7 +1,6 @@
 import asyncio
 
 from ..tools.builtin.defined import DefinedTool, ToolCodeError
-
 from .conftest import make_session
 
 
@@ -19,7 +18,7 @@ def test_create_missing_fn(tmp_path):
     code = "async def other(a: int) -> int:\n    \"\"\"other\"\"\"\n    return a\n"
     try:
         DefinedTool(tmp_path).create("add", code)
-        assert False, "应抛错"
+        raise AssertionError("应抛错")
     except ToolCodeError as e:
         assert "async def add" in str(e)
 
@@ -28,7 +27,7 @@ def test_create_missing_docstring(tmp_path):
     code = "async def add(a: int, b: int) -> int:\n    return a + b\n"
     try:
         DefinedTool(tmp_path).create("add", code)
-        assert False, "应抛错"
+        raise AssertionError("应抛错")
     except ToolCodeError as e:
         assert "docstring" in str(e)
 
@@ -36,7 +35,7 @@ def test_create_missing_docstring(tmp_path):
 def test_create_syntax_error(tmp_path):
     try:
         DefinedTool(tmp_path).create("add", "async def add(:\n")
-        assert False, "应抛错"
+        raise AssertionError("应抛错")
     except ToolCodeError as e:
         assert "语法错误" in str(e)
 

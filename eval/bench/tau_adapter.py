@@ -9,15 +9,14 @@
 
 import asyncio
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from openai import OpenAI
-
 from tau_bench.envs.base import Env
 from tau_bench.types import RESPOND_ACTION_NAME, Action
 
 from ...infra import Tool
-
 from ..spec import GroundTruth, TaskSpec
 
 logger = logging.getLogger(__name__)

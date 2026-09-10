@@ -7,9 +7,9 @@
 import asyncio
 import json
 import os
+import readline  # noqa: F401  # 副作用导入：启用 input() 的行编辑/历史
 import threading
 import uuid
-import readline
 
 from pydantic import TypeAdapter, ValidationError
 

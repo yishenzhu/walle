@@ -10,7 +10,6 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from ..spec import Channel, Approval as ApprovalService, ApprovalRsp
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
 from ..infra import (
     ExtensionAPI,
@@ -18,7 +17,8 @@ from ..infra import (
     ToolExecutionStartEvent,
     tool_context,
 )
-from ..spec import Approval as ApprovalService, ApprovalRsp
+from ..spec import Approval as ApprovalService
+from ..spec import ApprovalRsp, Channel
 
 
 class ArgMatch(BaseModel):
@@ -148,7 +148,7 @@ class TimeoutApprover:
             return await asyncio.wait_for(
                 self._inner.ask(tool_name, arguments, tool_call_id), self._timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ApprovalRsp(approved=False, reason=f"审批超时({self._timeout}s)")
 
 
