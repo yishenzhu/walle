@@ -5,11 +5,11 @@ define_tool/history/new_window，由 main 组装进扩展加载器随会话激�
 """
 
 from ...infra import ExtensionAPI, Tool
-from ...messages.tool import history, new_window
 from .ask_user import ask_user
 from .bash import bash
 from .defined import define_tool
 from .edit import edit
+from .history import history, new_window
 from .job import background, job_result
 from .read import read
 from .write import write

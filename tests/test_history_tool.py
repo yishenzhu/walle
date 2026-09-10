@@ -11,9 +11,8 @@ from ..messages import (
     ProjectedMessages,
     SQLiteMessages,
 )
-from ..messages.tool import history
 from ..spec import UserMessage
-
+from ..tools.builtin.history import history
 from .conftest import make_session
 
 

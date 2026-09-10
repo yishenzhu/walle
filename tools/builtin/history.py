@@ -1,7 +1,11 @@
-"""消息层工具：history（只读回源）+ new_window（模型主动硬切窗口）。"""
+"""消息层工具：history（只读回源）+ new_window（模型主动硬切窗口）。
 
-from ..infra import tool_context
-from ..spec import Projection, ToolMessage, UserMessage
+经 tool_context 拿会话视图（Messages/Projection 协议面），不依赖具体
+存储实现——故与其余内置工具同置 tools/builtin/。
+"""
+
+from ...infra import tool_context
+from ...spec import Projection, ToolMessage, UserMessage
 
 MAX_LIMIT = 50
 DEFAULT_LIMIT = 20

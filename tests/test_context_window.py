@@ -13,7 +13,6 @@ from ..messages import (
     SQLiteProjectionStore,
 )
 from ..spec import UserMessage
-
 from .conftest import make_session
 
 
@@ -76,7 +75,7 @@ class TestNewWindowTool:
         return proj
 
     async def test_hard_cuts_to_current_turn(self):
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         proj = await self._projected()
         token = tool_context.set(make_session(history=proj))
@@ -92,7 +91,7 @@ class TestNewWindowTool:
 
     async def test_no_notes_no_problem(self):
         """工具只做窗口切换，不强制笔记文件（模型自律由提示词引导）。"""
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         proj = ProjectedMessages(InMemoryMessages())
         for i in range(3):
@@ -106,7 +105,7 @@ class TestNewWindowTool:
 
     async def test_single_turn_no_reset(self):
         """只有一轮时没有可折叠的旧窗口，工具提示已是最新边界。"""
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         proj = ProjectedMessages(InMemoryMessages())
         await proj.add([UserMessage(content="u0")])
@@ -118,7 +117,7 @@ class TestNewWindowTool:
         assert "window reset" not in out
 
     async def test_no_context_returns_error(self):
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         token = tool_context.set(make_session())
         try:
@@ -128,7 +127,7 @@ class TestNewWindowTool:
 
     async def test_non_projected_history_errors(self):
         """裸存储（无 Projection）无法硬切，工具报错而非崩溃。"""
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         token = tool_context.set(make_session(history=InMemoryMessages()))
         try:
@@ -138,7 +137,7 @@ class TestNewWindowTool:
 
     async def test_fold_only_advances(self):
         """重复调用不回退切点：第二次硬切不再前进则提示已是最新。"""
-        from ..messages.tool import new_window
+        from ..tools.builtin.history import new_window
 
         proj = await self._projected(with_turns=6)
         token = tool_context.set(make_session(history=proj))
