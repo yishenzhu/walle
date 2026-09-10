@@ -23,3 +23,6 @@ datasets/
 
 # MCP server 配置（可含明文 API key / token，一律不入库；参照 .agent/mcp.yaml.example）
 .agent/mcp.yaml
+
+# graphify 代码图谱产物（graph.html / graph.json / 缓存，均为可再生成的构建产物）
+graphify-out/
