@@ -7,7 +7,6 @@
 4. discover 目录发现 + 启停过滤
 """
 
-import pytest
 
 from ..core import (
     EventBus,
@@ -17,7 +16,7 @@ from ..core import (
     ExtensionState,
     HookVerdict,
 )
-from ..infra import AgentStartEvent, ToolExecutionStartEvent, Tool
+from ..infra import AgentStartEvent, Tool, ToolExecutionStartEvent
 
 
 def make_tool(name: str) -> Tool:
@@ -111,9 +110,9 @@ async def test_activate_duplicate_tool_later_overrides():
 async def test_extension_tool_blocked_by_hook_end_to_end():
     """M1+M2+M4 全链路：扩展注册工具+钩子，经共享 bus，Runner 拦下工具执行。"""
     from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-    from ..messages import InMemoryMessages
     from ..core import Agent, Runner, SessionContext, ToolExecutor
     from ..core.agent import ToolFilter
+    from ..messages import InMemoryMessages
     from .conftest import (
         FakeChannel,
         FakeCompletion,
@@ -123,66 +122,61 @@ async def test_extension_tool_blocked_by_hook_end_to_end():
     )
 
     provider = FakeProvider()
-    FakeProvider.set_default(provider)
-    try:
-        bus = EventBus()
-        blocked: dict = {}
+    bus = EventBus()
+    blocked: dict = {}
 
-        async def guard(evt):
-            blocked["name"] = evt.tool_name
-            return HookVerdict(block="guard 拦截")  # 拦下扩展工具
+    async def guard(evt):
+        blocked["name"] = evt.tool_name
+        return HookVerdict(block="guard 拦截")  # 拦下扩展工具
 
-        bus.on(ToolExecutionStartEvent, guard)
+    bus.on(ToolExecutionStartEvent, guard)
 
-        loader = ExtensionRegistry()
-        ext_runner = ExtensionRunner(bus)
+    loader = ExtensionRegistry()
+    ext_runner = ExtensionRunner(bus)
 
-        async def ext(api: ExtensionAPI):
-            api.register_tool(make_tool("guard_tool"))  # 扩展持有的工具
+    async def ext(api: ExtensionAPI):
+        api.register_tool(make_tool("guard_tool"))  # 扩展持有的工具
 
-        loader.add("guard", ext)
-        await loader.load()
-        ext_runner.activate(loader.extensions[0])
-        assert ext_runner.active_names == {"guard"}
+    loader.add("guard", ext)
+    await loader.load()
+    ext_runner.activate(loader.extensions[0])
+    assert ext_runner.active_names == {"guard"}
 
-        # 会话上下文携带扩展 runner：工具源与技能清单都从它来
-        agent = Agent(
-            instruction="helpful",
-            tool_filter=ToolFilter(allow=["*"]),
-        )
+    # 会话上下文携带扩展 runner：工具源与技能清单都从它来
+    agent = Agent(
+        instruction="helpful",
+        tool_filter=ToolFilter(allow=["*"]),
+    )
 
-        runner = Runner(
-            executor=ToolExecutor(
-                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-            ),
-        )
+    runner = Runner(
+        executor=ToolExecutor(
+            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
+        ),
+    )
 
-        provider.client.chat.completions.set_responses(
-            FakeCompletion(
-                FakeMessage(
-                    tool_calls=[
-                        FakeToolCall(id="tc1", name="guard_tool", arguments="{}")
-                    ]
-                )
-            ),
-            FakeCompletion(FakeMessage(content="done")),
-        )
+    provider.client.chat.completions.set_responses(
+        FakeCompletion(
+            FakeMessage(
+                tool_calls=[FakeToolCall(id="tc1", name="guard_tool", arguments="{}")]
+            )
+        ),
+        FakeCompletion(FakeMessage(content="done")),
+    )
 
-        result = await runner.run(
-            agent,
-            "use guard",
-            env=SessionContext(
-                channel=FakeChannel(),
-                history=InMemoryMessages(),
-                ext_runner=ext_runner,
-                bus=bus,
-            ),
-        )
+    result = await runner.run(
+        agent,
+        "use guard",
+        env=SessionContext(
+            provider=provider,
+            channel=FakeChannel(),
+            history=InMemoryMessages(),
+            ext_runner=ext_runner,
+            bus=bus,
+        ),
+    )
 
-        assert blocked["name"] == "guard_tool"  # before 钩子触发了
-        assert result.output == "done"  # 工具被拦下后流程继续
-    finally:
-        FakeProvider.set_default(None)
+    assert blocked["name"] == "guard_tool"  # before 钩子触发了
+    assert result.output == "done"  # 工具被拦下后流程继续
 
 
 # ── discover：目录扫描 + 入口契约 + 启停过滤 ──────────────
@@ -265,7 +259,7 @@ async def test_builtin_extensions_register_via_extension_system(tmp_path, monkey
     """内置工具作为引导扩展经 loader+runner 注册，落在会话工具表。"""
     from ..infra import Tool
     from ..tools import mcp as mcp_mod
-    from ..tools.builtin import ask_user, bash, background, job_result, read
+    from ..tools.builtin import ask_user, background, bash, job_result, read
 
     # 隔离 skills / mcp 读取目录，避免真实 .agent 干扰
     monkeypatch.setattr(mcp_mod, "DOT_AGENT", tmp_path)

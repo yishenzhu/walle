@@ -15,12 +15,10 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Runner, Session, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
-from ..infra import OpenAIProvider
-from ..messages import InMemoryMessages
-from ..spec import ToolStart, ToolResult
 from ..infra import JobStatus, Tool, tool_context
+from ..messages import InMemoryMessages, build_history
+from ..spec import ToolResult, ToolStart
 from ..tools.builtin import background, job_result
-
 from .conftest import (
     FakeChannel,
     FakeCompletion,
@@ -225,6 +223,7 @@ class TestRunnerIntegration:
         runner = Runner(executor=executor)
         channel = FakeChannel()
         env = SessionContext(
+            provider=provider,
             channel=channel,
             history=InMemoryMessages(),
             jobs={},
@@ -284,6 +283,7 @@ class TestRunnerIntegration:
         executor = allow_executor()
         runner = Runner(executor=executor)
         env = SessionContext(
+            provider=provider,
             channel=FakeChannel(),
             history=InMemoryMessages(),
             jobs={},
@@ -343,10 +343,10 @@ class TestSessionCloseCancels:
     async def test_session_close_cancels_pending_jobs(self, tmp_path):
         s = Session(
             session_id="jobs-1",
+            history=build_history("sqlite", str(tmp_path / "s.db"), "jobs-1"),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            db_path=str(tmp_path / "s.db"),
         )
         # Session 不暴露执行器——close 取消验证用独立 executor 派发即可
         executor = ToolExecutor(

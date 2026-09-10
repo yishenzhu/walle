@@ -1,14 +1,14 @@
 import asyncio
 import logging
 
+from .channel.cli import CLIChannel
 from .conf import Config
-from .infra import setup_logger, setup_telemetry, OpenAIProvider
 from .core import (
     ExtensionRegistry,
     SessionRegistry,
 )
-from .channel.cli import CLIChannel
-from .tools import MCPRegistry, Approval, Sandbox
+from .infra import OpenAIProvider, setup_logger, setup_telemetry
+from .tools import Approval, MCPRegistry, Sandbox
 from .tools.builtin.extension import builtin_ext
 from .tools.skill import Skill
 
@@ -24,6 +24,8 @@ async def main() -> None:
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
     OpenAIProvider.load_env()
+    # 进程默认模型：装配根构造一次并注入注册表（会话无自带 model 配置时沿用）
+    provider = OpenAIProvider.get_default()
 
     # 进程级共享 MCP 客户端：连接一次，组装成"mcp"扩展进扩展池
     mcp = MCPRegistry()
@@ -51,6 +53,7 @@ async def main() -> None:
     sessions = SessionRegistry(
         tool_config=conf.tool,
         extensions=loaded,
+        provider=provider,
         storage=conf.session.storage,
         db_path=conf.session.db_path,
     )

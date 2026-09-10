@@ -7,6 +7,7 @@ from typing import Any
 
 import frontmatter
 from pydantic import BaseModel, Field, model_validator
+
 from ..conf import DOT_AGENT
 from ..infra import Skill, Tool
 
@@ -147,16 +148,20 @@ class Agent(BaseModel):
 
         async def fn(input: str) -> str:
             from .runner import Runner, SessionContext
-            from ..messages import InMemoryMessages
 
+            if env.history_factory is None:
+                raise RuntimeError(
+                    "SessionContext.history_factory is required to dispatch subagents"
+                )
             child = SessionContext(
-                history=InMemoryMessages(),  # 子 agent 独立历史，不继承父对话
+                history=env.history_factory(),  # 子 agent 独立历史，不继承父对话
                 provider=env.provider,
                 ext_runner=env.ext_runner,
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,
                 bus=env.bus,  # 继承总线：治理钩子（审批/preflight）不绕过
+                history_factory=env.history_factory,
             )
             # 独立 task：子 run 对 tool_context 的写入不泄漏到父的同批工具调用
             result = await asyncio.create_task(Runner().run(agent, input, env=child))

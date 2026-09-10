@@ -1,41 +1,47 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from pydantic import BaseModel
 from typing import Any
 
-from .agent import Agent, Handoff
-from .executor import ToolExecutor
-from ..messages import InMemoryMessages
-from ..spec import Channel, Messages
+from pydantic import BaseModel
+
 from ..infra import (
-    EventBus,
-    ExtensionRunner,
-    Job,
-    OpenAIProvider,
-    Tool,
-    tool_context,
-    tracer,
-    AgentStartEvent,
-    AgentEndEvent,
-    SessionStartEvent,
-    SessionEndEvent,
-    TurnStartEvent,
-    TurnEndEvent,
-    MessageStartEvent,
-    MessageDeltaEvent,
-    MessageEndEvent,
     AGENT_ITERATIONS,
     HANDOFF,
+    AgentEndEvent,
+    AgentStartEvent,
+    EventBus,
+    MessageDeltaEvent,
+    MessageEndEvent,
+    MessageStartEvent,
+    SessionEndEvent,
+    SessionStartEvent,
+    Tool,
+    TurnEndEvent,
+    TurnStartEvent,
+    tool_context,
+    tracer,
 )
 from ..spec import (
+    LLM,
     AssistantMessage,
+    Channel,
+    Job,
+    Messages,
     SystemMessage,
     ToolMessage,
     Usage,
     UserMessage,
-    ToolResult,
 )
+from ..spec import (
+    EventBus as EventBusProtocol,
+)
+from ..spec import (
+    ToolTable as ToolTableProtocol,
+)
+from .agent import Agent, Handoff
+from .executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -61,15 +67,16 @@ class SessionContext:
     """
 
     history: Messages  # 会话历史（必填）
-    provider: OpenAIProvider = None  # 模型接入（None 用 Runner 默认）
+    provider: LLM | None = None  # 模型接入（协议面；装配根注入，见 Runner 注释）
     channel: Channel = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    ext_runner: ExtensionRunner | None = None  # 会话扩展激活层（工具可动态注册）
+    ext_runner: ToolTableProtocol | None = None  # 会话工具表（工具可动态注册）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
-    bus: EventBus | None = None  # 会话事件总线（None 时 run 内现造）
+    bus: EventBusProtocol | None = None  # 会话事件总线（None 时 run 内现造，仅测试用）
+    history_factory: Callable[[], Messages] | None = None  # 子 agent 隔离历史来源（装配注入）
 
 
 class RunResult(BaseModel):
@@ -100,11 +107,13 @@ class Runner:
         options: RunOptions | None = None,
     ) -> RunResult:
         options = options or RunOptions()
-        provider = env.provider or OpenAIProvider.get_default()
+        provider = env.provider
         if provider is None:
-            raise RuntimeError("no invalid provider")
+            raise RuntimeError(
+                "SessionContext.provider is required - inject an LLM at assembly"
+            )
         history = env.history
-        bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造
+        bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造（仅测试）
         streamed = options.streamed
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
@@ -117,6 +126,20 @@ class Runner:
         with tracer.start_as_current_span("agent.run") as span:
             span.set_attribute("streamed", streamed)
             turn = 0
+
+            async def emit_turn_end() -> None:
+                """本轮结束事件（正常收尾与继续下一轮共用同一载荷）。"""
+                await bus.emit(
+                    TurnEndEvent(
+                        turn=turn,
+                        agent=agent.name,
+                        session_id=session_id,
+                        history=history,
+                        usage=usage,
+                        provider=provider,
+                    )
+                )
+
             while turn < options.max_turns:
                 turn += 1
                 span.set_attribute("agent.turn", turn)
@@ -170,16 +193,7 @@ class Runner:
                     AGENT_ITERATIONS.record(turn)
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
-                    await bus.emit(
-                        TurnEndEvent(
-                            turn=turn,
-                            agent=agent.name,
-                            session_id=session_id,
-                            history=history,
-                            usage=usage,
-                            provider=provider,
-                        )
-                    )
+                    await emit_turn_end()
                     await bus.emit(
                         MessageEndEvent(output=output, session_id=session_id)
                     )
@@ -193,16 +207,7 @@ class Runner:
                         completed_turns=turn,
                     )
 
-                await bus.emit(
-                    TurnEndEvent(
-                        turn=turn,
-                        agent=agent.name,
-                        session_id=session_id,
-                        history=history,
-                        usage=usage,
-                        provider=provider,
-                    )
-                )
+                await emit_turn_end()
 
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
@@ -226,7 +231,6 @@ class Runner:
         bus: EventBus,
     ):
         # 流式增量只发事件（MESSAGE_DELTA）——推给 channel 由监听者负责
-        tool_results: list = []
         async with provider.stream(
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
@@ -237,12 +241,7 @@ class Runner:
                     await bus.emit(MessageDeltaEvent(delta=event.delta))
 
             completion = await stream.get_final_completion()
-            message = completion.choices[0].message
-            if message.tool_calls:
-                async for tc_id, r in self._executor.execute_calls(
-                    message.tool_calls, tools
-                ):
-                    tool_results.append((tc_id, r))
+        message, tool_results = await self._collect_tool_results(completion, tools)
         return completion, message, tool_results
 
     async def _run_turn(
@@ -252,19 +251,23 @@ class Runner:
         tools: dict[str, Tool],
         provider,
     ):
-        tool_results: list = []
         completion = await provider.create(
             messages=[m.model_dump() for m in messages],  # type: ignore
             tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
             **self.model_params(agent),
         )
+        message, tool_results = await self._collect_tool_results(completion, tools)
+        return completion, message, tool_results
 
+    async def _collect_tool_results(self, completion, tools: dict[str, Tool]):
+        """解包 completion 并发执行本轮工具调用（流式/非流式共用）。"""
         message = completion.choices[0].message
+        tool_results: list = []
         if message.tool_calls:
             tool_results = [
                 r async for r in self._executor.execute_calls(message.tool_calls, tools)
             ]
-        return completion, message, tool_results
+        return message, tool_results
 
     def run_sync(
         self,

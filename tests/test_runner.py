@@ -5,17 +5,14 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, HookVerdict, Runner, RunOptions, RunResult, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
-from ..spec import UserMessage
-from ..messages import InMemoryMessages
 from ..infra import Tool
-
+from ..messages import InMemoryMessages, build_ephemeral_history
 from .conftest import (
     FakeChannel,
     FakeCompletion,
     FakeMessage,
     FakeProvider,
     FakeToolCall,
-    FakeUsage,
 )
 
 
@@ -46,14 +43,16 @@ def runner(allow_executor):
 
 
 @pytest.fixture
-def env(channel):
-    """默认会话环境：历史（每测试隔离）+ 会话扩展 runner（工具表）。"""
+def env(channel, provider):
+    """默认会话环境：模型（协议面注入）+ 历史（每测试隔离）+ 会话工具表。"""
     from ..core import EventBus, ExtensionRunner
 
     return SessionContext(
+        provider=provider,
         channel=channel,
         history=InMemoryMessages(),
         ext_runner=ExtensionRunner(EventBus()),
+        history_factory=build_ephemeral_history,
     )
 
 
@@ -345,6 +344,7 @@ class TestRunnerSubagent:
 
     async def test_subagent_env_inherits_capabilities(self, monkeypatch):
         """子环境继承 provider/cwd/ext_runner/agents，隔离历史与 channel，深度 +1。"""
+        from ..core import EventBus, ExtensionRunner
         from ..core import runner as runner_mod
 
         captured: list[SessionContext] = []
@@ -357,7 +357,7 @@ class TestRunnerSubagent:
         monkeypatch.setattr(runner_mod, "Runner", SpyRunner)
 
         helper = Agent(name="helper", description="helper")
-        ext = runner_mod.ExtensionRunner(runner_mod.EventBus())
+        ext = ExtensionRunner(EventBus())
         parent = SessionContext(
             history=InMemoryMessages(),
             provider="fake-provider",
@@ -366,6 +366,7 @@ class TestRunnerSubagent:
             cwd="/tmp/proj",
             agents={"helper": helper},
             depth=2,
+            history_factory=build_ephemeral_history,
         )
 
         tool = helper.as_tool(parent)
@@ -478,23 +479,16 @@ class TestRunnerBuildTools:
 
 
 class TestRunnerNoProvider:
-    """无 Provider 时 run 应报错（默认 provider 缺失）。"""
+    """无 Provider 时 run 应报错（provider 必须由装配根注入，无全局兜底）。"""
 
     async def test_raises_without_provider(self):
-        from ..infra import OpenAIProvider
-
-        backup = OpenAIProvider._default
-        OpenAIProvider._default = None
-        try:
-            agent = Agent(instruction="helpful")
-            with pytest.raises(RuntimeError, match="no invalid provider"):
-                await Runner().run(
-                    agent,
-                    "hi",
-                    env=SessionContext(history=InMemoryMessages()),
-                )
-        finally:
-            OpenAIProvider._default = backup
+        agent = Agent(instruction="helpful")
+        with pytest.raises(RuntimeError, match="provider is required"):
+            await Runner().run(
+                agent,
+                "hi",
+                env=SessionContext(history=InMemoryMessages()),
+            )
 
 
 class TestRunnerToolHooks:

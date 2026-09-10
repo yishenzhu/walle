@@ -2,12 +2,16 @@
 
 import pytest
 
-from ..core import Agent, Session, SessionRegistry
-from ..infra import MessageDeltaEvent, MessageEndEvent, AgentStartEvent
-from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
+from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
+from ..core import Session, SessionRegistry
+from ..infra import AgentStartEvent, MessageDeltaEvent, MessageEndEvent
+from ..messages import (
+    InMemoryMessages,
+    ProjectedMessages,
+    SQLiteMessages,
+    build_history,
+)
 from ..spec import ModelConfig, UserMessage
-from ..messages import SQLiteMessages, InMemoryMessages, ProjectedMessages
-
 from .conftest import FakeChannel, FakeProvider
 
 
@@ -15,12 +19,11 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
     """构造一个 Session（agent 由内部按名加载 .agent/agents/default.md）。"""
     return Session(
         session_id=session_id,
+        history=build_history(storage, db_path, session_id),
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
         transport=transport or FakeChannel(),
-        storage=storage,
-        db_path=db_path,
     )
 
 
@@ -164,8 +167,8 @@ class TestSessionRegistry:
 class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
         """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
+        from ..core import ExtensionAPI, ExtensionRegistry
         from ..spec import UserInput
-        from ..core import ExtensionAPI, ExtensionRegistry, Extension
 
         ch = FakeChannel()
         # 构造一个注册了 /ping 命令的扩展声明，激活进会话
@@ -187,13 +190,12 @@ class TestSessionCommandDispatch:
 
         s = Session(
             session_id="cmd-1",
+            history=build_history("memory", str(tmp_path / "s.db"), "cmd-1"),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
             extensions=[ext],
             transport=ch,
-            storage="memory",
-            db_path=str(tmp_path / "s.db"),
         )
 
         # 命中命令：无 provider 也正常（不经 runner），回复被推送
@@ -206,8 +208,8 @@ class TestSessionCommandDispatch:
 
     async def test_silent_command_no_push(self, tmp_path):
         """静默命令（handler 返回 None）：命中但无任何推送。"""
-        from ..spec import UserInput
         from ..core import ExtensionAPI, ExtensionRegistry
+        from ..spec import UserInput
 
         ch = FakeChannel()
         loader = ExtensionRegistry()
@@ -223,13 +225,12 @@ class TestSessionCommandDispatch:
 
         s = Session(
             session_id="cmd-2",
+            history=build_history("memory", str(tmp_path / "s.db"), "cmd-2"),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
             extensions=[loader.extensions[0]],
             transport=ch,
-            storage="memory",
-            db_path=str(tmp_path / "s.db"),
         )
         try:
             await s.handle(UserInput(content="/noop"))
@@ -309,12 +310,11 @@ class TestSessionStreamForward:
     def _session(self, tmp_path, ch: FakeChannel) -> Session:
         return Session(
             session_id="stream-1",
+            history=build_history("memory", str(tmp_path / "s.db"), "stream-1"),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
             transport=ch,
-            storage="memory",
-            db_path=str(tmp_path / "s.db"),
         )
 
     async def test_delta_and_end_forwarded_to_transport(self, tmp_path):

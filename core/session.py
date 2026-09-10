@@ -5,6 +5,9 @@
 Extension)跨会话共享，但"激活到哪个会话"由本会话的 ExtensionRunner 决定
 ——不同会话可激活不同扩展组合。
 
+依赖全部由装配根注入（messages / provider / extensions），Session 不自行
+new 具体实现——换后端或测试替换替身都无需改本模块。
+
 会话能力与状态的统一访问点是 context(SessionContext)：channel（attach/
 detach 切换）、jobs（后台作业表）、ext_runner（工具/技能源）都在其上。
 
@@ -14,32 +17,31 @@ messages（状态跨连接存活，供重连恢复）；真正销毁走 close()�
 
 import asyncio
 import time
-from typing import Any
 
-from .agent import Agent
-from .runner import Runner, RunOptions, SessionContext
-from ..spec import Channel, SessionConn
 from ..conf import ToolConfig
 from ..infra import (
     CommandContext,
     EventBus,
     Extension,
-    ExtensionRegistry,
     ExtensionRunner,
-    Job,
     MessageDeltaEvent,
     MessageEndEvent,
     OpenAIProvider,
 )
-from ..messages import (
+from ..messages import build_ephemeral_history, build_history
+from ..spec import (
+    LLM,
+    Channel,
+    Delta,
+    DeltaEnd,
+    Job,
     Messages,
-    InMemoryMessages,
-    SQLiteMessages,
-    ProjectedMessages,
-    SQLiteProjectionStore,
+    SessionConn,
+    UserInput,
 )
-from ..spec import Delta, DeltaEnd, UserInput
+from .agent import Agent
 from .executor import ToolExecutor
+from .runner import Runner, RunOptions, SessionContext
 
 
 class Session:
@@ -53,12 +55,11 @@ class Session:
     def __init__(
         self,
         session_id: str,
+        history: Messages,
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
         transport: Channel | None = None,
-        provider: OpenAIProvider | None = None,
-        storage: str = "sqlite",
-        db_path: str = "data/session.db",
+        provider: LLM | None = None,
         cwd: str | None = None,
         created_at: float | None = None,
     ) -> None:
@@ -86,19 +87,9 @@ class Session:
         # 注册表缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
         self._agents: dict[str, Agent] = {}
         self._agent = self._build_agent()
+        # 依赖由装配根注入：模型（协议面）与会话历史（已包投影视图）
         self._provider = provider
-        # 会话状态：历史（每会话隔离）。
-        # 对外 _history 一律包投影视图（模型读到投影，原文在底层全量保留）。
-        if storage == "memory":
-            self._history = ProjectedMessages(InMemoryMessages())
-        else:
-            # sqlite：底层原文持久化 + 投影切点落 meta 表，重启后懒恢复
-            self._history = ProjectedMessages(
-                SQLiteMessages(db_path=db_path, session_id=session_id),
-                projection_store=SQLiteProjectionStore(
-                    db_path=db_path, session_id=session_id
-                ),
-            )
+        self._history = history
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
         # transport：连接端点（attach/detach 切换），唯一 channel 事实源
@@ -120,6 +111,7 @@ class Session:
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
+            history_factory=build_ephemeral_history,  # 子 agent 隔离历史
         )
 
     def _build_agent(self, name: str | None = None) -> Agent:
@@ -204,15 +196,15 @@ class SessionRegistry:
     连接断开只 detach（保留状态），会话仍在 registry 中可被重连 attach；
     显式 remove/close 才真正销毁。附加元数据（创建时间等）供列表展示。
 
-    agent 由 Session 内部按名 Agent.load；本类只注入会话级零件
-    （tool_config / 扩展声明池 / provider / 存储），create() 构造并登记。
+    agent 由 Session 内部按名 Agent.load；本类是会话装配根：按配置构造
+    历史存储与模型（协议面），create() 组装并登记 Session。
     """
 
     def __init__(
         self,
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
-        provider: OpenAIProvider | None = None,
+        provider: LLM | None = None,
         storage: str = "sqlite",
         db_path: str = "data/session.db",
     ) -> None:
@@ -232,7 +224,8 @@ class SessionRegistry:
 
         ext_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
         （跳过加载失败的声明）。模型接入：客户端随握手提供则为本会话新建
-        provider（可指向不同端点），否则沿用进程默认。
+        provider（可指向不同端点），否则沿用进程默认。历史存储按 storage
+        配置构造（投影包装），与 provider 一并注入 Session。
         """
         extensions = self.active_ext(ext_names)
         model_cfg = conn.model
@@ -247,11 +240,10 @@ class SessionRegistry:
         )
         session = Session(
             session_id=conn.chat_id,
+            history=build_history(self._storage, self._db_path, conn.chat_id),
             tool_config=self._tool_config,
             extensions=extensions,
             provider=provider,
-            storage=self._storage,
-            db_path=self._db_path,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
         )
         session.attach(conn)
