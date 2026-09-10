@@ -6,8 +6,8 @@ from typing import Any
 
 from .agent import Agent, Handoff
 from .executor import ToolExecutor
-from ..channel import Channel
-from ..messages import Messages, InMemoryMessages
+from ..messages import InMemoryMessages
+from ..spec import Channel, Messages
 from ..infra import (
     EventBus,
     ExtensionRunner,
@@ -28,7 +28,7 @@ from ..infra import (
     AGENT_ITERATIONS,
     HANDOFF,
 )
-from ..schemas import (
+from ..spec import (
     AssistantMessage,
     SystemMessage,
     ToolMessage,

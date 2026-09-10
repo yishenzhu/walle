@@ -1,19 +1,18 @@
-"""跨层共享的结构化协议：只定义能力（interface），具体实现在各自模块。
+"""消息存储能力：历史读写 / 投影 / 切点持久化。
 
-放最底层 schemas，避免 infra/messages 相互 import 成环。统一从
-schemas 顶层导出（schemas/__init__），使用方不 import 本子模块。
+Runner 只依赖本协议面做读写，具体存储形态（内存/持久化/投影包装）
+由使用侧在装配时注入。
 """
 
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from .message import Message
-from .usage import Usage
+from ..schemas import Message, Usage
 
 
 @runtime_checkable
 class Messages(Protocol):
-    """消息存储：按时间追加、可读回会话历史（内存/SQLite/投影实现）。"""
+    """消息存储：按时间追加、可读回会话历史。"""
 
     async def get(self, limit: int | None = None) -> list[Message]: ...
 
@@ -26,22 +25,22 @@ class Messages(Protocol):
     async def close(self): ...
 
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:
-        """窗口查询：按追加顺序取 [offset, offset+limit) 的底层原文。"""
+        """窗口查询：按追加顺序取 [offset, offset+limit) 的原始消息。"""
 
     async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
         """关键词检索：词间 AND 子串匹配，返回 (绝对序号, 消息) 倒序最近 limit 条。
 
-        绝对序号 = 消息在会话中的位置（同 query 的 offset 寻址），命中后
+        debug: 绝对序号 = 消息在会话中的位置（同 query 的 offset 寻址），命中后
         可直接用该序号查看附近窗口。
         """
 
     async def count(self) -> int:
-        """底层原文总条数。"""
+        """原始消息总条数。"""
 
 
 @runtime_checkable
 class Projection(Protocol):
-    """可投影消息存储：底层原文全量保留，读取时按切点截断模型视野。"""
+    """可投影消息存储：原始消息全量保留，读取时按切点截断模型视野。"""
 
     @property
     def underlying(self) -> Messages:
@@ -66,16 +65,3 @@ class ProjectionStore(Protocol):
     async def save(self, cut: int) -> None: ...
 
     async def clear(self) -> None: ...
-
-
-@runtime_checkable
-class ExtRunner(Protocol):
-    """扩展激活层（ExtensionRunner 的能力面，工具执行期经 ctx.ext_runner 使用）。
-
-    协议只暴露工具表管理，供 define_tool 等动态注册；ExtensionRunner 是
-    实现。放最底层避免 infra/tool 与 infra/extension 相互 import 成环。
-    """
-
-    def register_tool(self, *tools) -> None: ...
-
-    def remove_tool(self, name: str) -> None: ...

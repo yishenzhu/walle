@@ -1,7 +1,7 @@
 """InMemoryMessages 测试。"""
 import pytest
 
-from ..schemas import UserMessage, SystemMessage, Usage
+from ..spec import UserMessage, SystemMessage, Usage
 from ..messages import InMemoryMessages
 
 

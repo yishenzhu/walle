@@ -2,7 +2,7 @@
 import pytest
 
 from walle.channel.cli import CLIClient
-from walle.schemas import Delta, DeltaEnd, Error, ToolStart
+from walle.spec import Delta, DeltaEnd, Error, ToolStart
 
 
 @pytest.mark.asyncio

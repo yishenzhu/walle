@@ -12,7 +12,7 @@ from ..messages import (
     SQLiteMessages,
 )
 from ..messages.tool import history
-from ..schemas import UserMessage
+from ..spec import UserMessage
 
 from .conftest import make_session
 
@@ -24,7 +24,7 @@ def make_storage(kind, tmp_path, session_id="s1"):
 
 
 def sample_messages():
-    from ..schemas import AssistantMessage, ToolMessage
+    from ..spec import AssistantMessage, ToolMessage
 
     return [
         UserMessage(content="把超时改成 30 秒"),

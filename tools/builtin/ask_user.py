@@ -1,5 +1,5 @@
 from ...infra import tool_context
-from ...schemas import Inquiry
+from ...spec import Inquiry
 
 
 async def ask_user(question: str, options: list[str] | None = None):

@@ -14,7 +14,7 @@ SQLite 行为一致。
 
 from collections.abc import Sequence
 
-from ..schemas import Message, Messages, Projection, ProjectionStore, Usage
+from ..spec import Message, Messages, Projection, ProjectionStore, Usage
 
 
 class ProjectedMessages(Projection):

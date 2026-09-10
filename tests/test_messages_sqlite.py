@@ -1,7 +1,7 @@
 """SQLiteMessages 测试。"""
 import pytest
 
-from ..schemas import UserMessage, SystemMessage, AssistantMessage
+from ..spec import UserMessage, SystemMessage, AssistantMessage
 from ..messages import SQLiteMessages
 
 

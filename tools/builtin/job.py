@@ -7,7 +7,7 @@ background 只登记 pending 作业到 ctx.jobs（不碰 executor）；本轮工
 import uuid
 
 from ...infra import Job, JobStatus, tool_context
-from ...schemas import JobDispatch, JobResult
+from ...spec import JobDispatch, JobResult
 
 
 async def background(tool_name: str, args: dict | None = None) -> JobDispatch:

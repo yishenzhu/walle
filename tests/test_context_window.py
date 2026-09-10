@@ -12,7 +12,7 @@ from ..messages import (
     SQLiteMessages,
     SQLiteProjectionStore,
 )
-from ..schemas import UserMessage
+from ..spec import UserMessage
 
 from .conftest import make_session
 

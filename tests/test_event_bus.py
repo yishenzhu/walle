@@ -11,7 +11,7 @@ import pytest
 from ..core import Agent, EventBus, Runner, RunOptions, SessionContext, ToolExecutor
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..messages import InMemoryMessages
-from ..schemas import UserMessage
+from ..spec import UserMessage
 from ..infra import (
     Tool,
     AgentStartEvent,

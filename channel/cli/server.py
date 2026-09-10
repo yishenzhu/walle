@@ -13,8 +13,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ...schemas import ModelConfig, NotificationUnion, ServiceUnion, UserInput, Error
-from ..protocol import Sessions
+from ...spec import ModelConfig, NotificationUnion, ServiceUnion, UserInput, Error, Sessions
 
 logger = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from ..channel import Channel
+from ..spec import Channel, Approval as ApprovalService, ApprovalRsp
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule
 from ..infra import (
     ExtensionAPI,
@@ -18,7 +18,7 @@ from ..infra import (
     ToolExecutionStartEvent,
     tool_context,
 )
-from ..schemas import Approval as ApprovalService, ApprovalRsp
+from ..spec import Approval as ApprovalService, ApprovalRsp
 
 
 class ArgMatch(BaseModel):

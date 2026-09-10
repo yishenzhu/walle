@@ -13,7 +13,7 @@ import readline
 
 from pydantic import TypeAdapter, ValidationError
 
-from ...schemas import (
+from ...spec import (
     Approval,
     Delta,
     DeltaEnd,

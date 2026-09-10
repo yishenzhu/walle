@@ -7,12 +7,6 @@ from .message import (
     MessageAdapter,
 )
 from .usage import Usage
-from .protocols import (
-    Messages,
-    Projection,
-    ProjectionStore,
-    ExtRunner,
-)
 from .events import (
     Notification,
     Delta,
@@ -30,7 +24,12 @@ from .events import (
     JobResult,
 )
 from .channel import (
+    SessionConn,
     ModelConfig,
     UserInput,
     ApprovalRsp,
+)
+from .diagnostics import (
+    DiagnosticType,
+    ResourceDiagnostic,
 )

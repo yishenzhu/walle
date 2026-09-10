@@ -1,165 +1,141 @@
-# 运行时架构：会话组装与上下文传递
+# 运行时架构：协议驱动分层（Protocol-First Layering）
 
-walle 的运行时模型：**进程共享声明（扩展/MCP），会话自持运行时**。
-本文界定核心类职责与内部变量的传递边界，避免通道多份持有、职责漂移。
+walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时"**；跨层只依赖**能力协议**，
+具体实现由**装配根**（main / SessionRegistry）注入，避免具体类型跨层牵扯。
 
-## 1. 核心类一览
+本文界定分层、能力协议清单、装配唯一原则与已知待收敛耦合清单。
 
-| 类 | 层级 | 定位 | 生命周期 |
+## 1. 核心原则
+
+1. **能力面开协议，不使用具体类** —— 跨层调用只对着 `Protocol`（能力接口），不 import 具体实现类。
+
+   分层按"类型在边界上扮演的角色"判定，而非"是不是具体类"：
+
+   | 类别 | 内容 | 位置 | 协议能否引用 |
+   |---|---|---|---|
+   | 能力/操作 | 可被调用方依赖的操作契约 | `protocol/`（Protocol） | 本身是协议 |
+   | 领域数据 | 跨边界流动的**值类型**（无后端行为：`Message`/`Usage`/`ModelConfig`…） | `schemas/` | ✅ 应当引用 |
+   | 具体实现 | 有状态/后端的实现类（`SQLiteMessages`/`CLIChannel`…） | 各自模块 | ❌ 禁止引用 |
+
+   判定：协议方法/返回里出现的是"数据怎么流过"→ 数据模型，合法；出现的是"哪个实现来做"→ 越界。
+   `Message` 是领域数据模型，故 `Messages.get() -> list[Message]` 不违反"不依赖具体类"。
+2. **协议单层托底** —— 所有跨层能力协议统一收在根目录 `protocol/`（按能力拆文件：
+   channel / messages / runtime）。协议只声明能力面，不提及任何具体实现。
+   `channel/protocol.py`、`schemas/protocols.py` 已迁入，各自模块不再定义跨层 Protocol。
+3. **装配根是唯一 new 具体类的地方** —— `main.py` 组合扩展池 / provider；
+   `SessionRegistry.create` 组合 Session 具体实现。除此之外的模块代码不得
+   `new` 别的模块的具体实现。
+4. **核心引擎只依赖协议** —— Runner 依赖 `Messages` / `LLM` / `SessionView`；
+   不依赖 `OpenAIProvider`、`SQLiteMessages` 等具体实现（具体实现在装配时注入）。
+5. **工具只看视图面** —— 工具经 `tool_context -> SessionView` 拿能力，
+   绝不 import Session / SessionContext 具体类。
+
+## 2. 分层与依赖方向
+
+| 层 | 位置 | 职责 | 允许依赖 |
 |---|---|---|---|
-| `ExtensionRegistry` | infra | 进程级扩展**加载器**：add/discover → `load()` 产出 `Extension` 声明（tools/handlers/skills/commands） | 进程级一个 |
-| `ExtensionRunner` | infra | 会话级扩展**激活层**：把选中扩展落到本会话的 bus + 工具表 + 技能表 + 命令表 | **每会话一个** |
-| `Session` | core | 会话实体 = 运行时容器：组装 bus / executor / runner / ext_runner，持历史与作业 | 每连接一个 |
-| `Runner` | core | Agent 循环：多轮调 LLM → 工具执行 → handoff；只发事件不碰 transport | 每会话一个（Session 组装） |
-| `ToolExecutor` | core | 工具执行器：preflight 事件屏障 → 执行（超时）；**审批是扩展**（订阅 TOOL_EXECUTION_START），不内置 | 每会话一个 |
-| `SessionContext` | core | Session 每次 `run()` 传给 Runner 的**环境包**（history/channel/jobs/ext_runner/agents） | Session 持一份，随 attach 更新 |
-| `ToolContext` | infra | **工具执行期上下文**：持有 SessionContext（满足 `SessionView`）+ 本轮 bus，工具/审批扩展/钩子原地 `get()` | runner 每轮构造一次 |
-| `CommandContext` | infra | **命令执行上下文**：暴露 channel/bus，用法由命令自决 | handle 每次构造 |
+| **协议面** | `schemas/` | 数据模型（Messages/Services/Usage）+ **全部跨层能力协议** | 自身，无业务依赖 |
+| 基建实现 | `infra/` | EventBus、Tool、Provider(实现)、诊断、遥测、日志 | → schemas |
+| 消息实现 | `messages/` | InMemory / SQLite / Projected（Messages 协议实现） | → schemas |
+| 执行引擎 | `core/` | Runner / ToolExecutor / Session(装配根) / Agent | → schemas |
+| 工具/扩展 | `tools/` | 内置工具、mcp、skill、approval、sandbox（扩展声明） | → schemas |
+| 传输通道 | `channel/` | CLI server/client，实现 `Channel`/会话接入 | → schemas |
+| **装配根** | `main.py` | 唯一组装进程级具体实现（provider/扩展表） | → schemas |
 
-## 2. 会话装配（Session 私有件）
+> 依赖方向总则：**协议面最底、装配根最顶；一切跨层引用都要指向协议面，而非实现类。**
+> 一个模块若需要借用别的模块的能力，就在 `schemas/protocols.py` 声明能力面，由装配根注入实现。
+
+## 3. 统一协议清单（根目录 `protocol/`，按能力模块拆分）
+
+全部跨层能力协议收进 `protocol/` 包：
+
+### 通道与交互（`protocol/channel.py`，移自 `channel/protocol.py`）
+- `Channel`（notify 广播 / call 点对点）—— 服务端与传输层的唯一稳定契约。
+- `Session`（会话管理能力：get/create/register/list）—— channel 只依赖它，不依赖 core 实现类。
+- `SessionConn`（会话身份：chat_id / cwd / model）。
+
+### 会话视图（工具执行期能力，移自 `infra/tool.py`）
+- `SessionView`：工具可见面（channel / jobs / cwd / history / ext_runner / bus）。
+  `tool_context: ContextVar[SessionView | None]` 保持；实现由装配注入，工具不依赖 Session 具体类。
+
+### 历史存储协议（既有）
+- `Messages`（get/add/clear/pop/query/search/count）
+- `Projection`（underlying + set_projection 投影能力）
+- `ProjectionStore`（切点持久化）
+
+### 模型能力（新增，收敛 provider 耦合）
+- `LLM` 协议：`create` / `stream` / `set_model` / `model`。
+  Runner 只依赖 `LLM`；`OpenAIProvider` 作为其实现之一，由装配注入。
+
+### 扩展激活（既有）
+- `ExtensionRegistrar`（register_tool / remove_tool）—— 工具/define_tool 的注册通道。
+
+## 4. 会话装配（Session 私有件）
 
 ```
 Session
 ├─ _bus            EventBus        # 会话私有事件总线（唯一事实源）
-├─ _agent_runner   Runner          # 构造时注入 _bus + 按会话新建的 ToolExecutor
-├─ _ext_runner     ExtensionRunner # 构造时注入 _bus；activate() 选中扩展
+├─ _agent_runner   Runner          # 构造注入 _bus + 按会话新建的 ToolExecutor
+├─ _ext_runner     ExtensionRunner # 构造注入 _bus；activate() 选中扩展
 ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
-├─ _provider       OpenAIProvider
-├─ _messages       Messages        # 历史（SQLite/内存）
+├─ _provider       LLM             # 模型实现（装配注入，Runner 只见协议）
+├─ _messages       Messages        # 历史（SQLite/内存/投影，协议实现）
 ├─ _jobs           dict[str, Job]  # 后台作业表（唯一事实源）
-├─ _transport      Channel|None    # 连接端点（attach/detach 切换，唯一 channel 事实源）
-└─ context ──────▶ property：每次现造 SessionContext 视图
-                   （channel=_transport / jobs=_jobs / ext_runner=_ext_runner…），
-                   对外访问会话能力的统一入口，也是 runner.run 的 env
+├─ _transport      Channel|None    # 连接端点（attach/detach 切换）
+└─ context ──────▶ property：现造 SessionContextEnv 视图（对外访问统一入口）
 ```
 
-各零件持有**同一 `_bus` 引用**：Session 的事件总线 = Runner 的事件总线 =
-ExtensionRunner 激活落点 = 每轮 ToolContext.bus = 命令 CommandContext.bus。
-**一个会话只有一条事件总线**，事件隔离天然成立。
+各零件持有**同一 `_bus` 引用**：Runner / ExtensionRunner / `tool_context` / CommandContext
+共用会话唯一总线。**一个会话只有一条事件总线。**
 
-## 3. 各上下文边界的判定
+## 5. 各上下文边界
 
-| 上下文 | 给谁 | 使命 | 何时构造/注入 |
+| 上下文 | 给谁 | 使命 | 构造/注入 |
 |---|---|---|---|
-| `SessionContext`(context/env) | Runner.run、外部访问 | 跨**轮**的会话状态（history/jobs/工具源） | Session property，每次访问现造视图（channel 取当前 _transport） |
-| `ToolContext`(tool_context) | 工具 / 审批扩展 / 钩子 | 跨**单轮内所有工具执行**的会话能力（转发 session + 本轮 bus） | runner 每轮构造并 `set`；后台作业 run_job 内自设 |
-| `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次构造（channel 取 context.channel） |
+| `SessionEnv`(context) | Runner.run、外部访问 | 跨**轮**会话状态（history/jobs/工具源） | Session property 现造（channel 取当前 _transport） |
+| `tool_view` ContextVar | 工具 / 审批扩展 / preflight | 跨单轮所有工具执行的会话能力（经 `tool_context` 注入） | runner 每轮 set；后台任务 run_job 内自设 |
+| `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次现造 |
 
-**判定规则**：
-- 会话生命周期级状态（历史/作业/扩展激活）→ `SessionContext`
-- 工具执行级能力（channel 推送、动态注册工具、作业表）→ `ToolContext`（经 ContextVar，**不随参数传**）
-- 命令是一次性动作 → `CommandContext`（每次现造，attach 切换天然正确）
+> `SessionView`（协议）与 `tool_context` ContextVar 承载运行时注入的会话对象；
+> Runner 内部用 `SessionEnv` 具体 dataclass，但**工具与扩展只见 `SessionView` 协议面**，
+> 不 import 具体实现类。
 
-## 4. 变量传递边界（消除双持有/镜像）
+## 6. 变量传递边界（单一事实源）
 
-### bus：单一事实源在 Session
-```
-Session._bus ──注入──▶ Runner._bus
-            ──注入──▶ ExtensionRunner._bus
-每轮：ctx.bus = self._bus（runner 内）→ executor 经 tool_context.get().bus
-命令：CommandContext.bus = Session._bus
-```
-注意：`Runner` 的默认构造会**自建 bus**（独立运行/测试）。凡经 Session 使用的
-Runner 必须显式注入会话 bus，否则扩展事件与工具钩子会落到两条总线上。
+- **bus**：唯一事实源在 Session；Runner 默认构造用 `self._bus`（独立测试），经 Session 使用必须注入会话 bus。
+- **channel**：唯一事实源 `Session._transport`；`context.channel` 现造视图；工具/命令各自经 ContextVar/CommandContext 取。
+- **jobs**：唯一事实源 Session._jobs（工具写 pending → runner 拉起 → job_result 读）。
+- **工具表**：事实源在 ExtensionRunner（activate / define_tool 动态注册实时反映到下一轮）；Agent 不持有工具源。
 
-### channel：唯一事实源 Session._transport（内部私有件）
-```
-Session._transport ──context 视图──▶ context.channel（每次现造，供外部/runner）
-                   ──每轮──────────▶ ToolContext.channel（executor 推送/审批）
-                   ──每次命令─────▶ CommandContext.channel
-```
-attach/detach 只改 `_transport` 一处；Session 内部（Delta 转发/handle）直接
-用私有件，不绕 context。对外读 channel 统一经 `session.context.channel`。
-
-### jobs：唯一事实源 Session._jobs（context 视图引用同一 dict）
-```
-Session._jobs ──context 视图──▶ context.jobs（外部读写同一 dict）
-              ──每轮引用──────▶ ToolContext.jobs（background 写入点）
-```
-作业表跨轮存活：background 工具写 pending → runner 每轮 `launch_pending`
-从 ctx 拉起 → run_job 写回结果 → job_result 读取。
-
-### 工具表：事实源是 ExtensionRunner
-```
-ExtensionRunner._tools ──activate/register_tool 写入
-                       ──all_tools()──▶ runner 每轮快照（dict 传 executor）
-```
-Agent **不持有工具**：`Agent.available_tools(source)` 只做 `tool_filter`
-过滤，源由 runner 每轮从 `env.ext_runner.all_tools()` 取。工具表随扩展激活
-/define_tool 动态注册实时反映到下一轮。
-
-### 工具执行期动态注册通道（define_tool）
-```
-SessionContext.ext_runner（Session 组装时放入 env，满足 ExtRunner 能力面）
-   └─ runner 每轮 ──▶ ToolContext.ext_runner（转发 session，同一实例）
-        └─ define_tool 经 tool_context.get().ext_runner.register_tool(tool) 就地注册
-```
-ToolContext 不依赖具体 ExtensionRunner——只依赖 `ExtRunner` 协议
-（schemas/protocols.py：register_tool/remove_tool），避免 infra/tool 与
-infra/extension 相互 import 成环。注册通道在 env 与每轮 ctx 各出现一次，
-是**同一实例**；不把注册通道放进 executor 构造参数。
-
-### 历史回源与工作笔记（history 工具 + .agent/note.md 文件）
-```
-ToolContext.history ──► Messages 协议（search/count/query，查底层原文，
-                        不经投影）── 供 history 工具回源折叠前的细节
-工作笔记 = 工作目录下普通文件 .agent/note.md（无专用存储/协议/注入）：
-模型用通用 read 读、edit 局部更新（todo/goal/决策用 md 结构组织）
-```
-history 工具定义在 messages/tool.py（消息层能力，不经工具注册链可直接
-复用）；new_window 同文件——模型维护好 note.md 后主动硬切窗口
-（折叠旧轮，投影只留当前轮）。ToolContext.history 直接转发
-SessionContext.history；笔记文件不经会话上下文（模型按需 read）。
-
-## 5. 一次输入的执行链（数据流）
-
-```
-CLIChannel.on_input
-  └─ Session.handle(UserInput)
-       ├─ dispatch(content, CommandContext(channel=_transport, bus=_bus))
-       │    ├─ 命中：命令 handler 自决（channel.notify 推送 / call 提问）
-       │    └─ 未命中 ↓
-       └─ Runner.run(agent, input, env=_make_env(), streamed=True)
-            loop turn:
-              1. _build_messages（history + instruction + 技能清单[经
-                 env.ext_runner.skills × agent.skills 白名单]）
-              2. tool_source = env.ext_runner.all_tools()
-                 tools = _build_tools(agent, tool_source, env)  # 过滤 + handoff/subagent
-              3. ctx = ToolContext(session=env, bus=self._bus)
-                 tool_context.set(ctx)          # 本轮统一注入一次
-                 # 工具视角别名：ctx.channel/jobs/cwd/history/ext 转发到 env
-              4. 有 tool_calls：
-                   execute_calls(tool_calls, tools)   # 并发，as_completed
-                     └─ execute_tool 内 tool_context.get() → ctx
-                          ├─ notify ToolStart（channel）
-                          ├─ bus.emit TOOL_EXECUTION_START（审批扩展在此
-                          │    判 deny/ask：ASK 经 ctx.channel 问用户）
-                          ├─ 工具 fn 执行（经 tool_context 可动态注册/提问）
-                          └─ bus.emit TOOL_EXECUTION_END（观测）
-              5. launch_pending(tools)：background 作业 create_task
-                 └─ run_job(job, tools, ctx) 新 task 开头 tool_context.set(ctx)
-              6. 无 tool_calls → break，发 MESSAGE_END
-```
-
-## 6. 事件流向（Runner 只发事件，推送归监听者）
+## 7. 事件流向（核心只发事件，推送归监听方）
 
 | 事件 | 生产者 | 消费者 |
 |---|---|---|
-| `MESSAGE_DELTA` | Runner 流式增量 | Session 监听 → transport.notify(Delta) |
-| `MESSAGE_END` | Runner（文本输出完成） | Session 监听 → transport.notify(DeltaEnd)（output 非 None 时） |
-| `TOOL_EXECUTION_START` | executor | 审批扩展（Approval）、guard 钩子（HookVerdict block/改写） |
-| `TOOL_EXECUTION_END` | executor | 观测型扩展（result/error/elapsed） |
-| `SESSION/AGENT/TURN/MESSAGE_START·END` | Runner | 观测 / 会话管理 |
+| `MESSAGE_DELTA` | Runner 流式增量 | Session → transport.notify(Delta) |
+| `MESSAGE_END` | Runner 文本完成 | Session → transport.notify(DeltaEnd)（output 非 None 时） |
+| `TOOL_EXECUTION_START` | executor | 审批扩展（Approval）、guard 钩子 |
+| `TOOL_EXECUTION_END` | executor | 观测型扩展 |
+| `SESSION/AGENT/TURN/MESSAGE_*` | Runner | 观测 / 会话管理 |
 
-约定：**核心循环不直接持有推送协议**（Delta/DeltaEnd 等 Notification 由
-监听方构造）；工具执行通知（ToolStart/ToolResult）目前在 executor 直发
-channel，与 TOOL_EXECUTION 事件并存——为已知待收敛点。
+> 核心循环不持有推送协议；工具执行通知（ToolStart/ToolResult）目前由 executor
+> 直发 channel，与 TOOL_EXECUTION 事件并存 —— 列为本轮待收敛点（见下）。
 
-## 7. 已知设计注意
+## 8. 待收敛耦合清单（后续实施 checkpoint）
 
-- `ToolContext` 由 ContextVar 承载，**只在工具执行窗口内有效**；runner 每轮
-  set 覆盖，后台作业（新 task）由 run_job 开头自设。不要假设它能跨轮存活。
-- 会话 bus 上的事件监听顺序 = 注册顺序：审批扩展在 main 组装中先于用户
-  guard 扩展注册，故审批先于 guard 表态。
-- 命令"命中即拦截"，不存在命中后放行给 agent 的路径（输入处理序：命令
-  优先于 agent）。
+| 现状耦合 | 目标 |
+|---|---|
+| `SessionView`（协议）在 `infra/tool.py`，且运行时注入的是具体 dataclass | 协议迁入 `schemas/protocols.py`；工具只见协议面 |
+| Runner 直接使用 `OpenAIProvider` 具体实现 | Runner 依赖 `LLM` 协议；provider 由装配注入 |
+| channel/server 依赖 core 的 `SessionRegistry` 具体类 | channel 只依赖 `Session` 能力协议 |
+| tools/messages 直接 import 具体存储类 | 只依赖 `Messages`/`Projection` 协议 |
+| executor 直发 channel（ToolStart/ToolResult）与事件通道并存 | 收敛为事件→监听转发（待后续统一） |
+| Runner 默认自建 bus vs 会话 bus | 经 Session 注入会话 bus，默认自建仅测试用 |
+
+> 以上为设计目标与后续实施 checkpoint；**当前文档对应的代码暂未全部收敛**，
+> 分轮落地时逐个闭合，见 README「架构」档期。
+
+## 9. 已知设计注意
+
+- `tool_context` 由 ContextVar 承载，只在工具执行窗口内有效；后台任务由 run_job 开头自设。
+- 会话 bus 监听顺序 = 注册顺序：审批在 main 组装中先于用户 guard 扩展注册，故审批先表态。
+- 命令「命中即拦截」，不存在命中后放行给 agent 的路径。

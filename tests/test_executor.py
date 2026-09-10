@@ -5,7 +5,7 @@ import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
-from ..schemas import ApprovalRsp
+from ..spec import ApprovalRsp
 from ..infra import Tool, SessionView
 
 from .conftest import FakeChannel, FakeToolCall, FakeProvider, make_session

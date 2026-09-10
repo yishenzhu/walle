@@ -17,7 +17,7 @@ from ..core import Agent, Runner, Session, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..infra import OpenAIProvider
 from ..messages import InMemoryMessages
-from ..schemas import ToolStart, ToolResult
+from ..spec import ToolStart, ToolResult
 from ..infra import JobStatus, Tool, tool_context
 from ..tools.builtin import background, job_result
 

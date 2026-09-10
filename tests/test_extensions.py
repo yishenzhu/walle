@@ -380,7 +380,7 @@ async def test_unload_covered_tool_keeps_later_owner():
 async def test_register_command_and_dispatch():
     """扩展注册斜杠命令：handler(args, ctx) 自决推送；未命中回退 agent。"""
     from ..infra import CommandContext
-    from ..schemas import Delta, DeltaEnd
+    from ..spec import Delta, DeltaEnd
     from .conftest import FakeChannel
 
     bus = EventBus()
@@ -451,7 +451,7 @@ async def test_unload_removes_command():
 async def test_command_context_exposes_transport():
     """CommandContext 只暴露底层能力（transport/bus），用法由命令自决。"""
     from ..infra import CommandContext
-    from ..schemas import Delta, DeltaEnd, Inquiry
+    from ..spec import Delta, DeltaEnd, Inquiry
     from .conftest import FakeChannel
 
     # 命令可经 channel notify 推送、call Inquiry 提问（无需预设接口）
@@ -516,7 +516,7 @@ async def test_session_context_command_is_per_session():
     """同一扩展在两个会话各激活一次：命令表互不干扰，卸载互不影响。"""
     from ..core import ExtensionRunner
     from ..infra import CommandContext
-    from ..schemas import Delta, DeltaEnd
+    from ..spec import Delta, DeltaEnd
     from .conftest import FakeChannel
 
     async def factory(api: ExtensionAPI):

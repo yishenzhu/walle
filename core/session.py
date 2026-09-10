@@ -18,7 +18,7 @@ from typing import Any
 
 from .agent import Agent
 from .runner import Runner, RunOptions, SessionContext
-from ..channel import Channel, SessionConn
+from ..spec import Channel, SessionConn
 from ..conf import ToolConfig
 from ..infra import (
     CommandContext,
@@ -38,7 +38,7 @@ from ..messages import (
     ProjectedMessages,
     SQLiteProjectionStore,
 )
-from ..schemas import Delta, DeltaEnd, UserInput
+from ..spec import Delta, DeltaEnd, UserInput
 from .executor import ToolExecutor
 
 

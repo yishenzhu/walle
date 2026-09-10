@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..schemas import Projection, UserMessage, Usage
+from ..spec import Projection, UserMessage, Usage
 from ..messages import ProjectedMessages, InMemoryMessages, SQLiteMessages
 
 

@@ -5,7 +5,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, HookVerdict, Runner, RunOptions, RunResult, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
-from ..schemas import UserMessage
+from ..spec import UserMessage
 from ..messages import InMemoryMessages
 from ..infra import Tool
 

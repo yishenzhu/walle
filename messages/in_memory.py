@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from ..schemas import Message, Usage
+from ..spec import Message, Usage
 
 
 class InMemoryMessages:

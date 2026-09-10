@@ -5,7 +5,7 @@ import pytest
 from ..core import Agent, Session, SessionRegistry
 from ..infra import MessageDeltaEvent, MessageEndEvent, AgentStartEvent
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
-from ..schemas import ModelConfig, UserMessage
+from ..spec import ModelConfig, UserMessage
 from ..messages import SQLiteMessages, InMemoryMessages, ProjectedMessages
 
 from .conftest import FakeChannel, FakeProvider
@@ -112,7 +112,7 @@ class TestSessionLifecycle:
 
     async def test_handle_requires_attach(self, tmp_path):
         """detached 会话调用 handle 报错（需先 attach）。"""
-        from ..schemas import UserInput
+        from ..spec import UserInput
 
         s = make_session("life2", str(tmp_path / "s.db"))
         s.detach()
@@ -164,7 +164,7 @@ class TestSessionRegistry:
 class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
         """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
-        from ..schemas import UserInput
+        from ..spec import UserInput
         from ..core import ExtensionAPI, ExtensionRegistry, Extension
 
         ch = FakeChannel()
@@ -172,7 +172,7 @@ class TestSessionCommandDispatch:
         loader = ExtensionRegistry()
 
         async def load_cli(api: ExtensionAPI):
-            from ..schemas import Delta, DeltaEnd
+            from ..spec import Delta, DeltaEnd
 
             async def ping(args: str, ctx):
                 # 推送由命令自己决定：经 channel notify Delta 回复流
@@ -206,7 +206,7 @@ class TestSessionCommandDispatch:
 
     async def test_silent_command_no_push(self, tmp_path):
         """静默命令（handler 返回 None）：命中但无任何推送。"""
-        from ..schemas import UserInput
+        from ..spec import UserInput
         from ..core import ExtensionAPI, ExtensionRegistry
 
         ch = FakeChannel()

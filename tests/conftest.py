@@ -7,7 +7,7 @@ import pytest
 from ..conf import ApprovalConfig, ApprovalDecision, RawRule, ToolConfig
 from ..core import ToolExecutor
 from ..infra import OpenAIProvider
-from ..schemas import Approval, ApprovalRsp, Inquiry, Receive, UserInput
+from ..spec import Approval, ApprovalRsp, Inquiry, Receive, UserInput
 from ..infra import SessionView
 
 

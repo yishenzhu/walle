@@ -102,16 +102,18 @@ sequenceDiagram
 
 ### 分层职责
 
+架构核心原则：**跨层只依赖能力协议（根目录 `protocol/`），具体实现由装配根注入**，避免具体类型跨层牵扯。
+
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 入口 | `main.py` | 组装进程级扩展池（builtin/sandbox/mcp/skill/approval/用户扩展），启动 CLI 服务端 |
-| 核心引擎 | `core/` | 会话（Session 运行时容器）、Agent 循环（Runner）、工具执行（ToolExecutor） |
-| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp（MCP 客户端）、skill（技能）、approval（审批扩展：规则 + 人工确认）、sandbox（bwrap 沙箱：同名覆盖内置工具）、define_tool 动态定义 |
-| 扩展激活 | `infra/extension.py` | ExtensionRegistry（进程级加载器）+ ExtensionRunner（会话级激活层：工具/技能/命令表）+ CommandContext |
-| 底层类型 | `infra/` | Tool、EventBus、HookVerdict、诊断、日志、遥测、指标、LLM Provider |
-| 交互通道 | `channel/` | Channel 协议（notify 广播 / call 点对点）、CLI 多会话服务端（JSON-line 协议） |
-| 消息存储 | `messages/` | 消息协议、内存/SQLite 持久化、投影切点（模型视野截断） |
-| 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量的 Pydantic 模型 |
+| 协议面 | `protocol/` | **全部跨层能力协议**（唯一声明面，不提及实现）：channel（Channel/SessionConn/Sessions）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable） |
+| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、provider、CLI 服务端 |
+| 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
+| 核心引擎 | `core/` | 会话（Session 装配根：装配 Runner/Executor/扩展）、Agent 循环（Runner）、工具执行器 |
+| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
+| 交互通道 | `channel/` | CLI 多会话服务端（JSON-line 协议），实现 Channel 协议 |
+| 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 |
+| 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量模型（`protocol` 依赖它） |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -297,7 +299,7 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问 ToolContext（channel / jobs / bus / ext_runner / cwd / history）
+    ctx = tool_context.get()   # 访问会话视图 SessionView（channel / jobs / bus / ext_runner / cwd / history）
     return f"result: {query}"
 ```
 
@@ -406,9 +408,13 @@ writer = Agent(
 
 ```
 walle/
-├── main.py                    # 入口
+├── main.py                    # 入口（装配根）
 ├── conf.yaml.example          # 配置模板
 ├── pyproject.toml             # 依赖声明
+├── protocol/                  # 跨层能力协议（唯一声明面，不提及实现）
+│   ├── channel.py             #   Channel / SessionConn / Sessions
+│   ├── messages.py            #   Messages / Projection / ProjectionStore
+│   └── runtime.py             #   ExtRunner（工具注册）
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
@@ -416,7 +422,6 @@ walle/
 │   ├── session.py             #   会话实体（attach/detach，支持切换 Agent）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
-│   ├── protocol.py            #   Channel Protocol (notify/call)
 │   └── cli/                   #   CLI 多会话（JSON-line 协议）
 │       ├── server.py          #     服务端（CLIChannel）
 │       ├── client.py          #     交互客户端（CLIClient）
@@ -444,7 +449,6 @@ walle/
 │   └── tool.py                #   history / new_window 工具
 ├── schemas/                   # 数据模型
 │   ├── message.py             #   消息类型
-│   ├── protocols.py           #   跨层协议（Messages/Projection/ExtRunner）
 │   ├── events.py              #   判别联合事件（通知/服务）
 │   ├── channel.py             #   服务载荷（UserInput / ApprovalRsp）
 │   └── usage.py               #   Token 用量
@@ -452,7 +456,7 @@ walle/
 │   ├── extension.py           #   ExtensionRegistry / ExtensionRunner / CommandContext
 │   ├── event_bus.py           #   会话事件总线
 │   ├── events.py              #   钩子事件与 HookVerdict
-│   ├── tool.py                #   Tool / Job / ToolContext
+│   ├── tool.py                #   Tool / Job / SessionView(工具可见会话面)
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化

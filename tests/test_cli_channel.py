@@ -13,7 +13,7 @@ import pytest
 
 from ..channel.cli import CLIConn
 from ..tools.approval import ChannelApprover
-from ..schemas import Approval, ApprovalRsp
+from ..spec import Approval, ApprovalRsp
 
 
 async def test_conn_run_processes_reply_while_input_in_flight():
@@ -189,7 +189,7 @@ async def test_channel_approver_passthrough_model_reply():
 from ..core import SessionRegistry, Session
 from ..conf import ToolConfig, ApprovalConfig, ApprovalDecision
 from ..channel.cli import CLIChannel
-from ..schemas import UserMessage
+from ..spec import UserMessage
 
 
 class _TestServer:

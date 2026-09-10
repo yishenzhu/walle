@@ -13,7 +13,7 @@ from .events import (
     ToolExecutionEndEvent,
 )
 from .tool import Job, JobStatus, SessionView, Tool, tool_context
-from .diagnostics import DiagnosticType, ResourceDiagnostic
+from ..spec import DiagnosticType, ResourceDiagnostic
 from .extension import (
     Command,
     CommandContext,

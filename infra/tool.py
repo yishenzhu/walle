@@ -11,8 +11,7 @@ from typing import Any, Protocol
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
 
-from ..channel import Channel
-from ..schemas import Messages, ExtRunner
+from ..spec import Channel, Messages, ToolTable
 from .event_bus import EventBus
 
 
@@ -53,7 +52,7 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    ext_runner: ExtRunner | None
+    ext_runner: ToolTable | None
     bus: EventBus | None
 
 

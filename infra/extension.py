@@ -16,13 +16,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from .diagnostics import (
-    DiagnosticType,
-    ResourceDiagnostic,
-)
+from ..spec import DiagnosticType, ResourceDiagnostic
 from ..conf import auto_path
-from ..channel import Channel
-from ..schemas import Messages
+from ..spec import Channel, Messages
 from .event_bus import EventBus, Handler
 from .provider import OpenAIProvider
 from .tool import Tool
@@ -235,7 +231,7 @@ class ExtensionRunner:
         self._commands: dict[str, Command] = {}
         self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
 
-    # ── 工具表（add/remove/query，实现 ExtRunner 能力面）────
+    # ── 工具表（add/remove/query，实现 ToolTable 能力面）────
     def register_tool(self, *tools: Tool) -> None:
         """注册工具：同名后到者覆盖先到者。同批重名视为编程错误。"""
         names = [t.name for t in tools]

@@ -6,8 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..schemas import ToolResult, ToolStart
-from ..channel import Channel
+from ..spec import Channel, ToolResult, ToolStart
 from ..conf import ToolConfig
 from ..infra import (
     HookVerdict,

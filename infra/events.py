@@ -4,7 +4,7 @@
 发射用实例（bus.emit(TurnEndEvent(...))）。事件类集中在此定义，字段即
 该事件携带的数据，handler 收实例后以 `.` 访问，有静态类型与补全。
 
-依赖方向：本模块只引用无环的叶子（schemas 协议/模型、infra.provider），
+依赖方向：本模块只引用无环的叶子（spec 协议/模型、infra.provider），
 故可被 event_bus 与各扩展安全 import。
 """
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..schemas import Messages, Usage
+from ..spec import Messages, Usage
 from .provider import OpenAIProvider
 
 
