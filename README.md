@@ -102,18 +102,18 @@ sequenceDiagram
 
 ### 分层职责
 
-架构核心原则：**跨层只依赖能力协议（根目录 `protocol/`），具体实现由装配根注入**，避免具体类型跨层牵扯。
+架构核心原则：**跨层只依赖能力协议（`spec/`），具体实现由装配根注入**，避免具体类型跨层牵扯。依赖方向由 `tests/test_layering.py` 静态校验，违反即 CI 失败。
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 协议面 | `protocol/` | **全部跨层能力协议**（唯一声明面，不提及实现）：channel（Channel/SessionConn/Sessions）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable） |
-| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、provider、CLI 服务端 |
+| 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
+| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、进程默认 provider、CLI 服务端 |
 | 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
-| 核心引擎 | `core/` | 会话（Session 装配根：装配 Runner/Executor/扩展）、Agent 循环（Runner）、工具执行器 |
+| 核心引擎 | `core/` | 会话装配（SessionRegistry：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
 | 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
 | 交互通道 | `channel/` | CLI 多会话服务端（JSON-line 协议），实现 Channel 协议 |
-| 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 |
-| 数据模型 | `schemas/` | 消息、判别联合事件（通知/服务）、Token 用量模型（`protocol` 依赖它） |
+| 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
+| 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
 
@@ -134,6 +134,21 @@ git clone <repo-url> walle
 cd walle
 pip install -e ".[dev]"
 ```
+
+> 仓库根目录本身即 `walle` 包（`run.sh` 以 `PYTHONPATH=<父目录> -m walle.main` 运行），
+> setuptools 的自动发现只扫子目录、找不到根包，故 `pyproject.toml` 里显式声明了
+> 包与目录映射。**新增子包时需同步补 `[tool.setuptools]` 的 packages / package-dir 两处。**
+
+### 开发与检查
+
+```bash
+pytest -q                      # 单元测试（290 项，无需 API Key）
+ruff check .                   # 静态检查
+ruff check --fix .             # 自动修复（import 排序等）
+```
+
+`tests/test_layering.py` 用 AST 静态校验分层依赖方向（见 `docs/architecture.md`），
+违反即失败。CI（`.github/workflows/ci.yml`）在 Python 3.12 / 3.13 上跑上述两项。
 
 ### 配置
 
@@ -410,16 +425,28 @@ writer = Agent(
 walle/
 ├── main.py                    # 入口（装配根）
 ├── conf.yaml.example          # 配置模板
-├── pyproject.toml             # 依赖声明
-├── protocol/                  # 跨层能力协议（唯一声明面，不提及实现）
-│   ├── channel.py             #   Channel / SessionConn / Sessions
-│   ├── messages.py            #   Messages / Projection / ProjectionStore
-│   └── runtime.py             #   ExtRunner（工具注册）
+├── pyproject.toml             # 依赖声明 + 显式包映射 + ruff/pytest 配置
+├── .github/workflows/ci.yml   # CI：ruff check + pytest（3.12 / 3.13）
+├── spec/                      # 协议面（叶子包：数据模型 + 能力协议，不依赖任何实现）
+│   ├── protocol/              #   跨层能力协议（唯一声明面）
+│   │   ├── channel.py         #     Channel / Sessions
+│   │   ├── messages.py        #     Messages / Projection / ProjectionStore
+│   │   ├── runtime.py         #     ToolTable（工具表能力）
+│   │   ├── events.py          #     EventBus（事件总线能力）
+│   │   ├── llm.py             #     LLM（模型能力）
+│   │   └── view.py            #     SessionView（工具可见会话面）
+│   └── schemas/               #   领域数据模型
+│       ├── message.py         #     消息类型
+│       ├── events.py          #     判别联合事件（通知/服务）
+│       ├── channel.py         #     服务载荷（UserInput / ApprovalRsp / SessionConn）
+│       ├── job.py             #     后台作业模型（Job / JobStatus）
+│       ├── diagnostics.py     #     资源诊断
+│       └── usage.py           #     Token 用量
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（并发·超时）
-│   ├── session.py             #   会话实体（attach/detach，支持切换 Agent）
+│   ├── session.py             #   Session + SessionRegistry（会话装配根）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   └── cli/                   #   CLI 多会话（JSON-line 协议）
@@ -440,23 +467,19 @@ walle/
 │       ├── ask_user.py        #     向用户提问
 │       ├── defined.py         #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
+│       ├── history.py         #     会话历史（history / new_window）
 │       └── extension.py       #     builtin 扩展声明
 ├── messages/                  # 消息存储
 │   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化
 │   ├── projected.py           #   投影视图（切点截断模型视野）
 │   ├── meta.py                #   切点持久化
-│   └── tool.py                #   history / new_window 工具
-├── schemas/                   # 数据模型
-│   ├── message.py             #   消息类型
-│   ├── events.py              #   判别联合事件（通知/服务）
-│   ├── channel.py             #   服务载荷（UserInput / ApprovalRsp）
-│   └── usage.py               #   Token 用量
+│   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
 │   ├── extension.py           #   ExtensionRegistry / ExtensionRunner / CommandContext
 │   ├── event_bus.py           #   会话事件总线
 │   ├── events.py              #   钩子事件与 HookVerdict
-│   ├── tool.py                #   Tool / Job / SessionView(工具可见会话面)
+│   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化
@@ -475,6 +498,7 @@ walle/
 │   ├── run.py                 #   评测入口
 │   └── bench/                 #   τ-bench 公开基准适配
 ├── tests/                     # 测试（pytest + pytest-asyncio）
+│   └── test_layering.py       #   分层依赖约束（AST 静态检查，CI 门禁）
 ├── observability/             # 可观测性栈
 │   ├── docker-compose.yaml    #   OTel + Tempo + Mimir + Grafana
 │   └── *.yaml                 #   各服务配置
@@ -546,7 +570,8 @@ PYTHONPATH=.. .venv/bin/python -m walle.eval.run --render-only   # 重渲染上�
 | 平均耗时/任务 | 7.7s |
 | 工具调用（总/错误） | 36 / 2 |
 
-> 自建套件为回归基线（可复现、进 CI）；公开基准见下节（能力对标）。
+> 自建套件为回归基线（任务与评分可复现；因需真实 LLM 调用，需 API Key 手动运行，
+> 不进 CI——CI 跑的是无需 Key 的单元测试与静态检查）；公开基准见下节（能力对标）。
 
 ---
 
