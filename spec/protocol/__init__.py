@@ -5,8 +5,11 @@ core 中，由装配根注入。使用方统一从本包导入协议，不 impor
 """
 
 from .channel import Channel, Sessions
-from .runtime import ToolTable
+from .events import EventBus
+from .llm import LLM
 from .messages import Messages, Projection, ProjectionStore
+from .runtime import ToolTable
+from .view import SessionView
 
 __all__ = [
     "Channel",
@@ -15,4 +18,7 @@ __all__ = [
     "Messages",
     "Projection",
     "ProjectionStore",
+    "EventBus",
+    "LLM",
+    "SessionView",
 ]

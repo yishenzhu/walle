@@ -1,60 +1,19 @@
-"""核心数据类型：工具（Tool）与工具执行上下文协议（SessionView）。"""
+"""核心数据类型：工具（Tool）与工具执行上下文注入点（tool_context）。
+
+Job / SessionView 等跨层可见的类型已上收至 spec（schemas/protocol）；
+本模块只保留 executor 与工具共同使用的具体实现（Tool）与 ContextVar。
+"""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
 from mcp.server.fastmcp.tools import Tool as MCPTool
 
-from ..spec import Channel, Messages, ToolTable
-from .event_bus import EventBus
-
-
-class JobStatus(StrEnum):
-    """后台作业状态。"""
-
-    PENDING = "pending"  # 待启动（background 已登记，executor 未拉起）
-    RUNNING = "running"  # 运行中（executor 已 create_task）
-    DONE = "done"  # 完成（result 可读）
-    ERROR = "error"  # 失败（error 可读）
-
-
-@dataclass
-class Job:
-    """一个后台作业：pending（待启动）/ running / done / error。
-
-    pending 由 background 元工具写入（记录工具名+参数，待 executor 拉起）；
-    running 起 task；done 存 result；error 存错误信息。
-    """
-
-    status: JobStatus = JobStatus.PENDING  # 见 JobStatus
-    tool_name: str | None = None  # pending 时：要执行的工具名
-    args: dict[str, Any] | None = None  # pending 时：工具参数
-    task: asyncio.Task | None = None  # running 后：后台任务
-    result: Any = None  # done：执行结果
-    error: str | None = None  # error：错误信息
-
-
-class SessionView(Protocol):
-    """工具执行期可见的会话状态（SessionContext 即实现）。
-
-    经 tool_context ContextVar 注入；只声明工具需要的属性（能力收窄：
-    不含 provider/agents/depth/session_id）。仅用于类型标注，故不加
-    runtime_checkable。
-    """
-
-    channel: Channel | None
-    jobs: dict[str, Job]
-    cwd: str | None
-    history: Messages
-    ext_runner: ToolTable | None
-    bus: EventBus | None
-
+from ..spec import SessionView
 
 tool_context: ContextVar[SessionView | None] = ContextVar("tool_context", default=None)
 
