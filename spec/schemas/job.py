@@ -1,13 +1,18 @@
-"""后台作业模型：跨轮存活的异步任务的纯数据视图。
+"""后台作业模型：跨轮存活的异步任务的数据视图与工具返回。
 
-由 background 元工具登记（pending），executor 拉起（running），
-job_result 读取（done / error）。作为值类型跨层流动，故置于 schemas。
+- `Job` / `JobStatus`：作业状态机，由 background 元工具登记（pending），
+  executor 拉起（running），job_result 读取（done / error）。
+- `JobDispatch` / `JobResult`：background / job_result 两个内置工具的返回。
+
+作为值类型跨层流动，故置于 schemas。
 """
 
 import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from pydantic import BaseModel
 
 
 class JobStatus(StrEnum):
@@ -31,5 +36,22 @@ class Job:
     tool_name: str | None = None  # pending 时：要执行的工具名
     args: dict[str, Any] | None = None  # pending 时：工具参数
     task: asyncio.Task | None = None  # running 后：后台任务
+    result: Any = None  # done：执行结果
+    error: str | None = None  # error：错误信息
+
+
+class JobDispatch(BaseModel):
+    """background 工具返回：作业派发结果，成功即拿到 job_id。"""
+
+    job_id: str
+    status: str = "running"  # 派发成功即 running（待 executor 拉起）
+    error: str | None = None  # 非空表示派发失败
+
+
+class JobResult(BaseModel):
+    """job_result 工具返回：作业状态与结果。"""
+
+    job_id: str
+    status: str  # running | done | error
     result: Any = None  # done：执行结果
     error: str | None = None  # error：错误信息

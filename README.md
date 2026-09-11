@@ -437,9 +437,9 @@ walle/
 │   │   └── view.py            #     SessionView（工具可见会话面）
 │   └── schemas/               #   领域数据模型
 │       ├── message.py         #     消息类型
-│       ├── events.py          #     判别联合事件（通知/服务）
-│       ├── channel.py         #     服务载荷（UserInput / ApprovalRsp / SessionConn）
-│       ├── job.py             #     后台作业模型（Job / JobStatus）
+│       ├── events.py          #     事件总线载荷（Session/Turn/Tool 事件）
+│       ├── channel.py         #     通道载荷（连接/通知/服务 + 判别联合）
+│       ├── job.py             #     后台作业（Job/JobStatus + Dispatch/Result）
 │       ├── diagnostics.py     #     资源诊断
 │       └── usage.py           #     Token 用量
 ├── core/                      # 核心引擎
@@ -477,8 +477,7 @@ walle/
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
 │   ├── extension.py           #   ExtensionRegistry / ExtensionRunner / CommandContext
-│   ├── event_bus.py           #   会话事件总线
-│   ├── events.py              #   钩子事件与 HookVerdict
+│   ├── event_bus.py           #   会话事件总线（具体实现）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）

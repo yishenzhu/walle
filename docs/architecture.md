@@ -104,6 +104,10 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 ### 事件总线（`events.py`）
 - `EventBus`（on / off / emit）—— Runner 只依赖本面发事件，具体总线由装配注入。
 
+> 事件**载荷**（`TurnEndEvent` 等 dataclass）是纯数据，定义在
+> `spec/schemas/events.py`，不在 `spec/protocol/`。二者勿混：
+> protocol 是能力接口，schemas 是值类型。
+
 ## 4. 会话装配（Session 私有件）
 
 ```
@@ -154,6 +158,9 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
 
 ## 7. 事件流向（核心只发事件，推送归监听方）
 
+事件载荷定义在 `spec/schemas/events.py`（纯值类型 dataclass），
+`infra/__init__` 转发导出以便扩展使用。
+
 | 事件 | 生产者 | 消费者 |
 |---|---|---|
 | `MESSAGE_DELTA` | Runner 流式增量 | Session → transport.notify(Delta) |
@@ -162,6 +169,10 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
 | `TOOL_EXECUTION_END` | executor | 观测型扩展 |
 | `SESSION/AGENT/TURN/MESSAGE_*` | Runner | 观测 / 会话管理 |
 
+> 载荷只携带值类型：需要与会话状态交互的 handler 从 `SessionView` /
+> `tool_context` 取，事件本身不塞 `Messages` / `LLM` 等能力对象——否则
+> schemas 会反向依赖 protocol 而成环。
+>
 > 核心循环不持有推送协议；工具执行通知（ToolStart/ToolResult）目前由 executor
 > 直发 channel，与 TOOL_EXECUTION 事件并存 —— 见下节待收敛点。
 

@@ -1,6 +1,6 @@
 """事件总线：按事件类型注册与广播。
 
-事件 = dataclass 类（见 infra.events）。订阅用事件类，发射用实例：
+事件 = dataclass 类（见 spec.schemas.events）。订阅用事件类，发射用实例：
 
     bus.on(TurnEndEvent, handler)      # handler 收 TurnEndEvent 实例
     await bus.emit(TurnEndEvent(...))  # 按实例类型找订阅者分发

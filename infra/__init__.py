@@ -1,18 +1,22 @@
-from ..spec import DiagnosticType, Job, JobStatus, ResourceDiagnostic, SessionView
-from .event_bus import EventBus, Handler
-from .events import (
+from ..spec import (
     AgentEndEvent,
     AgentStartEvent,
+    DiagnosticType,
+    Job,
+    JobStatus,
     MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
+    ResourceDiagnostic,
     SessionEndEvent,
     SessionStartEvent,
+    SessionView,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     TurnEndEvent,
     TurnStartEvent,
 )
+from .event_bus import EventBus, Handler
 from .extension import (
     Command,
     CommandContext,
@@ -40,9 +44,10 @@ from .telemetry import meter, setup_telemetry, tracer
 from .tool import Tool, tool_context
 
 __all__ = [
-    # event_bus / events — 会话事件总线与钩子事件
+    # event_bus — 会话事件总线（具体实现）
     "EventBus",
     "Handler",
+    # 事件载荷与数据模型（自 spec 转发，infra 对外统一出口）
     "SessionStartEvent",
     "SessionEndEvent",
     "AgentStartEvent",
@@ -54,6 +59,8 @@ __all__ = [
     "MessageEndEvent",
     "ToolExecutionStartEvent",
     "ToolExecutionEndEvent",
+    "DiagnosticType",
+    "ResourceDiagnostic",
     # tool — 工具与执行视图协议
     "Tool",
     "Job",
@@ -86,7 +93,4 @@ __all__ = [
     # provider / sqlite_store — 基建实现
     "OpenAIProvider",
     "SQLiteStore",
-    # 诊断数据模型（自 spec 转发，infra 对外统一出口）
-    "DiagnosticType",
-    "ResourceDiagnostic",
 ]

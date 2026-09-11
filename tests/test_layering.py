@@ -102,6 +102,23 @@ def test_no_upward_import_into_core(layer):
     assert problems == [], f"分层违规（{layer} 反向依赖 core）:\n" + "\n".join(problems)
 
 
+def test_schemas_does_not_import_protocol():
+    """spec 内部方向唯一：protocol → schemas。
+
+    schemas 反引 protocol 会在导入期成环（protocol 尚未初始化完即被回引），
+    也会让"数据模型"承载能力对象(如 Messages)。事件载荷因此只允许值类型。
+    """
+    problems = []
+    for path in _iter_py_files("spec/schemas"):
+        problems += _violations(
+            path,
+            lambda m: "schemas 不能反向依赖 protocol（成环）"
+            if m.startswith("walle.spec.protocol")
+            else None,
+        )
+    assert problems == [], "分层违规（spec.schemas 反引 protocol）:\n" + "\n".join(problems)
+
+
 @pytest.mark.parametrize("name", ("runner.py", "executor.py", "agent.py"))
 def test_engine_has_no_concrete_injectables(name):
     """引擎不得 import 具体注入件；存储与模型必须经 spec 协议由装配根注入。"""

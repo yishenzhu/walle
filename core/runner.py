@@ -9,28 +9,28 @@ from pydantic import BaseModel
 from ..infra import (
     AGENT_ITERATIONS,
     HANDOFF,
-    AgentEndEvent,
-    AgentStartEvent,
     EventBus,
-    MessageDeltaEvent,
-    MessageEndEvent,
-    MessageStartEvent,
-    SessionEndEvent,
-    SessionStartEvent,
     Tool,
-    TurnEndEvent,
-    TurnStartEvent,
     tool_context,
     tracer,
 )
 from ..spec import (
     LLM,
+    AgentEndEvent,
+    AgentStartEvent,
     AssistantMessage,
     Channel,
     Job,
+    MessageDeltaEvent,
+    MessageEndEvent,
     Messages,
+    MessageStartEvent,
+    SessionEndEvent,
+    SessionStartEvent,
     SystemMessage,
     ToolMessage,
+    TurnEndEvent,
+    TurnStartEvent,
     Usage,
     UserMessage,
 )
@@ -134,9 +134,7 @@ class Runner:
                         turn=turn,
                         agent=agent.name,
                         session_id=session_id,
-                        history=history,
                         usage=usage,
-                        provider=provider,
                     )
                 )
 
