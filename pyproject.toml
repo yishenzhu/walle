@@ -12,7 +12,9 @@ dependencies = [
     "openai>=1.0",
     "PyYAML>=6.0",
     "python-dotenv>=1.0",
-    "mcp>=1.0",
+    # mcp 2.x 把 FastMCP 重命名为 MCPServer 且客户端 API 有破坏性变更，
+    # 本项目的 Tool schema 生成与客户端均基于 1.x API，故锁上界。
+    "mcp>=1.0,<2",
     "httpx>=0.27",
     "python-frontmatter>=1.0",
     "pyflakes>=3.0",
