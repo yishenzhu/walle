@@ -32,7 +32,13 @@ async def test_conn_run_processes_reply_while_input_in_flight():
             )
             results["approval"] = rsp
 
-        await conn.run(on_input)
+        try:
+            await conn.run(on_input)
+        finally:
+            # 须显式关服务端侧连接：3.12 起 server.wait_closed() 会等所有
+            # 连接结束，服务端 transport 不关则 _active_count 不归零 → 挂起。
+            # （生产 CLIChannel._handle_conn 同样在 finally 里关 writer）
+            writer.close()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -84,7 +90,10 @@ async def test_conn_run_notifies_error_on_input_failure():
         async def on_input(content):
             raise RuntimeError("boom")
 
-        await conn.run(on_input)
+        try:
+            await conn.run(on_input)
+        finally:
+            writer.close()  # 服务端侧连接须显式关闭（见上例说明）
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -119,7 +128,10 @@ async def test_conn_run_processes_consecutive_inputs():
             if len(seen) == 2:
                 done.set()
 
-        await conn.run(on_input)
+        try:
+            await conn.run(on_input)
+        finally:
+            writer.close()  # 服务端侧连接须显式关闭（见上例说明）
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]

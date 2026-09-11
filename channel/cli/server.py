@@ -181,7 +181,8 @@ class CLIChannel:
 
     async def stop(self) -> None:
         if self._server is not None:
-            self._server.close()  # 3.12+：停止监听并等待挂起连接完成
+            # 停止监听（不等待已建立连接；各连接的 handler 自行在 finally 关闭）
+            self._server.close()
             self._server = None
 
     # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
