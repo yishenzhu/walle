@@ -9,7 +9,7 @@ from .client import CLIClient
 
 
 def main() -> None:
-    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--agent <name>] [--extensions a,b] [--list]。"""
+    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--agent <name>] [--list]。"""
     import argparse
 
     parser = argparse.ArgumentParser(prog="walle-cli", description="walle CLI 客户端")

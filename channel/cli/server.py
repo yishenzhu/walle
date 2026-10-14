@@ -226,8 +226,10 @@ class CLIChannel:
                 except Exception:
                     logger.warning(f"ignoring invalid model config: {raw_model}")
 
-            conn = CLIConn(chat_id, reader, writer, cwd=cwd, model=model,
-                           agent=msg.get("agent") or None)
+            conn = CLIConn(
+                chat_id, reader, writer, cwd=cwd, model=model,
+                agent=msg.get("agent") or None,
+            )
 
             if attach:
                 # resume：取已存在会话，绑定新 transport
