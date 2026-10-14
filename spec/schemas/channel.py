@@ -30,14 +30,16 @@ class ModelConfig(BaseModel):
 
 
 class SessionConn(BaseModel):
-    """新建会话的连接载荷：承载会话身份（chat_id）、工作目录（cwd）与模型配置。
+    """新建会话的连接载荷：会话身份（chat_id）、工作目录（cwd）、模型配置与 agent 名。
 
     model 由客户端随握手提供——不同连接可指向不同端点；缺省（None）回退默认。
+    agent 为 agent 名（对应 .agent/agents/<name>.md）；缺省 None = default。
     """
 
     chat_id: str
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
     model: ModelConfig | None  # 模型接入配置（None = 用默认）
+    agent: str | None = None  # agent 名（None = default）；创建会话时按名加载
 
 
 class UserInput(BaseModel):

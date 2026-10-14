@@ -9,11 +9,16 @@ from .client import CLIClient
 
 
 def main() -> None:
-    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--extensions a,b] [--list]。"""
+    """CLI 入口：python -m walle.channel.cli [--attach <id>] [--agent <name>] [--extensions a,b] [--list]。"""
     import argparse
 
     parser = argparse.ArgumentParser(prog="walle-cli", description="walle CLI 客户端")
     parser.add_argument("--attach", default="", help="恢复已有会话（attach）")
+    parser.add_argument(
+        "--agent",
+        default="",
+        help="新会话使用的 agent（缺省 default；对应 .agent/agents/<name>.md）",
+    )
     parser.add_argument(
         "--extensions",
         default="",
@@ -42,7 +47,11 @@ def main() -> None:
         )
         asyncio.run(
             CLIClient(
-                attach=args.attach, extensions=exts, dir=args.dir or None, model=model
+                attach=args.attach,
+                extensions=exts,
+                dir=args.dir or None,
+                model=model,
+                agent=args.agent,
             ).run()
         )
 

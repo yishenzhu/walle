@@ -62,6 +62,7 @@ class Session:
         provider: LLM | None = None,
         cwd: str | None = None,
         created_at: float | None = None,
+        agent: str | None = None,
     ) -> None:
         self.id = session_id
         # 创建时间内聚在 Session（注册表/连接仅读取展示）
@@ -86,7 +87,7 @@ class Session:
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
         # 注册表缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
         self._agents: dict[str, Agent] = {}
-        self._agent = self._build_agent()
+        self._agent = self._build_agent(agent)
         # 依赖由装配根注入：模型（协议面）与会话历史（已包投影视图）
         self._provider = provider
         self._history = history
@@ -245,6 +246,7 @@ class SessionRegistry:
             extensions=extensions,
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
+            agent=conn.agent,  # 客户端指定 agent（None = default）
         )
         session.attach(conn)
         self.register(session)

@@ -52,6 +52,7 @@ class CLIClient:
         extensions: list[str] | None = None,
         dir: str | None = None,
         model: dict | None = None,
+        agent: str = "",
     ):
         self._host = host
         self._port = port
@@ -60,6 +61,7 @@ class CLIClient:
         self._extensions = extensions  # 可选：新会话要激活的扩展名
         self._dir = dir or os.getcwd()  # 工作目录（会话 bash/沙箱基准；默认客户端启动目录）
         self._model = model  # 可选：本会话模型配置（api_key/base_url/model）
+        self._agent = agent  # 可选：新会话使用的 agent 名（缺省由服务端用 default）
         self._reply_done = asyncio.Event()  # 回复完成（delta_end）信号
         self._quit = asyncio.Event()  # 退出信号：EOF / 服务端断开 / 本地 /exit
 
@@ -97,6 +99,8 @@ class CLIClient:
             hello["extensions"] = self._extensions
         if self._model:
             hello["model"] = self._model  # 客户端模型配置（服务端建会话级 provider）
+        if self._agent:
+            hello["agent"] = self._agent  # 新会话使用的 agent（缺省 default）
         await self._send(writer, hello)
         mode = "恢复会话" if self._attach else "新会话"
         print(

@@ -37,10 +37,12 @@ class CLIConn:
         writer: asyncio.StreamWriter,
         cwd: str | None = None,
         model: ModelConfig | None = None,
+        agent: str | None = None,
     ) -> None:
         self.chat_id = chat_id
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
         self.model = model  # 客户端模型配置（会话级 provider；None = 进程默认）
+        self.agent = agent  # 客户端指定 agent 名（None = default）
         self._reader = reader
         self._writer = writer
         self._pending: dict[str, asyncio.Future] = {}
@@ -224,7 +226,8 @@ class CLIChannel:
                 except Exception:
                     logger.warning(f"ignoring invalid model config: {raw_model}")
 
-            conn = CLIConn(chat_id, reader, writer, cwd=cwd, model=model)
+            conn = CLIConn(chat_id, reader, writer, cwd=cwd, model=model,
+                           agent=msg.get("agent") or None)
 
             if attach:
                 # resume：取已存在会话，绑定新 transport
@@ -235,11 +238,16 @@ class CLIChannel:
                     )
                     return
                 session.attach(conn)
+                # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
+                if conn.agent:
+                    session.set_agent(conn.agent)
                 logger.info(f"cli client reattached: {chat_id}")
             else:
                 # 新会话：sessions.create（按需激活指定扩展）
                 session = self._sessions.create(conn, ext_names)
-                logger.info(f"cli client connected: {chat_id}")
+                logger.info(
+                    f"cli client connected: {chat_id} agent={conn.agent or 'default'}"
+                )
 
             async def on_input(content: str) -> None:
                 """本连接输入 → 本会话处理（chat_id 已绑定）。"""
