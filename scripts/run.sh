@@ -50,6 +50,7 @@ walle 启动脚本
   ./scripts/run.sh                    # 启动 agent + 可观测性
   ./scripts/run.sh --no-obs           # 仅启动 agent
   ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
+  #   --cli 之后的参数原样转给客户端，例如：./scripts/run.sh --cli --agent <name>
   ./scripts/run.sh --attach cli-xxx   # 恢复会话
   ./scripts/run.sh --status           # 服务端状态
   ./scripts/run.sh --stop             # 停止常驻 agent 服务端
@@ -135,8 +136,10 @@ stop_agent() {
 start_cli_client() {
     log_step "启动 CLI 交互客户端（连接服务端）..."
     cd "$PROJ_ROOT"
+    # ⚠️ 参数**原样转给客户端**（`--cli` 之后写什么就传什么）—— 于是客户端以后新增开关
+    #    （--agent / --model / …）这里都不必再改：加一个 if 就等于每加一个开关改一次脚本。
     env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.channel.cli
+        "$PY" -m walle.channel.cli "$@"
 }
 
 # ── 会话管理 ──────────────────────────────────────────
@@ -200,6 +203,7 @@ main() {
     local status_flag=false
     local attach_flag=false
     local attach_id=""
+    local client_args=()
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -209,7 +213,7 @@ main() {
             --stop-obs)    stop_obs_flag=true ;;
             --stop)        stop_agent_flag=true ;;
             --test)        test_only=true ;;
-            --cli)         cli=true ;;
+            --cli)         cli=true; shift; client_args=("$@"); break ;;
             --status)      status_flag=true ;;
             --attach)      attach_flag=true; shift; attach_id="${1:-}" ;;
             --help|-h)     usage ;;
@@ -286,7 +290,7 @@ main() {
         else
             log_info "agent 已在运行，直接连接"
         fi
-        start_cli_client
+        start_cli_client "${client_args[@]:-}"
         exit 0
     fi
 

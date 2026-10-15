@@ -8,7 +8,6 @@ import asyncio
 import json
 import os
 import readline  # noqa: F401  # 副作用导入：启用 input() 的行编辑/历史
-import threading
 import uuid
 
 from pydantic import TypeAdapter, ValidationError
@@ -120,30 +119,16 @@ class CLIClient:
 
     # ── 双循环 ────────────────────────────────────────
     async def _read_stdin(self, writer) -> None:
-        """stdin 行 → input 帧；本地 /exit → 置退出。
+        """stdin → input 帧；发送后等回复完成再提示下一个。
 
-        daemon 线程跑阻塞 input()：loop 退出即随进程消亡，无需 join/打断；
-        行经 call_soon_threadsafe 投递回事件循环，EOF/Ctrl+D 投 None。
+        ⚠️ 提示符交给 input()（readline 才知道它占几列），时序靠这里 await 回复完成。
         """
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
-
-        def read_forever() -> None:
-            try:
-                while True:
-                    line = input("You> ")
-                    loop.call_soon_threadsafe(queue.put_nowait, line)
-            except (EOFError, KeyboardInterrupt):
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
-        threading.Thread(target=read_forever, daemon=True, name="cli-stdin").start()
-
         while not self._quit.is_set():
-            line = await queue.get()
-            if line is None or self._quit.is_set():
-                self._quit.set()  # stdin EOF(Ctrl+D)：归一退出
+            try:
+                content = (await asyncio.to_thread(input, "You> ")).strip()
+            except (EOFError, KeyboardInterrupt, asyncio.CancelledError):
+                self._quit.set()  # EOF / Ctrl+C / 取消：归一退出，不打 traceback
                 return
-            content = line.strip()
             if content in ("/exit", "/quit"):
                 self._quit.set()
                 return
