@@ -198,7 +198,7 @@ Web 工作区（可选，需先安装 `fastapi` / `uvicorn`）：
 PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http://127.0.0.1:8080
 ```
 
-- **对话区**：Markdown 渲染（marked + DOMPurify），代码块、表格、引用和链接均可直接展示；流式输出。
+- **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
 - **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
 - **画布内容**：按会话存放在 `data/canvas/<chat_id>/<canvas_id>.html`，通过 `/canvas/<chat_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
@@ -491,7 +491,7 @@ walle/
 │   └── web/                   #   Web 工作区（WebSocket ↔ CLI）
 │       ├── app.py             #     FastAPI 应用与桥接（对话 + 画布路由）
 │       ├── index.html         #     对话 + 画布页面
-│       ├── static/            #     marked / DOMPurify（Markdown 渲染与净化）
+│       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明
 │   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.as_extension）
@@ -565,7 +565,7 @@ walle/
 | 工具协议 | MCP (Model Context Protocol) |
 | 可观测性 | OpenTelemetry + Grafana + Tempo + Mimir |
 | 持久化 | SQLite |
-| Web | FastAPI + WebSocket + 原生 JS（marked + DOMPurify） |
+| Web | FastAPI + WebSocket + 原生 JS（marked + KaTeX + DOMPurify） |
 | 配置 | YAML + Pydantic |
 | 异步 | asyncio |
 

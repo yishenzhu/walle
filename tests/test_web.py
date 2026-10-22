@@ -124,6 +124,10 @@ def test_index_serves_chat_page():
     assert "生成参数" in response.text
     assert "/static/marked.min.js" in response.text
     assert "/static/purify.min.js" in response.text
+    assert "/static/katex/katex.min.css" in response.text
+    assert "/static/katex/katex.min.js" in response.text
+    assert "/static/katex/marked-katex.min.js" in response.text
+    assert "mathMl" in response.text
     assert 'sandbox="allow-scripts' in response.text
     assert "allow-same-origin" not in response.text
     assert response.headers["cache-control"] == "no-store"
@@ -137,6 +141,15 @@ def test_static_markdown_assets_are_served():
     purify = client.get("/static/purify.min.js")
     assert purify.status_code == 200
     assert "DOMPurify" in purify.text
+    katex = client.get("/static/katex/katex.min.js")
+    assert katex.status_code == 200
+    assert "katex" in katex.text.lower()
+    katex_css = client.get("/static/katex/katex.min.css")
+    assert katex_css.status_code == 200
+    assert "KaTeX" in katex_css.text
+    font = client.get("/static/katex/fonts/KaTeX_Main-Regular.woff2")
+    assert font.status_code == 200
+    assert font.content
 
 
 def test_canvas_route_serves_session_file(monkeypatch, tmp_path):

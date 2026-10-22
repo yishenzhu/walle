@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Walle</title>
+  <link rel="stylesheet" href="/static/katex/katex.min.css">
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --panel3: #222b39;
@@ -118,6 +119,11 @@
     }
     .md a { color: #79b8ff; }
     .md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+    .md .katex { font-size: 1.05em; }
+    .md .katex-display {
+      margin: 10px 0; padding: 2px 0;
+      overflow-x: auto; overflow-y: hidden;
+    }
     .md table {
       border-collapse: collapse; margin: 8px 0; max-width: 100%;
       display: block; overflow-x: auto;
@@ -459,6 +465,8 @@
   </aside>
   </div>
   <script src="/static/marked.min.js"></script>
+  <script src="/static/katex/katex.min.js"></script>
+  <script src="/static/katex/marked-katex.min.js"></script>
   <script src="/static/purify.min.js"></script>
   <script>
     const log = document.getElementById("log");
@@ -468,6 +476,12 @@
     const stop = document.getElementById("stop");
     const status = document.getElementById("status");
     const dot = document.getElementById("dot");
+
+    if (window.marked && window.markedKatex) {
+      window.marked.use(
+        window.markedKatex({ throwOnError: false, nonStandard: true, trust: false })
+      );
+    }
 
     let ws = null;
     let busy = false;
@@ -600,7 +614,9 @@
     function renderMarkdown(text) {
       if (!window.marked || !window.DOMPurify) return null;
       const html = window.marked.parse(text, { gfm: true, breaks: true });
-      return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+      return window.DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true, mathMl: true },
+      });
     }
 
     let lastRender = 0;
