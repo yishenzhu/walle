@@ -85,6 +85,22 @@ class CLIClient:
             text = f"{n.code}: {n.message}" if n.code else n.message
             print(f"  {RED}⚠️ {text}{RESET}", flush=True)
 
+    @classmethod
+    def render_history(cls, messages: list[dict]) -> None:
+        """渲染 attach 时的最近对话快照（system / tool 已由服务端过滤）。"""
+        rows = [
+            m
+            for m in messages
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
+        if not rows:
+            return
+        print(f"  {CYAN}── 历史 {len(rows)} 条 ──{RESET}")
+        for m in rows:
+            who = "You" if m["role"] == "user" else "AI"
+            print(f"  {who}> {m['content']}")
+        print(f"  {CYAN}────────────────{RESET}")
+
     async def run(self) -> None:
         """连接服务端，握手（attach 或新建）后双循环收发。
 
@@ -105,6 +121,28 @@ class CLIClient:
         if self._agent:
             hello["agent"] = self._agent  # 新会话使用的 agent（缺省 default）
         await self._send(writer, hello)
+        line = await reader.readline()
+        if not line:
+            print("服务端未响应")
+            writer.close()
+            await writer.wait_closed()
+            return
+        try:
+            welcome = json.loads(line)
+        except json.JSONDecodeError:
+            print("服务端响应格式错误")
+            writer.close()
+            await writer.wait_closed()
+            return
+        if welcome.get("type") == "error":
+            code = welcome.get("code", "")
+            message = welcome.get("message", "")
+            text = f"{code}: {message}" if code else message
+            print(f"  {RED}⚠️ {text}{RESET}")
+            writer.close()
+            await writer.wait_closed()
+            return
+        self.render_history(welcome.get("history") or [])
         mode = "恢复会话" if self._attach else "新会话"
         print(
             f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C / /exit 退出）"

@@ -255,6 +255,7 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         r1, w1 = await _connect(port, {"type": "hello", "chat_id": "sess-1"})
         await _read_line(r1)  # welcome
         assert reg.get("sess-1") is not None
+        await reg.get("sess-1")._history.add([UserMessage(content="before")])
         w1.close()
         await w1.wait_closed()
         # 等服务端读到 EOF 并 detach（异步传播）
@@ -268,7 +269,8 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         r2, w2 = await _connect(
             port, {"type": "hello", "chat_id": "sess-1", "attach": True}
         )
-        await _read_line(r2)  # welcome
+        welcome = await _read_line(r2)
+        assert welcome["history"] == [{"role": "user", "content": "before"}]
         assert reg.get("sess-1").attached is True
         # 仍是同一个 Session 实例（messages 保留）
         w2.close()

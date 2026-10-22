@@ -238,6 +238,15 @@ class CLIChannel:
             self._server.close()
             self._server = None
 
+    async def _history_items(self, session, limit: int = 20) -> list[dict]:
+        """给 attach 的客户端最近对话快照（system / tool 不展示）。"""
+        messages = await session.recent(limit)
+        return [
+            {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role in ("user", "assistant") and m.content
+        ]
+
     # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
     async def _handle_conn(self, reader, writer) -> None:
         """每连接一个任务：握手（hello 帧）→ 新建或 attach 会话 → 读循环。
@@ -299,8 +308,14 @@ class CLIChannel:
                         }
                     )
                     return
-                # 先回 welcome：客户端收到后才开始读 notify 帧
-                await conn.send({"type": "welcome", "chat_id": chat_id})
+                # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
+                await conn.send(
+                    {
+                        "type": "welcome",
+                        "chat_id": chat_id,
+                        "history": await self._history_items(session),
+                    }
+                )
                 old = session.transport
                 session.attach(conn)
                 # 接管：旧 run 取消，终态发给新连接；旧连接随后断开

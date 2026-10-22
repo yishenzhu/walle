@@ -147,6 +147,12 @@ class Session:
     def transport(self) -> Channel | None:
         return self._transport
 
+    async def recent(self, limit: int = 20) -> list:
+        """最近 limit 条原始消息（attach 时给客户端做历史快照）。"""
+        total = await self._history.count()
+        start = max(0, total - limit)
+        return await self._history.query(offset=start, limit=limit)
+
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（重新加载 frontmatter）；缺省用 default。
 
