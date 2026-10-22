@@ -21,6 +21,7 @@
 | 🔒 **OS 级沙箱** | 可选 bwrap 沙箱扩展：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
+| 🖥️ **Web 工作区** | 对话 + 画布双栏；Markdown 渲染、工具审批、可拖拽分栏与全屏画布；画布 HTML 在 sandbox iframe 中运行 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、切点 SQLite 持久化 |
 
@@ -111,7 +112,7 @@ sequenceDiagram
 | 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
 | 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
 | 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
-| 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ CLI 多会话服务端 + Web 对话桥接，实现 Channel 协议 |
+| 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ CLI 多会话服务端 + Web 工作区桥接，实现 Channel 协议 |
 | 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
 | 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
@@ -142,7 +143,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（290 项，无需 API Key）
+pytest -q                      # 单元测试（318 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -189,13 +190,19 @@ PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.
 
 `--api-key/--base-url/--model` 三项齐全时，服务端为该会话新建 provider——不同连接可指向不同 OpenAI 兼容端点；缺省回退服务端 `.env` 配置。
 
-Web 对话（可选，需先安装 `fastapi` / `uvicorn`）：
+Web 工作区（可选，需先安装 `fastapi` / `uvicorn`）：
 
 ```bash
 ./scripts/run.sh --web              # 服务端未运行时自动后台启动 + Web 通道（前台）
 ./scripts/run.sh --web --port 8081  # --web 之后的参数原样转给 Web 服务
 PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http://127.0.0.1:8080
 ```
+
+- **对话区**：Markdown 渲染（marked + DOMPurify），代码块、表格、引用和链接均可直接展示；流式输出。
+- **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
+- **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
+- **画布内容**：按会话存放在 `data/canvas/<chat_id>/<canvas_id>.html`，通过 `/canvas/<chat_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
+- 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
@@ -208,6 +215,10 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 | Mimir | http://localhost:9009 | - |
 
 可查看：Agent 每轮迭代耗时与 Span、工具调用次数/耗时/错误率、Handoff 事件。
+
+> 使用 `--no-obs` 启动 agent 时，若 `telemetry.enabled` 仍为 `true`，OTLP 导出会持续报
+> `DEADLINE_EXCEEDED`。不需要观测时把 `telemetry.enabled` 设为 `false`，或单独运行
+> `./scripts/run.sh --obs-only` 启动 collector。
 
 ---
 
@@ -239,6 +250,7 @@ tool:
       - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [allow, ask_user]             # 提问工具自动放行
+      - [allow, canvas]               # 画布 HTML 在 sandbox iframe 内渲染，自动放行
       - [allow, read]                 # 读文件自动放行（技能按需加载全文）
     default: ask                      # 默认需人工审批
 
@@ -401,6 +413,16 @@ async def weather(city: str) -> str:
 | `new_window` | 模型主动硬切：推进投影切点，窗口只剩当前轮 |
 | `history` 工具 | 只读检索当前会话完整原文（原始措辞/命令/数值），切窗后回源 |
 
+### 🖼️ Web 画布工具
+
+`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?`：
+
+- HTML 写入 `data/canvas/<chat_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
+- 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
+- Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
+- 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
+- `conf.yaml.example` 默认 `[allow, canvas]`，不触发审批；画布 HTML 属于运行时数据，`data/` 已被 `.gitignore` 排除。
+
 ### 配置多智能体 Handoff
 
 ```python
@@ -466,9 +488,10 @@ walle/
 │   │   ├── server.py          #     服务端（CLIServer）
 │   │   ├── client.py          #     交互客户端（CLIClient）
 │   │   └── __main__.py        #     客户端入口（python -m walle.channel.cli）
-│   └── web/                   #   Web 对话（WebSocket ↔ CLI）
-│       ├── app.py             #     FastAPI 应用与桥接
-│       ├── index.html         #     对话页面
+│   └── web/                   #   Web 工作区（WebSocket ↔ CLI）
+│       ├── app.py             #     FastAPI 应用与桥接（对话 + 画布路由）
+│       ├── index.html         #     对话 + 画布页面
+│       ├── static/            #     marked / DOMPurify（Markdown 渲染与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明
 │   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.as_extension）
@@ -482,6 +505,7 @@ walle/
 │       ├── edit.py            #     文件局部替换（降级匹配 + 换行/BOM 保真）
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
+│       ├── canvas.py          #     Web 画布（HTML 落盘 + CanvasResult）
 │       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
@@ -541,6 +565,7 @@ walle/
 | 工具协议 | MCP (Model Context Protocol) |
 | 可观测性 | OpenTelemetry + Grafana + Tempo + Mimir |
 | 持久化 | SQLite |
+| Web | FastAPI + WebSocket + 原生 JS（marked + DOMPurify） |
 | 配置 | YAML + Pydantic |
 | 异步 | asyncio |
 
