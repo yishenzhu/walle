@@ -40,6 +40,7 @@ packages = [
     "walle.tools.builtin",
     "walle.channel",
     "walle.channel.cli",
+    "walle.channel.web",
     "walle.conf",
     "walle.eval",
     "walle.eval.bench",
@@ -57,6 +58,7 @@ walle = "."
 "walle.tools.builtin" = "tools/builtin"
 "walle.channel" = "channel"
 "walle.channel.cli" = "channel/cli"
+"walle.channel.web" = "channel/web"
 "walle.conf" = "conf"
 "walle.eval" = "eval"
 "walle.eval.bench" = "eval/bench"
