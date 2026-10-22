@@ -69,9 +69,11 @@ class Delta(Notification):
 
 
 class DeltaEnd(Notification):
-    """流式输出结束（回合边界）。"""
+    """流式输出结束（回合边界）；reason 为机器可读终态原因。"""
 
     type: Literal["delta_end"] = "delta_end"
+    reason: str | None = None
+    detail: str | None = None
 
 
 class ToolStart(Notification):
@@ -93,10 +95,11 @@ class ToolResult(Notification):
 
 
 class Error(Notification):
-    """Agent 层错误。"""
+    """Agent / 通道错误。code 供客户端区分忙、断开等状态。"""
 
     type: Literal["error"] = "error"
     message: str
+    code: str = ""
 
 
 NotificationUnion = Annotated[

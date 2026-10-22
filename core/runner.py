@@ -210,7 +210,11 @@ class Runner:
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
-            await bus.emit(MessageEndEvent(output=None, session_id=session_id))
+            await bus.emit(
+                MessageEndEvent(
+                    output=None, session_id=session_id, reason="max_turns"
+                )
+            )
             await bus.emit(AgentEndEvent(agent=agent.name))
             await bus.emit(SessionEndEvent(session_id=session_id))
             return RunResult(

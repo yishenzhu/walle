@@ -85,10 +85,11 @@ class MessageDeltaEvent:
 
 @dataclass
 class MessageEndEvent:
-    """文本输出完成（工具轮不发）。"""
+    """一次 run 的终态事件；工具轮通常 output=None 且 reason=None。"""
 
     output: Any
     session_id: str | None
+    reason: str | None = None
 
 
 @dataclass

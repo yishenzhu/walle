@@ -71,6 +71,9 @@ class CLIClient:
             print(n.delta, end="", flush=True)
         elif isinstance(n, DeltaEnd):
             print()
+            if n.reason:
+                text = f"{n.reason}: {n.detail}" if n.detail else n.reason
+                print(f"  {RED}⚠️ {text}{RESET}", flush=True)
         elif isinstance(n, ToolStart):
             print(f"  {CYAN}🔧 {n.tool_name}{RESET} {n.arguments}", flush=True)
         elif isinstance(n, ToolResult):
@@ -79,7 +82,8 @@ class CLIClient:
             else:
                 print(f"  {GREEN}✅ {n.tool_call_id}{RESET} {n.result}", flush=True)
         elif isinstance(n, Error):
-            print(f"  {RED}⚠️ {n.message}{RESET}", flush=True)
+            text = f"{n.code}: {n.message}" if n.code else n.message
+            print(f"  {RED}⚠️ {text}{RESET}", flush=True)
 
     async def run(self) -> None:
         """连接服务端，握手（attach 或新建）后双循环收发。

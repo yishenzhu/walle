@@ -44,6 +44,14 @@ from .executor import ToolExecutor
 from .runner import Runner, RunOptions, SessionContext
 
 
+class SessionBusy(RuntimeError):
+    code = "session_busy"
+
+
+class SessionClosed(RuntimeError):
+    code = "session_closed"
+
+
 class Session:
     """单会话运行时：自持 bus / agent 循环 / 扩展激活。
 
@@ -95,6 +103,10 @@ class Session:
         self._jobs: dict[str, Job] = {}
         # transport：连接端点（attach/detach 切换），唯一 channel 事实源
         self._transport: Channel | None = transport
+        # 单写者：一个会话同时只跑一个 run；忙时直接拒绝，不排队
+        self._state = "idle"  # idle / running / cancelling / closed
+        self._run_task: asyncio.Task | None = None
+        self._cancel_reason: str | None = None
 
     @property
     def context(self) -> SessionContext:
@@ -127,6 +139,14 @@ class Session:
         """是否有活跃连接的 transport 绑定。"""
         return self._transport is not None
 
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def transport(self) -> Channel | None:
+        return self._transport
+
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（重新加载 frontmatter）；缺省用 default。
 
@@ -140,44 +160,108 @@ class Session:
             await self._transport.notify(Delta(delta=evt.delta))
 
     async def _on_message_end(self, evt: MessageEndEvent) -> None:
-        """消息结束事件 → 文本输出完成时发 DeltaEnd（工具轮不发）。"""
-        output = evt.output
-        if output is not None and self._transport is not None:
+        """run 终态 → DeltaEnd；正常输出不带 reason，max_turns/cancel 带 reason。"""
+        if self._transport is None:
+            return
+        if evt.output is not None:
             await self._transport.notify(DeltaEnd())
+        elif evt.reason is not None:
+            await self._transport.notify(DeltaEnd(reason=evt.reason))
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
+        if self._state == "closed":
+            raise SessionClosed(f"session '{self.id}' is closed")
         self._transport = transport
 
-    def detach(self) -> None:
-        """解除 transport：保留 messages 状态，会话仍可被 attach 恢复。"""
+    def detach(self, transport: Channel | None = None) -> bool:
+        """解除 transport；给定旧端点时只解除当前端点，防止误伤新连接。"""
+        if transport is not None and transport is not self._transport:
+            return False
         self._transport = None
+        return True
 
     async def handle(self, user_input: UserInput) -> None:
+        """提交并等待一次 run；忙时抛 SessionBusy，不排队。"""
+        if self._state == "closed":
+            raise SessionClosed(f"session '{self.id}' is closed")
         if self._transport is None:
-            raise RuntimeError(f"session '{self.id}' is detached, attach first")
+            raise SessionClosed(f"session '{self.id}' is detached, attach first")
+        if self._state in ("running", "cancelling"):
+            raise SessionBusy(f"session '{self.id}' is busy ({self._state})")
+
         content = user_input.content or ""
-        # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
-        # （messages/provider），命令 handler 按需自取。
-        if await self._ext_runner.dispatch(
-            content,
-            CommandContext(
-                channel=self._transport,
-                bus=self._bus,
-                messages=self._history,
-                provider=self._provider,
-            ),
-        ):
-            return
-        await self._agent_runner.run(
-            self._agent,
-            content,
-            env=self.context,
-            options=RunOptions(streamed=True),
-        )
+        self._state = "running"
+        self._cancel_reason = None
+        task = asyncio.create_task(self._execute(content))
+        self._run_task = task
+        try:
+            await task
+        finally:
+            if not task.done():
+                task.cancel()  # 连接断开取消 worker 时，连同当前 run 一起收掉
+            if self._run_task is task:
+                self._run_task = None
+            if self._state != "closed":
+                self._state = "idle"
+
+    async def _execute(self, content: str) -> None:
+        try:
+            # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
+            # （messages/provider），命令 handler 按需自取。
+            if await self._ext_runner.dispatch(
+                content,
+                CommandContext(
+                    channel=self._transport,
+                    bus=self._bus,
+                    messages=self._history,
+                    provider=self._provider,
+                ),
+            ):
+                return
+            await self._agent_runner.run(
+                self._agent,
+                content,
+                env=self.context,
+                options=RunOptions(streamed=True),
+            )
+        except asyncio.CancelledError:
+            # 主动取消：先发终态再正常返回，调用方不必处理 CancelledError。
+            if self._state == "cancelling":
+                await self._bus.emit(
+                    MessageEndEvent(
+                        output=None,
+                        session_id=self.id,
+                        reason=self._cancel_reason or "cancelled",
+                    )
+                )
+                return
+            raise
+
+    async def cancel(self, reason: str = "cancelled") -> bool:
+        """取消当前 run；返回是否真的取消了。"""
+        task = self._run_task
+        if task is None or task.done():
+            return False
+        self._state = "cancelling"
+        self._cancel_reason = reason
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        if self._state != "closed":
+            self._state = "idle"
+        return True
 
     async def close(self) -> None:
-        """真正销毁：取消未完成的后台作业，关消息存储。"""
+        """真正销毁：取消当前 run / 后台作业，关消息存储。"""
+        if self._state == "closed":
+            return
+        await self.cancel(reason="session closed")
+        self._state = "closed"
         pending = [
             j.task
             for j in self._jobs.values()

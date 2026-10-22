@@ -13,13 +13,26 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ...spec import Error, ModelConfig, NotificationUnion, ServiceUnion, Sessions, UserInput
+from ...spec import (
+    DeltaEnd,
+    Error,
+    ModelConfig,
+    NotificationUnion,
+    ServiceUnion,
+    Sessions,
+    UserInput,
+)
 
 logger = logging.getLogger(__name__)
 
 # 通道默认连接参数（服务端监听 / 客户端连接共用同一值，避免漂移）
 HOST = "127.0.0.1"
 PORT = 8899
+
+# 单帧上限与写超时：慢消费者 / 超大帧都不能拖死 Agent 循环
+MAX_FRAME = 1 << 20
+SEND_TIMEOUT = 10.0
+CALL_TIMEOUT = 300.0
 
 
 class CLIConn:
@@ -38,6 +51,7 @@ class CLIConn:
         cwd: str | None = None,
         model: ModelConfig | None = None,
         agent: str | None = None,
+        call_timeout: float | None = CALL_TIMEOUT,
     ) -> None:
         self.chat_id = chat_id
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
@@ -46,11 +60,15 @@ class CLIConn:
         self._reader = reader
         self._writer = writer
         self._pending: dict[str, asyncio.Future] = {}
+        self._call_timeout = call_timeout
+        self._closed = False
 
     # ── 传输 ──────────────────────────────────────────
     async def send(self, msg: dict) -> None:
+        if self._closed:
+            raise ConnectionError("cli connection closed")
         self._writer.write(json.dumps(msg).encode() + b"\n")
-        await self._writer.drain()
+        await asyncio.wait_for(self._writer.drain(), SEND_TIMEOUT)
 
     async def read_line(self) -> str:
         """读一行原始帧（空串 = 连接关闭）。"""
@@ -59,31 +77,43 @@ class CLIConn:
 
     # ── Channel 协议 ──────────────────────────────────
     async def notify(self, n: NotificationUnion) -> None:
-        # 本连接归属的会话身份：补全 chat_id（上层构造事件时不带，由本连接注入）
-        await self.send(
-            {
-                "type": "notify",
-                "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(
-                    mode="json"
-                ),
-            }
-        )
+        if self._closed:
+            return
+        try:
+            # 本连接归属的会话身份：补全 chat_id（上层构造事件时不带，由本连接注入）
+            await self.send(
+                {
+                    "type": "notify",
+                    "data": n.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                        mode="json"
+                    ),
+                }
+            )
+        except (TimeoutError, ConnectionError, OSError):
+            # 慢消费者 / 已断开：关闭连接，事件可丢，Agent 循环继续。
+            self.close()
 
     async def call(self, s: ServiceUnion) -> Any:
         req_id = f"req-{uuid.uuid4().hex}"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
-        await self.send(
-            {
-                "type": "call",
-                "id": req_id,
-                "data": s.model_copy(update={"chat_id": self.chat_id}).model_dump(
-                    mode="json"
-                ),
-            }
-        )
         try:
-            return await fut
+            await self.send(
+                {
+                    "type": "call",
+                    "id": req_id,
+                    "data": s.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                        mode="json"
+                    ),
+                }
+            )
+            if self._call_timeout is None:
+                return await fut
+            return await asyncio.wait_for(fut, self._call_timeout)
+        except TimeoutError:
+            raise TimeoutError(
+                f"no reply for '{s.type}' within {self._call_timeout}s"
+            ) from None
         finally:
             self._pending.pop(req_id, None)
 
@@ -93,15 +123,23 @@ class CLIConn:
             fut.set_result(data)
 
     def close(self) -> None:
-        """连接断开：fail 所有挂起的 call，避免服务端永久挂起。"""
+        """连接断开：fail 所有挂起的 call，并关闭写端。"""
+        if self._closed:
+            return
+        self._closed = True
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_exception(ConnectionError("cli client disconnected"))
         self._pending.clear()
+        self._writer.close()
 
     # ── 读循环 ────────────────────────────────────────
-    async def run(self, on_input: Callable[[str], Awaitable[None]]) -> None:
-        """读帧：input → on_input（本连接消息）；reply → resolve 对应 request。
+    async def run(
+        self,
+        on_input: Callable[[str], Awaitable[None]],
+        on_cancel: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """读帧：input → on_input；reply → resolve；cancel → on_cancel。
 
         input 不直接 await on_input，而是入队由独立 worker 串行消费：读循环
         保持活跃，agent 运行期间 reply 帧（审批 / 提问的回复）仍能被读取。
@@ -111,8 +149,14 @@ class CLIConn:
         queue: asyncio.Queue[str] = asyncio.Queue()
         worker = asyncio.create_task(self._consume(on_input, queue))
         try:
-            while line := await self.read_line():
-                if not line.strip():
+            while not self._closed:
+                try:
+                    line = await self.read_line()
+                except ValueError:
+                    # 单行超过 MAX_FRAME：拒绝并断开，避免内存被打爆
+                    await self.notify(DeltaEnd(reason="frame_too_large"))
+                    break
+                if not line or not line.strip():
                     break
                 try:
                     msg = json.loads(line)
@@ -123,6 +167,8 @@ class CLIConn:
                     queue.put_nowait(msg.get("content") or "")
                 elif t == "reply":
                     self.resolve(msg.get("id", ""), msg.get("data"))
+                elif t == "cancel" and on_cancel is not None:
+                    await on_cancel()
         finally:
             worker.cancel()
             try:
@@ -147,7 +193,12 @@ class CLIConn:
                 # 客户端在发送 input 后会等回复完成（delta_end）再提示下一行；
                 # 处理失败时必须主动通知客户端，否则其会一直等待而"卡住"。
                 try:
-                    await self.notify(Error(message=f"处理失败: {exc}"))
+                    await self.notify(
+                        Error(
+                            message=f"处理失败: {exc}",
+                            code=getattr(exc, "code", "error"),
+                        )
+                    )
                 except Exception:
                     pass  # 对端已断开：无法通知，忽略
 
@@ -177,7 +228,7 @@ class CLIChannel:
     async def start(self) -> None:
         """开始监听，等待 CLI 客户端连接。"""
         self._server = await asyncio.start_server(
-            self._handle_conn, self._host, self._port
+            self._handle_conn, self._host, self._port, limit=MAX_FRAME
         )
         logger.info(f"cli channel listening on {self._host}:{self._port}")
 
@@ -196,6 +247,7 @@ class CLIChannel:
         """
         chat_id = ""
         session = None
+        conn: CLIConn | None = None
         try:
             line = await reader.readline()
             if not line:
@@ -227,7 +279,11 @@ class CLIChannel:
                     logger.warning(f"ignoring invalid model config: {raw_model}")
 
             conn = CLIConn(
-                chat_id, reader, writer, cwd=cwd, model=model,
+                chat_id,
+                reader,
+                writer,
+                cwd=cwd,
+                model=model,
                 agent=msg.get("agent") or None,
             )
 
@@ -236,10 +292,27 @@ class CLIChannel:
                 session = self._sessions.get(chat_id)
                 if session is None:
                     await conn.send(
-                        {"type": "error", "message": f"会话不存在: {chat_id}"}
+                        {
+                            "type": "error",
+                            "code": "session_not_found",
+                            "message": f"会话不存在: {chat_id}",
+                        }
                     )
                     return
+                # 先回 welcome：客户端收到后才开始读 notify 帧
+                await conn.send({"type": "welcome", "chat_id": chat_id})
+                old = session.transport
                 session.attach(conn)
+                # 接管：旧 run 取消，终态发给新连接；旧连接随后断开
+                if isinstance(old, CLIConn) and old is not conn:
+                    await session.cancel(reason="session reattached")
+                    await old.notify(
+                        Error(
+                            message="session attached elsewhere",
+                            code="session_taken_over",
+                        )
+                    )
+                    old.close()
                 # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
                 if conn.agent:
                     session.set_agent(conn.agent)
@@ -247,6 +320,7 @@ class CLIChannel:
             else:
                 # 新会话：sessions.create（按需激活指定扩展）
                 session = self._sessions.create(conn, ext_names)
+                await conn.send({"type": "welcome", "chat_id": chat_id})
                 logger.info(
                     f"cli client connected: {chat_id} agent={conn.agent or 'default'}"
                 )
@@ -255,19 +329,24 @@ class CLIChannel:
                 """本连接输入 → 本会话处理（chat_id 已绑定）。"""
                 await session.handle(UserInput(content=content, chat_id=chat_id))
 
-            await conn.send({"type": "welcome", "chat_id": chat_id})
-            await conn.run(on_input)
+            async def on_cancel() -> None:
+                await session.cancel(reason="user cancelled")
+
+            await conn.run(on_input, on_cancel)
         except (
             json.JSONDecodeError,
             ConnectionError,
             asyncio.IncompleteReadError,
+            ValueError,
         ) as exc:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:
+            if conn is not None:
+                conn.close()
             if session is not None:
                 try:
-                    # 断开只 detach（保留 messages 供重连），不 close
-                    session.detach()
+                    # 按连接身份 detach：旧连接不会误伤新连接
+                    session.detach(conn)
                 except Exception as exc:
                     logger.warning(f"session {chat_id} detach failed: {exc}")
             writer.close()

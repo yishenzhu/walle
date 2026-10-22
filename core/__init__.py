@@ -22,6 +22,8 @@ from .runner import (
 )
 from .session import (
     Session,
+    SessionBusy,
+    SessionClosed,
     SessionRegistry,
 )
 
@@ -38,6 +40,8 @@ __all__ = [
     "ToolExecutor",
     # session — 会话实体与注册表
     "Session",
+    "SessionBusy",
+    "SessionClosed",
     "SessionRegistry",
     # 扩展面（自 infra 转发，core 对外统一出口）
     "Command",
