@@ -13,20 +13,20 @@ from .harness import TaskResult
 from .metrics import GroupStats, Pricing, aggregate, by_domain, task_row
 
 
-def _cell(s: Any) -> str:
+def _table_cell(s: Any) -> str:
     """表格单元格转义：管道符转义、换行压平、去首尾空白。"""
     return str(s).replace("|", "\\|").replace("\n", " ").strip()
 
 
-def _pct(stats: GroupStats) -> str:
+def _percent(stats: GroupStats) -> str:
     return f"{stats.passed}/{stats.n} ({stats.success_rate * 100:.1f}%)"
 
 
-def _fmt_cost(v: float) -> str:
+def _format_cost(v: float) -> str:
     return f"${v:.4f}" if v else "-"
 
 
-def _bar(rate: float, width: int = 12) -> str:
+def _progress_bar(rate: float, width: int = 12) -> str:
     """ASCII 进度条：█ 实心 / ░ 空心。"""
     filled = round(rate * width)
     return "█" * filled + "░" * (width - filled)
@@ -41,8 +41,6 @@ def _compact_detail(items: list[str]) -> str:
     for it in items:
         if ": PASS" in it:
             parts.append(it.split(": ", 1)[0] + " PASS")
-        elif ": FAIL" in it or "no match" in it or "missing" in it or "actual=" in it:
-            parts.append(it)
         else:
             parts.append(it)
     return " · ".join(parts) or "-"
@@ -94,9 +92,9 @@ def render_report(
         "|---|---|---|---|---|---|"
     )
     lines.append(
-        f"| **{_pct(overall)}** | {overall.avg_turns} | {overall.avg_tokens:,.0f} | "
+        f"| **{_percent(overall)}** | {overall.avg_turns} | {overall.avg_tokens:,.0f} | "
         f"{overall.avg_elapsed}s | {total_calls}（错误 {overall.tool_errors}） | "
-        f"{_fmt_cost(overall.avg_cost)} |"
+        f"{_format_cost(overall.avg_cost)} |"
     )
     lines.append("")
 
@@ -108,8 +106,9 @@ def render_report(
     )
     for d, s in domains.items():
         lines.append(
-            f"| {_cell(d)} | {_pct(s)} | `{_bar(s.success_rate)}` | {s.avg_turns} | "
-            f"{s.avg_tokens:,.0f} | {_fmt_cost(s.avg_cost)} |"
+            f"| {_table_cell(d)} | {_percent(s)} | "
+            f"`{_progress_bar(s.success_rate)}` | {s.avg_turns} | "
+            f"{s.avg_tokens:,.0f} | {_format_cost(s.avg_cost)} |"
         )
     lines.append("")
 
@@ -121,10 +120,10 @@ def render_report(
     )
     for r in sorted(results, key=lambda r: (r.task.domain, r.task.name)):
         lines.append(
-            f"| {_cell(r.task.name)} | {_cell(r.task.domain)} | "
+            f"| {_table_cell(r.task.name)} | {_table_cell(r.task.domain)} | "
             f"{'✅' if r.success else '❌'} | {r.turns} | {r.tokens:,} | "
-            f"{r.elapsed:.1f} | {_cell(_trace_arrow(r))} | "
-            f"{_cell(_compact_detail(r.detail) or (r.error or ''))} |"
+            f"{r.elapsed:.1f} | {_table_cell(_trace_arrow(r))} | "
+            f"{_table_cell(_compact_detail(r.detail) or (r.error or ''))} |"
         )
     lines.append("")
 
@@ -144,18 +143,39 @@ def render_report(
                 out = out if len(out) <= 400 else out[:400] + "..."
                 lines.append(f"**最终输出**\n\n```\n{out}\n```\n")
             if r.error:
-                lines.append(f"**任务错误**: `{_cell(r.error)}`\n")
+                lines.append(f"**任务错误**: `{_table_cell(r.error)}`\n")
             lines.append("---\n")
 
     return "\n".join(lines)
 
 
 def write_results_csv(results: list[TaskResult], pricing: Pricing, path: Path) -> None:
+    if not results:
+        path.write_text("", encoding="utf-8")
+        return
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(task_row(results[0], pricing)))
         writer.writeheader()
         for r in results:
             writer.writerow(task_row(r, pricing))
+
+
+def save_reports(
+    results: list[TaskResult],
+    pricing: Pricing,
+    meta: dict[str, Any],
+    outdir: Path,
+    *,
+    previous: dict[str, Any] | None = None,
+    with_json: bool = True,
+) -> None:
+    """一次落盘全部报告；with_json=False 仅重渲染 md/csv（render-only）。"""
+    report_md = render_report(results, pricing, meta, previous=previous)
+    (outdir / "report.md").write_text(report_md, encoding="utf-8")
+    write_results_csv(results, pricing, outdir / "results.csv")
+    if with_json:
+        save_results_json(results, pricing, meta, outdir / "results.json")
+        save_results_detail(results, outdir / "results_detail.json")
 
 
 def save_results_json(
@@ -223,7 +243,8 @@ def save_results_detail(results: list[TaskResult], path: Path) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_results_detail(path: Path) -> dict[str, Any] | None:
+def load_results(path: Path) -> dict[str, Any] | None:
+    """读取 results*.json；文件缺失或损坏时返回 None。"""
     if not path.exists():
         return None
     try:
@@ -232,14 +253,5 @@ def load_results_detail(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def load_results_json(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def now_iso() -> str:
+def utc_timestamp() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")

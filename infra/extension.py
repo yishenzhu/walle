@@ -1,6 +1,6 @@
-"""扩展系统：加载器(ExtensionRegistry)产出声明，激活器(ExtensionRunner)按会话生效。
+"""扩展系统：加载器(ExtensionManager)产出声明，激活器(ExtensionRunner)按会话生效。
 
-- ExtensionRegistry（进程级一次）：add/discover 收集 factory，load() 产出
+- ExtensionManager（进程级一次）：add/discover 收集 factory，load() 产出
   Extension 声明（tools/handlers/commands）。无副作用、不持有 bus/工具表。
 - ExtensionRunner（每会话一个）：把选中的扩展激活到本会话的 bus + 工具表 +
   命令表；支持 unload/重激活。同一扩展可被多个会话独立激活。
@@ -16,7 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from ..conf import auto_path
+from ..conf import resolve_path
 from ..spec import Channel, DiagnosticType, Messages, ResourceDiagnostic
 from .event_bus import EventBus, Handler
 from .provider import OpenAIProvider
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExtensionState(StrEnum):
-    LOADING = "loading"  # factory 执行完毕，声明可用
+    READY = "ready"  # factory 执行完毕，声明可用
     FAILED = "failed"  # factory 抛异常，声明不可用
 
 
@@ -39,7 +39,7 @@ class Extension:
     tools: list[Tool] = field(default_factory=list)
     skills: dict[str, Skill] = field(default_factory=dict)
     commands: dict[str, Command] = field(default_factory=dict)
-    state: ExtensionState = ExtensionState.LOADING
+    state: ExtensionState = ExtensionState.READY
     error: str | None = None
 
 
@@ -84,34 +84,34 @@ class Command:
 class ExtensionAPI:
     """扩展 factory 拿到的注册接口：load 期收集，activate 期落盘。
 
-    所有方法只写 pending Extension，杜绝加载期就污染 bus / registry——
+    所有方法只写 pending Extension，杜绝加载期就污染 bus / manager——
     一个扩展失败不会泄漏半套注册。
     """
 
-    def __init__(self, ext: Extension) -> None:
-        self._ext = ext
+    def __init__(self, extension: Extension) -> None:
+        self._extension = extension
 
     def on(self, event_type: type, handler: Handler) -> None:
         """订阅一个事件类（activate 时统一挂到 bus）。"""
-        self._ext.handlers.setdefault(event_type, []).append(handler)
+        self._extension.handlers.setdefault(event_type, []).append(handler)
 
     def register_tool(self, tool: Tool) -> None:
-        """注册一个工具（activate 时统一写入 registry）。"""
-        self._ext.tools.append(tool)
+        """注册一个工具（activate 时统一写入 manager）。"""
+        self._extension.tools.append(tool)
 
     def register_command(self, name: str, description: str, handler) -> None:
         """注册斜杠命令 /<name>（handler 收 args 字符串，返回回复文本）。"""
-        self._ext.commands[name] = Command(name, description, handler)
+        self._extension.commands[name] = Command(name, description, handler)
 
     def register_skill(self, name: str, description: str, path: str) -> None:
         """注册一个技能声明（name/description 进提示词，path 供 read 加载全文）。"""
-        self._ext.skills[name] = Skill(name, description, path)
+        self._extension.skills[name] = Skill(name, description, path)
 
 
 ExtensionFactory = Callable[[ExtensionAPI], Awaitable[None]]
 
 
-class ExtensionRegistry:
+class ExtensionManager:
     """进程级扩展加载器：add/discover 收集 factory，load() 产出扩展声明。
 
     只负责"把扩展代码加载成声明"(Extension: tools/handlers/commands)。
@@ -141,7 +141,7 @@ class ExtensionRegistry:
         """
         enabled = enabled or []
         disabled = disabled or []
-        base = Path(auto_path(str(root)))  # 相对路径按项目根解析
+        base = Path(resolve_path(str(root)))  # 相对路径按项目根解析
         if not base.is_dir():
             return
 
@@ -159,7 +159,7 @@ class ExtensionRegistry:
                 if not mod_path.is_file():
                     raise FileNotFoundError(f"缺入口文件: {mod_path}")
                 spec = importlib.util.spec_from_file_location(
-                    f"ext_{entry.name}", mod_path
+                    f"extension_{entry.name}", mod_path
                 )
                 if spec is None or spec.loader is None:
                     raise ImportError(f"无法加载: {mod_path}")
@@ -185,25 +185,25 @@ class ExtensionRegistry:
         """
         self._extensions.clear()
         for name, factory in self._factories:
-            ext = Extension(name=name)
+            extension = Extension(name=name)
             try:
-                await factory(ExtensionAPI(ext))
+                await factory(ExtensionAPI(extension))
             except Exception as exc:  # noqa: BLE001 - 单个扩展失败不阻断
-                ext.state = ExtensionState.FAILED
-                ext.error = str(exc)
-            self._extensions.append(ext)
+                extension.state = ExtensionState.FAILED
+                extension.error = str(exc)
+            self._extensions.append(extension)
 
     @property
     def diagnostics(self) -> list[ResourceDiagnostic]:
         """全部扩展的诊断（加载/激活失败）。"""
         out: list[ResourceDiagnostic] = []
-        for ext in self._extensions:
-            if ext.state is ExtensionState.FAILED and ext.error:
+        for extension in self._extensions:
+            if extension.state is ExtensionState.FAILED and extension.error:
                 out.append(
                     ResourceDiagnostic(
                         type=DiagnosticType.ERROR,
-                        message=ext.error,
-                        path=ext.name,
+                        message=extension.error,
+                        path=extension.name,
                     )
                 )
         return out
@@ -251,37 +251,37 @@ class ExtensionRunner:
 
     def activate(self, *extensions: Extension) -> None:
         """把选中的扩展挂载到本会话（工具同名后到覆盖；事件挂本会话 bus）。"""
-        for ext in extensions:
-            if ext.name in self._mounts:
-                self.unload(ext.name)  # 重新激活前先摘旧的
+        for extension in extensions:
+            if extension.name in self._mounts:
+                self.unload(extension.name)  # 重新激活前先摘旧的
             mount = ExtensionMount()
             try:
-                if ext.tools:
-                    self.register_tool(*ext.tools)
-                    mount.tools = list(ext.tools)
-                for name, skill in ext.skills.items():
+                if extension.tools:
+                    self.register_tool(*extension.tools)
+                    mount.tools = list(extension.tools)
+                for name, skill in extension.skills.items():
                     self._skills[name] = skill
                     mount.skills.append(name)
-                for event_type, handlers in ext.handlers.items():
+                for event_type, handlers in extension.handlers.items():
                     for handler in handlers:
                         self._bus.on(event_type, handler)
                         mount.handlers.append((event_type, handler))
-                for name, cmd in ext.commands.items():
+                for name, cmd in extension.commands.items():
                     self._commands[name] = cmd
                     mount.commands.append(name)
             except Exception:
-                self.rollback(mount)
+                self._rollback(mount)
                 raise
-            self._mounts[ext.name] = mount
+            self._mounts[extension.name] = mount
 
     def unload(self, name: str) -> None:
         """摘除某扩展在本会话的挂载（工具/事件/命令）。"""
         mount = self._mounts.pop(name, None)
         if mount is None:
             return
-        self.rollback(mount)
+        self._rollback(mount)
 
-    def rollback(self, mount: ExtensionMount) -> None:
+    def _rollback(self, mount: ExtensionMount) -> None:
         """摘除一次激活的全部副作用（失败回滚或主动卸载共用）。"""
         current = {t.name: t for t in self._tools}
         for tool in mount.tools:
@@ -323,7 +323,7 @@ class ExtensionRunner:
         return dict(self._skills)
 
     @property
-    def active_names(self) -> set[str]:
+    def active_extensions(self) -> set[str]:
         return set(self._mounts)
 
 

@@ -37,18 +37,18 @@ class ToolExecutor:
     """
 
     def __init__(self, config: ToolConfig | None = None):
-        cfg = config or ToolConfig()
-        self._timeout_policy = cfg.timeout
+        config = config or ToolConfig()
+        self._timeout_policy = config.timeout
 
-    async def execute_call(
+    async def execute_tool_call(
         self,
-        tc,
+        tool_call,
         tools: dict[str, Tool],
     ) -> tuple[str, Any]:
-        """入口·回调对象：执行一个模型工具调用（tc 为 LLM 回调对象，含 id/function）。"""
-        name = tc.function.name
-        args = json.loads(tc.function.arguments)
-        return await self.execute_tool(name, args, tc.id, tools)
+        """入口：执行一个模型工具调用（tool_call 含 id/function）。"""
+        name = tool_call.function.name
+        args = json.loads(tool_call.function.arguments)
+        return await self.execute_tool(name, args, tool_call.id, tools)
 
     async def execute_tool(
         self,
@@ -61,7 +61,7 @@ class ToolExecutor:
     ) -> tuple[str, Any]:
         """核心链：查找 → 通知（可关）→ preflight 屏障 → 执行（超时）→ 结果/错误。
 
-        execute_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
+        execute_tool_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
         （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
         静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
         TOOL_EXECUTION_START 上的审批扩展（tools.approval.Approval）承担。
@@ -76,6 +76,12 @@ class ToolExecutor:
         # tool_context——审批扩展、preflight 钩子与工具执行都原地获取。
         ctx = tool_context.get()
         channel = ctx.channel if ctx is not None else None
+
+        async def report_error(message: str) -> str:
+            """（可选）通知客户端一次工具失败，返回给模型的错误文本。"""
+            if notify and channel is not None:
+                await channel.notify(ToolResult(tool_call_id=tc_id, error=message))
+            return message
 
         if notify and channel is not None:
             await channel.notify(
@@ -99,24 +105,19 @@ class ToolExecutor:
                     if verdict.block:
                         blocked += f": {verdict.block}"
                     logger.info(blocked)
-                    if notify and channel is not None:
-                        await channel.notify(
-                            ToolResult(tool_call_id=tc_id, error=blocked)
-                        )
-                    return tc_id, blocked
+                    return tc_id, await report_error(blocked)
                 if verdict.arguments is not None:
                     args = verdict.arguments  # 改写本次调用参数
 
         attrs = {"tool.name": name}
         result = error = None
         elapsed_ms = None
+        timeout = self._timeout_policy.resolve(name)
         try:
             with tracer.start_as_current_span("tool.execute") as span:
                 span.set_attribute("tool.name", name)
                 start = time.monotonic()
-                result = await asyncio.wait_for(
-                    ft.run(args), self._timeout_policy.resolve(name)
-                )
+                result = await asyncio.wait_for(ft.run(args), timeout)
                 elapsed_ms = (time.monotonic() - start) * 1000
 
             TOOL_DURATION.record(elapsed_ms, attrs)
@@ -125,19 +126,14 @@ class ToolExecutor:
             if notify and channel is not None:
                 await channel.notify(ToolResult(tool_call_id=tc_id, result=result))
         except TimeoutError:
-            timeout = self._timeout_policy.resolve(name)
             logger.warning(f"{name}: timeout after {timeout}s")
             TOOL_ERRORS.add(1, attrs)
             elapsed_ms = timeout * 1000
-            error = f"Error: tool '{name}' timed out after {timeout}s"
-            if notify and channel is not None:
-                await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
+            error = await report_error(f"Error: tool '{name}' timed out after {timeout}s")
         except Exception as e:
             logger.warning(f"{name}: {e}")
             TOOL_ERRORS.add(1, attrs)
-            error = f"Error: {e}"
-            if notify and channel is not None:
-                await channel.notify(ToolResult(tool_call_id=tc_id, error=error))
+            error = await report_error(f"Error: {e}")
         finally:
             # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型扩展。
             # 工具未找到 / 审批拒绝 / 被扩展阻止的路径不经过 try，不发 after。
@@ -153,19 +149,19 @@ class ToolExecutor:
                 )
         return tc_id, result if error is None else error
 
-    async def execute_calls(
+    async def execute_tool_calls(
         self,
         tool_calls: list,
         tools: dict[str, Tool],
     ) -> AsyncIterator[tuple[str, Any]]:
         """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。"""
         for task in asyncio.as_completed(
-            [self.execute_call(tc, tools) for tc in tool_calls]
+            [self.execute_tool_call(tool_call, tools) for tool_call in tool_calls]
         ):
             tc_id, result = await task
             yield tc_id, result
 
-    async def launch_pending(self, tools: dict[str, Tool]) -> None:
+    async def launch_pending_jobs(self, tools: dict[str, Tool]) -> None:
         """本轮工具执行完后：把 background 写下的 pending 作业拉起（create_task）。
 
         job 状态 pending → running；run_job 跑完后写回 result/error
@@ -189,7 +185,7 @@ class ToolExecutor:
     ) -> None:
         """后台作业执行体：执行工具并写回结果（done）或错误（error）。
 
-        launch_pending 拉起（create_task）后由本方法跑完。后台任务独立
+        launch_pending_jobs 拉起（create_task）后由本方法跑完。后台任务独立
         context——开头注入 tool_context，工具/审批扩展经它拿会话上下文。
         """
         tool_context.set(ctx)
@@ -200,8 +196,6 @@ class ToolExecutor:
             )
             job.result = result
             job.status = JobStatus.DONE
-        except asyncio.CancelledError:
-            raise
         except Exception as exc:
             job.error = str(exc)
             job.status = JobStatus.ERROR

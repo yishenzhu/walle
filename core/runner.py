@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -53,14 +52,14 @@ class RunOptions:
     """单次 run 的可选行为配置（怎么做），与会话上下文（SessionContext）分离。"""
 
     max_turns: int = DEFAULT_MAX_TURNS
-    streamed: bool = False  # 流式输出（delta 通知）
+    stream: bool = False  # 流式输出（delta 通知）
 
 
 @dataclass
 class SessionContext:
     """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。
 
-    携带会话的扩展激活层（ext_runner）：工具执行期经它动态注册新工具。
+    携带会话的扩展激活层（extension_runner）：工具执行期经它动态注册新工具。
     agents 为会话 agent 注册表（name→Agent），handoff/subagent 工具按名
     在此查表构造；depth 为派发深度（0=顶层会话），用于卡住子 agent 递归。
     bus 为会话事件总线（Runner 发事件、工具执行钩子屏障共用同一实例）。
@@ -68,10 +67,10 @@ class SessionContext:
 
     history: Messages  # 会话历史（必填）
     provider: LLM | None = None  # 模型接入（协议面；装配根注入，见 Runner 注释）
-    channel: Channel = None  # 会话 channel 端点（仅交互，不承担会话身份）
+    channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    ext_runner: ToolTableProtocol | None = None  # 会话工具表（工具可动态注册）
+    extension_runner: ToolTableProtocol | None = None  # 会话工具表（工具可动态注册）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
@@ -79,14 +78,13 @@ class SessionContext:
     history_factory: Callable[[], Messages] | None = None  # 子 agent 隔离历史来源（装配注入）
 
 
-class RunResult(BaseModel):
+@dataclass
+class RunResult:
     input: str
-    last_agent: Agent | None = None
     max_turns: int
+    last_agent: Agent | None = None
     completed_turns: int = 0
     output: str | BaseModel | None = None
-
-    model_config = {"arbitrary_types_allowed": True}
 
 
 class Runner:
@@ -114,7 +112,7 @@ class Runner:
             )
         history = env.history
         bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造（仅测试）
-        streamed = options.streamed
+        stream = options.stream
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
         await bus.emit(SessionStartEvent(session_id=session_id))
@@ -124,7 +122,7 @@ class Runner:
         await bus.emit(AgentStartEvent(agent=agent.name, session_id=session_id))
 
         with tracer.start_as_current_span("agent.run") as span:
-            span.set_attribute("streamed", streamed)
+            span.set_attribute("stream", stream)
             turn = 0
 
             async def emit_turn_end() -> None:
@@ -146,7 +144,7 @@ class Runner:
 
                 messages = await self._build_messages(agent, history, env)
                 tool_source = (
-                    env.ext_runner.all_tools() if env.ext_runner is not None else []
+                    env.extension_runner.all_tools() if env.extension_runner is not None else []
                 )
                 tools = self._build_tools(agent, tool_source, env)
 
@@ -154,8 +152,8 @@ class Runner:
 
                 # 本轮执行上下文：会话本身即工具可见视图，整轮统一注入一次
                 tool_context.set(env)
-                if streamed:
-                    completion, message, tool_results = await self._run_turn_streamed(
+                if stream:
+                    completion, message, tool_results = await self._run_turn_streaming(
                         agent, messages, tools, provider, bus
                     )
                 else:
@@ -163,7 +161,7 @@ class Runner:
                         agent, messages, tools, provider
                     )
                 # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
-                await self._executor.launch_pending(tools)
+                await self._executor.launch_pending_jobs(tools)
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
@@ -192,11 +190,7 @@ class Runner:
                     span.set_attribute("agent.iterations", turn)
                     output = self._format_output(agent, message.content)
                     await emit_turn_end()
-                    await bus.emit(
-                        MessageEndEvent(output=output, session_id=session_id)
-                    )
-                    await bus.emit(AgentEndEvent(agent=agent.name))
-                    await bus.emit(SessionEndEvent(session_id=session_id))
+                    await self._finish(agent, session_id, bus, output)
                     return RunResult(
                         input=input,
                         last_agent=agent,
@@ -210,13 +204,9 @@ class Runner:
             AGENT_ITERATIONS.record(turn)
             span.set_attribute("agent.iterations", turn)
             logger.warning(f"max turns ({options.max_turns}) reached. Stopping.")
-            await bus.emit(
-                MessageEndEvent(
-                    output=None, session_id=session_id, reason="max_turns"
-                )
+            await self._finish(
+                agent, session_id, bus, output=None, reason="max_turns"
             )
-            await bus.emit(AgentEndEvent(agent=agent.name))
-            await bus.emit(SessionEndEvent(session_id=session_id))
             return RunResult(
                 input=input,
                 last_agent=agent,
@@ -224,7 +214,32 @@ class Runner:
                 completed_turns=turn,
             )
 
-    async def _run_turn_streamed(
+    async def _finish(
+        self,
+        agent: Agent,
+        session_id: str | None,
+        bus: EventBusProtocol,
+        output: str | BaseModel | None,
+        reason: str | None = None,
+    ) -> None:
+        """一次 run 的终态事件：message 结束 → agent 结束 → session 结束。"""
+        await bus.emit(
+            MessageEndEvent(output=output, session_id=session_id, reason=reason)
+        )
+        await bus.emit(AgentEndEvent(agent=agent.name))
+        await bus.emit(SessionEndEvent(session_id=session_id))
+
+    def _request_params(
+        self, agent: Agent, messages: list, tools: dict[str, Tool]
+    ) -> dict[str, Any]:
+        """一次模型请求的公共参数：消息、工具 schema、agent 采样参数。"""
+        return {
+            "messages": [m.model_dump() for m in messages],
+            "tools": [t.to_schema() for t in tools.values()],
+            **self.model_params(agent),
+        }
+
+    async def _run_turn_streaming(
         self,
         agent: Agent,
         messages: list,
@@ -234,9 +249,7 @@ class Runner:
     ):
         # 流式增量只发事件（MESSAGE_DELTA）——推给 channel 由监听者负责
         async with provider.stream(
-            messages=[m.model_dump() for m in messages],  # type: ignore
-            tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
-            **self.model_params(agent),
+            **self._request_params(agent, messages, tools)
         ) as stream:
             async for event in stream:
                 if event.type == "content.delta":
@@ -254,9 +267,7 @@ class Runner:
         provider,
     ):
         completion = await provider.create(
-            messages=[m.model_dump() for m in messages],  # type: ignore
-            tools=[t.formatted_schema() for t in tools.values()],  # type: ignore
-            **self.model_params(agent),
+            **self._request_params(agent, messages, tools)
         )
         message, tool_results = await self._collect_tool_results(completion, tools)
         return completion, message, tool_results
@@ -267,28 +278,9 @@ class Runner:
         tool_results: list = []
         if message.tool_calls:
             tool_results = [
-                r async for r in self._executor.execute_calls(message.tool_calls, tools)
+                r async for r in self._executor.execute_tool_calls(message.tool_calls, tools)
             ]
         return message, tool_results
-
-    def run_sync(
-        self,
-        agent: Agent,
-        input: str,
-        env: SessionContext,
-        options: RunOptions | None = None,
-    ) -> RunResult:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            if loop.is_running():
-                raise RuntimeError(
-                    "Cannot call run_sync from within an async context. Use run instead."
-                )
-
-        return asyncio.run(self.run(agent, input, env, options))
 
     def model_params(self, agent: Agent):
         params: dict[str, Any] = {}
@@ -321,8 +313,8 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        if ctx.ext_runner is not None:
-            skill_prompt = agent.skill_prompt(ctx.ext_runner.skills)
+        if ctx.extension_runner is not None:
+            skill_prompt = agent.skill_prompt(ctx.extension_runner.skills)
             if skill_prompt:
                 messages += [SystemMessage(content=skill_prompt)]
         return messages

@@ -15,17 +15,17 @@ def _make_skill(root, name: str, description: str) -> None:
 
 
 def test_skill_scan_returns_meta_with_path(tmp_path, monkeypatch):
-    """Skill.scan 返回元数据（name/description/path），不是工具。"""
+    """SkillLoader.scan 返回技能声明（name/description/path），不是工具。"""
     from ..tools import skill as skill_mod
 
-    monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
+    monkeypatch.setattr(skill_mod, "AGENT_DIR", tmp_path)
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "code-review", "Review code")
 
-    metas = skill_mod.Skill.scan()
+    metas = skill_mod.SkillLoader.scan()
     assert len(metas) == 2
     m = metas[0]
-    assert isinstance(m, skill_mod.SkillMeta)
+    assert isinstance(m, Skill)
     assert m.name == "code-review"
     assert m.path.endswith("code-review/SKILL.md")
 
@@ -33,15 +33,15 @@ def test_skill_scan_returns_meta_with_path(tmp_path, monkeypatch):
 def test_skill_scan_empty_dir(tmp_path, monkeypatch):
     from ..tools import skill as skill_mod
 
-    monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
-    assert skill_mod.Skill.scan() == []
+    monkeypatch.setattr(skill_mod, "AGENT_DIR", tmp_path)
+    assert skill_mod.SkillLoader.scan() == []
 
 
 def test_skill_scan_skips_broken(tmp_path, monkeypatch):
     """缺 description 的坏技能被跳过，不阻断其余。"""
     from ..tools import skill as skill_mod
 
-    monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
+    monkeypatch.setattr(skill_mod, "AGENT_DIR", tmp_path)
     bad = tmp_path / "skills" / "bad"
     bad.mkdir(parents=True)
     (bad / "SKILL.md").write_text(
@@ -49,7 +49,7 @@ def test_skill_scan_skips_broken(tmp_path, monkeypatch):
     )
     _make_skill(tmp_path / "skills", "good", "Good skill")
 
-    metas = skill_mod.Skill.scan()
+    metas = skill_mod.SkillLoader.scan()
     assert [m.name for m in metas] == ["good"]
 
 
@@ -110,18 +110,18 @@ class TestAgentSkillPrompt:
         )
 
 
-async def test_skill_as_ext_registers_into_session(tmp_path, monkeypatch):
-    """技能扩展：Skill.as_ext 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
-    from ..core import ExtensionRegistry, ExtensionRunner
+async def test_skill_as_extension_registers_into_session(tmp_path, monkeypatch):
+    """技能扩展：SkillLoader.as_extension 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
+    from ..core import ExtensionManager, ExtensionRunner
     from ..infra import EventBus
     from ..tools import skill as skill_mod
 
-    monkeypatch.setattr(skill_mod, "DOT_AGENT", tmp_path)
+    monkeypatch.setattr(skill_mod, "AGENT_DIR", tmp_path)
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "review", "Review code")
 
-    loader = ExtensionRegistry()
-    loader.add("skills", skill_mod.Skill.as_ext)
+    loader = ExtensionManager()
+    loader.add("skills", skill_mod.SkillLoader.as_extension)
     await loader.load()
     assert loader.extensions[0].error is None
 

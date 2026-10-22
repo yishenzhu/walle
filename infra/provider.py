@@ -1,6 +1,7 @@
 import os
 from typing import Self
 
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 
@@ -45,8 +46,6 @@ class OpenAIProvider:
 
     @classmethod
     def load_env(cls):
-        from dotenv import load_dotenv
-
         load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("OPENAI_BASE_URL")

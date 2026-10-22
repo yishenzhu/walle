@@ -35,7 +35,7 @@ class TestProjectionPersistence:
         )
         projected = await h2.get()
         assert [m.content for m in projected] == ["u4", "u5"]
-        assert await h2.projection() == 4
+        assert await h2.get_projection() == 4
         await h2.close()
 
     async def test_clear_projection_persists(self, tmp_path):
@@ -60,9 +60,9 @@ class TestProjectionPersistence:
     async def test_projection_state_readable(self, tmp_path):
         h = ProjectedMessages(InMemoryMessages())
         await h.add([UserMessage(content="u0")])
-        assert await h.projection() is None
+        assert await h.get_projection() is None
         await h.set_projection(1)
-        assert await h.projection() == 1
+        assert await h.get_projection() == 1
 
 
 class TestNewWindowTool:

@@ -79,7 +79,7 @@ async def new_window() -> str:
     )
     if last_user is None:
         return "Error: no user turn boundary found"
-    old = await history.projection()
+    old = await history.get_projection()
     old_cut = old if old is not None else 0
     new_cut = max(last_user, old_cut)
     if new_cut <= old_cut:

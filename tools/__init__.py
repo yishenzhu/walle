@@ -1,11 +1,11 @@
 from .approval import Approval
-from .mcp import MCPClient, MCPRegistry
+from .mcp import MCPClient, MCPManager
 from .sandbox import DEFAULT_HIDDEN_PATHS, Sandbox, SandboxConfig
 
 __all__ = [
     "Approval",
     "MCPClient",
-    "MCPRegistry",
+    "MCPManager",
     "DEFAULT_HIDDEN_PATHS",
     "Sandbox",
     "SandboxConfig",

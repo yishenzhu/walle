@@ -1,11 +1,11 @@
 import asyncio
 
 from ..conf import MCPConfig
-from ..tools.mcp import MCPRegistry
+from ..tools.mcp import MCPManager
 
 
 def test_roundtrip(tmp_path):
-    store = MCPRegistry(tmp_path / "mcp.yaml")
+    store = MCPManager(tmp_path / "mcp.yaml")
     store.save("obsidian", MCPConfig(url="http://127.0.0.1:27123/mcp"))
     store.save(
         "fs",
@@ -29,18 +29,18 @@ def test_roundtrip(tmp_path):
 
 
 def test_load_empty(tmp_path):
-    assert MCPRegistry(tmp_path / "mcp.yaml").load() == {}
+    assert MCPManager(tmp_path / "mcp.yaml").load() == {}
 
 
 def test_unusual_name_allowed(tmp_path):
     """单文件存储无文件系统暴露，特殊字符名（中文等）允许。"""
-    store = MCPRegistry(tmp_path / "mcp.yaml")
+    store = MCPManager(tmp_path / "mcp.yaml")
     store.save("obsidian 库", MCPConfig(url="http://x"))
     assert "obsidian 库" in store.load()
 
 
-def test_as_ext_registers_into_api():
-    """MCPRegistry.as_ext 把客户端工具逐个注册进扩展 api。"""
+def test_as_extension_registers_into_api():
+    """MCPManager.as_extension 把客户端工具逐个注册进扩展 api。"""
     from ..infra import Tool
 
     async def fake_fn(args):
@@ -52,8 +52,8 @@ def test_as_ext_registers_into_api():
             Tool(name="mcp_a_t2", description="t2", parameters={}, fn=fake_fn),
         ]
 
-    reg = MCPRegistry()
-    reg._clients.append(FakeClient())
+    manager = MCPManager()
+    manager._clients.append(FakeClient())
 
     collected: list[str] = []
 
@@ -61,5 +61,5 @@ def test_as_ext_registers_into_api():
         def register_tool(self, tool):
             collected.append(tool.name)
 
-    asyncio.run(reg.as_ext(FakeAPI()))  # noqa: RUF006
+    asyncio.run(manager.as_extension(FakeAPI()))  # noqa: RUF006
     assert collected == ["mcp_a_t1", "mcp_a_t2"]

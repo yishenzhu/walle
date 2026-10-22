@@ -5,12 +5,12 @@ import json
 
 import pytest
 
-from ..channel.cli import CLIChannel, CLIConn
+from ..channel.cli import CLIConnection, CLIServer
 from ..channel.cli.server import MAX_FRAME
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Session, SessionBusy, SessionRegistry
+from ..core import Session, SessionBusyError, SessionManager
 from ..messages import build_history
-from ..spec import Approval, DeltaEnd, MessageEndEvent, UserInput
+from ..spec import ApprovalRequest, DeltaEnd, MessageEndEvent, UserInput
 from .conftest import FakeChannel
 
 
@@ -39,7 +39,7 @@ async def test_handle_rejects_when_busy(tmp_path):
     try:
         await asyncio.wait_for(started.wait(), 1)
         assert s.state == "running"
-        with pytest.raises(SessionBusy):
+        with pytest.raises(SessionBusyError):
             await s.handle(UserInput(content="two"))
         release.set()
         await first
@@ -97,16 +97,16 @@ async def test_detach_ignores_stale_transport(tmp_path):
 
 async def test_attach_takeover_cancels_old_run(tmp_path):
     """新连接接管：旧 run 取消，终态发给新连接。"""
-    registry = SessionRegistry(
+    manager = SessionManager(
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
         ),
         storage="memory",
         db_path=str(tmp_path / "s.db"),
     )
-    channel = CLIChannel(sessions=registry, host="127.0.0.1", port=0)
-    await channel.start()
-    port = channel._server.sockets[0].getsockname()[1]
+    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
 
     async def connect(hello):
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -121,7 +121,7 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
     r2 = w2 = None
     try:
         await read_frame(r1)  # welcome
-        session = registry.get("takeover")
+        session = manager.get("takeover")
         started = asyncio.Event()
 
         async def slow_run(*_args, **_kwargs):
@@ -151,16 +151,16 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
             if writer is not None:
                 writer.close()
                 await writer.wait_closed()
-        await channel.stop()
-        await registry.close()
+        await server.stop()
+        await manager.close()
 
 
 async def test_input_failure_reports_code():
     async def handle(reader, writer):
-        conn = CLIConn("busy", reader, writer)
+        conn = CLIConnection("busy", reader, writer)
 
         async def on_input(_content: str) -> None:
-            raise SessionBusy("busy")
+            raise SessionBusyError("busy")
 
         try:
             await conn.run(on_input)
@@ -188,11 +188,11 @@ async def test_call_times_out_without_reply():
     done = asyncio.Event()
 
     async def handle(reader, writer):
-        conn = CLIConn("timeout", reader, writer, call_timeout=0.05)
+        conn = CLIConnection("timeout", reader, writer, call_timeout=0.05)
         try:
             with pytest.raises(TimeoutError):
                 await conn.call(
-                    Approval(tool_name="bash", arguments={}, tool_call_id="tc1")
+                    ApprovalRequest(tool_name="bash", arguments={}, tool_call_id="tc1")
                 )
         finally:
             done.set()
@@ -212,7 +212,7 @@ async def test_call_times_out_without_reply():
 
 async def test_oversized_frame_gets_terminal():
     async def handle(reader, writer):
-        conn = CLIConn("big", reader, writer)
+        conn = CLIConnection("big", reader, writer)
         try:
             await conn.run(lambda _: asyncio.sleep(0))
         finally:

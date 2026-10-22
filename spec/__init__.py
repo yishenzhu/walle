@@ -1,6 +1,6 @@
 """统一底层契约包：领域数据（schemas）+ 能力协议（protocol）。
 
-- schemas/   纯数据模型（BaseModel / 结构性标注）：Message、Usage、SessionConn…
+- schemas/   纯数据模型（BaseModel / 结构性标注）：Message、Usage、SessionSpec…
 - protocol/  能力接口（Protocol）：Messages、Channel、Sessions、ToolTable…
 
 依赖方向唯一：protocol → schemas；两者都不引用具体实现，无成环。
@@ -21,8 +21,8 @@ from .protocol import (
 from .schemas import (
     AgentEndEvent,
     AgentStartEvent,
-    Approval,
-    ApprovalRsp,
+    ApprovalRequest,
+    ApprovalResponse,
     AssistantMessage,
     Delta,
     DeltaEnd,
@@ -41,12 +41,11 @@ from .schemas import (
     ModelConfig,
     Notification,
     NotificationUnion,
-    Receive,
+    Request,
+    RequestUnion,
     ResourceDiagnostic,
-    Service,
-    ServiceUnion,
-    SessionConn,
     SessionEndEvent,
+    SessionSpec,
     SessionStartEvent,
     SystemMessage,
     ToolExecutionEndEvent,
@@ -63,10 +62,10 @@ from .schemas import (
 
 __all__ = [
     # schemas — 领域数据
-    "SessionConn",
+    "SessionSpec",
     "ModelConfig",
     "UserInput",
-    "ApprovalRsp",
+    "ApprovalResponse",
     "DiagnosticType",
     "ResourceDiagnostic",
     "Message",
@@ -83,11 +82,10 @@ __all__ = [
     "ToolResult",
     "Error",
     "NotificationUnion",
-    "Service",
-    "Receive",
+    "Request",
     "Inquiry",
-    "Approval",
-    "ServiceUnion",
+    "ApprovalRequest",
+    "RequestUnion",
     "JobDispatch",
     "JobResult",
     "Job",

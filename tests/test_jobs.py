@@ -1,8 +1,8 @@
-"""后台作业全链路测试：background 派发 → launch_pending 拉起 → job_result 取回。
+"""后台作业全链路测试：background 派发 → launch_pending_jobs 拉起 → job_result 取回。
 
 覆盖：
 - background 登记 pending、job_result 查询 running/done/error、取走即删
-- executor.launch_pending 拉起 + run_job 静默执行（后台不推送通知）
+- executor.launch_pending_jobs 拉起 + run_job 静默执行（后台不推送通知）
 - 集成：Runner 两轮模型驱动（第一轮派发 background、第二轮 job_result 取回）
 - Session close 取消未完成作业
 """
@@ -113,7 +113,7 @@ class TestBackgroundDispatch:
             q = await job_result(rsp.job_id)
             assert q.status == JobStatus.RUNNING
 
-            await executor.launch_pending({"echo": make_tool("echo", "hello")})
+            await executor.launch_pending_jobs({"echo": make_tool("echo", "hello")})
             await wait_job(ctx.jobs, rsp.job_id, JobStatus.DONE)
 
             q = await job_result(rsp.job_id)
@@ -125,17 +125,17 @@ class TestBackgroundDispatch:
             tool_context.reset(token)
 
 
-# ── executor：launch_pending / run_job ──────────────────────────────────────
+# ── executor：launch_pending_jobs / run_job ──────────────────────────────────────
 
 
-class TestLaunchPending:
-    async def test_launch_pending_sets_running_and_task(self):
+class TestLaunchPendingJobs:
+    async def test_launch_pending_jobs_sets_running_and_task(self):
         executor = allow_executor()
         ctx = make_ctx()
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="slow", args={})
-            await executor.launch_pending({"slow": make_tool("slow", "s-done", delay=0.05)})
+            await executor.launch_pending_jobs({"slow": make_tool("slow", "s-done", delay=0.05)})
             job = ctx.jobs[rsp.job_id]
             assert job.status == JobStatus.RUNNING
             assert job.task is not None
@@ -152,7 +152,7 @@ class TestLaunchPending:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="echo", args={})
-            await executor.launch_pending({"echo": make_tool("echo", "hi")})
+            await executor.launch_pending_jobs({"echo": make_tool("echo", "hi")})
             await wait_job(ctx.jobs, rsp.job_id, JobStatus.DONE)
             assert not any(
                 isinstance(e, (ToolStart, ToolResult)) for e in channel.events
@@ -171,7 +171,7 @@ class TestLaunchPending:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="boom", args={})
-            await executor.launch_pending(
+            await executor.launch_pending_jobs(
                 {
                     "boom": Tool(
                         name="boom",
@@ -196,9 +196,9 @@ class TestLaunchPending:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="echo", args={})
-            await executor.launch_pending({"echo": make_tool("echo", "a")})
+            await executor.launch_pending_jobs({"echo": make_tool("echo", "a")})
             await wait_job(ctx.jobs, rsp.job_id, JobStatus.DONE)
-            await executor.launch_pending({"echo": make_tool("echo", "b")})
+            await executor.launch_pending_jobs({"echo": make_tool("echo", "b")})
             # 不被重复执行（DONE 保持，task 未变）
             assert ctx.jobs[rsp.job_id].result == "a"
         finally:
@@ -231,13 +231,13 @@ class TestRunnerIntegration:
 
         from ..core import EventBus, ExtensionRunner
 
-        ext_runner = ExtensionRunner(EventBus())
-        ext_runner.register_tool(
+        extension_runner = ExtensionRunner(EventBus())
+        extension_runner.register_tool(
             make_tool("slow", "slow-done", delay=0.05),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.ext_runner = ext_runner
+        env.extension_runner = extension_runner
 
         agent = Agent(
             instruction="You are helpful.",
@@ -291,13 +291,13 @@ class TestRunnerIntegration:
 
         from ..core import EventBus, ExtensionRunner
 
-        ext_runner = ExtensionRunner(EventBus())
-        ext_runner.register_tool(
+        extension_runner = ExtensionRunner(EventBus())
+        extension_runner.register_tool(
             make_tool("slow", "done-42", delay=0.1),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.ext_runner = ext_runner
+        env.extension_runner = extension_runner
 
         agent = Agent(
             instruction="You are helpful.",
@@ -361,7 +361,7 @@ class TestSessionCloseCancels:
         token = tool_context.set(ctx)
         try:
             rsp = await background(tool_name="never", args={})
-            await executor.launch_pending(
+            await executor.launch_pending_jobs(
                 {
                     "never": Tool(
                         name="never",

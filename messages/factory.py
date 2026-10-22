@@ -1,13 +1,13 @@
 """消息存储装配工厂：按配置构造会话历史（投影包装）。
 
-由装配根（SessionRegistry）调用；Session 只接收构造好的 Messages，
+由装配根（SessionManager）调用；Session 只接收构造好的 Messages，
 不自行 new 具体存储——换后端 / 测试注入替身都不必改 Session。
 """
 
 from ..spec import Messages
 from .in_memory import InMemoryMessages
-from .meta import SQLiteProjectionStore
 from .projected import ProjectedMessages
+from .projection_store import SQLiteProjectionStore
 from .sqlite import SQLiteMessages
 
 

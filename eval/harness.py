@@ -8,6 +8,8 @@
 - temperature 固定 0（可复现）
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
 from collections.abc import Callable
@@ -24,7 +26,7 @@ from ..infra import OpenAIProvider, Tool
 from ..messages import InMemoryMessages
 from ..spec import Usage
 from ..tools.builtin import background, bash, job_result
-from ..tools.builtin.defined import DefinedTool, ToolCodeError
+from ..tools.builtin.defined_tool import DefinedTool, ToolCodeError
 from .graders import grade
 from .spec import TaskSpec
 
@@ -55,12 +57,31 @@ class TaskResult:
     def tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
+    @classmethod
+    def from_row(cls, task: TaskSpec, row: dict[str, Any]) -> TaskResult:
+        """从 results_detail.json 的一行恢复（render-only / resume 共用）。"""
+        return cls(
+            task=task,
+            success=row["success"],
+            detail=row.get("detail", []),
+            turns=row.get("turns", 0),
+            llm_calls=row.get("llm_calls", 0),
+            prompt_tokens=row.get("prompt_tokens", 0),
+            completion_tokens=row.get("completion_tokens", 0),
+            tool_calls=row.get("tool_calls", []),
+            tool_errors=row.get("tool_errors", 0),
+            elapsed=row.get("elapsed", 0.0),
+            error=row.get("error"),
+            output=row.get("output"),
+            last_agent=row.get("last_agent"),
+        )
+
 
 class TrackedProvider:
-    """包装真实 provider：拦截 create 累计 token 用量。
+    """包装真实 provider：在 create 上累计 token 用量。
 
     框架的 InMemoryMessages 不保存 usage（生产由 SQLite 记），评测在
-    provider 层计数，不依赖消息存储。
+    provider 层计数，不依赖消息存储。不做猴补——直接转发并计数。
     """
 
     def __init__(self, provider: OpenAIProvider):
@@ -68,20 +89,13 @@ class TrackedProvider:
         self.model = provider.model
         self.usage = Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
         self.calls = 0
-        original = provider.create
-
-        async def _tracked(**kwargs: Any) -> Any:
-            resp = await original(**kwargs)
-            self.calls += 1
-            if resp.usage is not None:
-                self.usage.add(Usage.model_validate(resp.usage))
-            return resp
-
-        provider.create = _tracked
 
     async def create(self, **kwargs: Any) -> Any:
-        """转发到被包装 provider（其 create 已被打桩计数）。"""
-        return await self._provider.create(**kwargs)
+        response = await self._provider.create(**kwargs)
+        self.calls += 1
+        if response.usage is not None:
+            self.usage.add(Usage.model_validate(response.usage))
+        return response
 
 
 class RecordingExecutor(ToolExecutor):
@@ -115,7 +129,7 @@ class RecordingExecutor(ToolExecutor):
         return result
 
 
-def build_tool_system() -> Callable[[], list[Tool]]:
+def build_tool_source() -> Callable[[], list[Tool]]:
     """构造评测工具集：内置工具 + 动态 define_tool（持久化隔离目录）。
 
     返回工具源 callable——与生产 Agent 的 tools 源同构，
@@ -154,7 +168,7 @@ def build_agent(task: TaskSpec) -> tuple[Agent, dict[str, Agent]]:
       返回 (入口 agent, name→Agent 注册表) 供 SessionContext.agents 查表
     - 普通任务：加载 frontmatter agent（如 default），仅覆写工具 allowlist 与温度
 
-    工具不经 agent——由调用方挂到会话扩展 runner（env.ext_runner）。
+    工具不经 agent——由调用方挂到会话扩展 runner（env.extension_runner）。
     """
     if task.agents:
         agents: dict[str, Agent] = {}
@@ -178,7 +192,7 @@ def build_agent(task: TaskSpec) -> tuple[Agent, dict[str, Agent]]:
 async def run_task(
     task: TaskSpec,
     provider: OpenAIProvider,
-    tools_src: Callable[[], list[Tool]],
+    tool_source: Callable[[], list[Tool]],
 ) -> TaskResult:
     """执行单个任务一次，返回完整结果。"""
     tracked = TrackedProvider(provider)
@@ -189,17 +203,17 @@ async def run_task(
         )
     )
     # 会话扩展 runner 持有工具表：初集注册进工具表，define_tool 等运行时
-    # 动态注册也落这里（ext_runner 随 env 传给工具）
+    # 动态注册也落这里（extension_runner 随 env 传给工具）
     bus = EventBus()
-    ext_runner = ExtensionRunner(bus)
-    ext_runner.register_tool(*tools_src())
+    extension_runner = ExtensionRunner(bus)
+    extension_runner.register_tool(*tool_source())
     agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        ext_runner=ext_runner,
+        extension_runner=extension_runner,
         agents=agents,
         bus=bus,
     )

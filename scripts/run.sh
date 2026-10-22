@@ -2,18 +2,29 @@
 #
 set -euo pipefail
 
-PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OBS_DIR="$PROJ_ROOT/observability"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OBS_DIR="$PROJECT_ROOT/observability"
 OBS_COMPOSE="$OBS_DIR/docker-compose.yaml"
 
 # ── venv 自动选择 ────────────────────────────────────
 # 优先使用项目 .venv，未激活 venv 时也能正常运行
-VENV_PYTHON="$PROJ_ROOT/.venv/bin/python3"
+VENV_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
 if [ -x "$VENV_PYTHON" ]; then
     PY="$VENV_PYTHON"
 else
     PY="python3"
 fi
+
+# 统一 Python 调用：项目根目录有 __init__.py 是一个包 (walle)，
+# 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
+run_py() {
+    env PYTHONPATH="$PROJECT_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$@"
+}
+
+run_py_detached() {
+    setsid env PYTHONPATH="$PROJECT_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
+        "$PY" "$@" >/dev/null 2>&1 < /dev/null &
+}
 
 # ── 颜色 ──────────────────────────────────────────────
 RED='\033[0;31m'
@@ -72,51 +83,44 @@ check_docker() {
     fi
 }
 
-# ── 可观测性 ──────────────────────────────────────────
-start_obs() {
+require_compose() {
     check_docker
-
     if [ ! -f "$OBS_COMPOSE" ]; then
         log_error "未找到 Docker Compose 文件: $OBS_COMPOSE"
         exit 1
     fi
+}
+
+compose() {
+    docker compose -f "$OBS_COMPOSE" "$@"
+}
+
+# ── 可观测性 ──────────────────────────────────────────
+start_obs() {
+    require_compose
 
     log_step "启动可观测性容器 (otel-collector / tempo / mimir / grafana) ..."
-    cd "$OBS_DIR"
-
-    docker compose up -d
+    compose up -d
     log_info "可观测性容器已启动"
     log_info "  Grafana: http://localhost:3000  (admin/admin)"
     log_info "  Tempo:   http://localhost:3200"
     log_info "  Mimir:   http://localhost:9009"
-
-    cd "$PROJ_ROOT"
 }
 
 stop_obs() {
-    check_docker
-
-    if [ ! -f "$OBS_COMPOSE" ]; then
-        log_error "未找到 Docker Compose 文件: $OBS_COMPOSE"
-        exit 1
-    fi
+    require_compose
 
     log_step "停止可观测性容器 ..."
-    cd "$OBS_DIR"
-    docker compose down
-    cd "$PROJ_ROOT"
+    compose down
     log_info "可观测性容器已停止"
 }
 
 # ── 启动 agent ────────────────────────────────────────
 start_agent() {
     log_step "启动 walle agent ..."
-    cd "$PROJ_ROOT"
+    cd "$PROJECT_ROOT"
     log_info "使用 Python: $PY"
-    # 项目根目录有 __init__.py 是一个包 (walle)，
-    # 将其父目录加入 PYTHONPATH，使相对导入 (from .xxx) 正常工作
-    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.main
+    run_py -m walle.main
 }
 
 stop_agent() {
@@ -135,11 +139,10 @@ stop_agent() {
 # ── 启动 CLI 客户端 ──────────────────────────────────
 start_cli_client() {
     log_step "启动 CLI 交互客户端（连接服务端）..."
-    cd "$PROJ_ROOT"
+    cd "$PROJECT_ROOT"
     # ⚠️ 参数**原样转给客户端**（`--cli` 之后写什么就传什么）—— 于是客户端以后新增开关
     #    （--agent / --model / …）这里都不必再改：加一个 if 就等于每加一个开关改一次脚本。
-    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.channel.cli "$@"
+    run_py -m walle.channel.cli "$@"
 }
 
 # ── 会话管理 ──────────────────────────────────────────
@@ -153,18 +156,16 @@ require_server() {
 list_sessions() {
     require_server
     log_step "运行中的会话 ..."
-    cd "$PROJ_ROOT"
-    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.channel.cli --list
+    cd "$PROJECT_ROOT"
+    run_py -m walle.channel.cli --list
 }
 
 attach_session() {
     local sid="$1"
     require_server
     log_step "连接会话 $sid ..."
-    cd "$PROJ_ROOT"
-    env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-        "$PY" -m walle.channel.cli --attach "$sid"
+    cd "$PROJECT_ROOT"
+    run_py -m walle.channel.cli --attach "$sid"
 }
 
 agent_status() {
@@ -188,8 +189,8 @@ port_in_use() {
 # ── 运行测试 ──────────────────────────────────────────
 run_tests() {
     log_step "运行测试 ..."
-    cd "$PROJ_ROOT"
-    "$PY" -m pytest tests/ -v
+    cd "$PROJECT_ROOT"
+    run_py -m pytest tests/ -v
 }
 
 # ── 主流程 ────────────────────────────────────────────
@@ -274,8 +275,7 @@ main() {
     # Ctrl+C 客户端不波及服务端）；等就绪后前台连客户端（一键对话）
     if [ "$cli" = true ]; then
         if ! port_in_use 8899; then
-            setsid env PYTHONPATH="$PROJ_ROOT/..${PYTHONPATH:+:$PYTHONPATH}" \
-                "$PY" -m walle.main >/dev/null 2>&1 < /dev/null &
+            run_py_detached -m walle.main
             log_info "agent 已在后台启动（常驻，--stop 停止）"
             for _ in $(seq 1 100); do
                 if port_in_use 8899; then

@@ -1,6 +1,6 @@
 import asyncio
 
-from ..tools.builtin.defined import DefinedTool, ToolCodeError
+from ..tools.builtin.defined_tool import DefinedTool, ToolCodeError
 from .conftest import make_session
 
 
@@ -57,12 +57,12 @@ async def test_define_tool_registers_via_context(tmp_path, monkeypatch):
     """define_tool 工具执行时经 tool_context 的注册通道把新工具加入会话。"""
     from ..core import ExtensionRunner
     from ..infra import EventBus, tool_context
-    from ..tools.builtin.defined import define_tool
+    from ..tools.builtin.defined_tool import define_tool
 
-    monkeypatch.setattr("walle.tools.builtin.defined.DOT_AGENT", tmp_path)
+    monkeypatch.setattr("walle.tools.builtin.defined_tool.AGENT_DIR", tmp_path)
 
     runner = ExtensionRunner(EventBus())
-    ctx = make_session(ext=runner)
+    ctx = make_session(extension_runner=runner)
     token = tool_context.set(ctx)
     try:
         out = await define_tool(

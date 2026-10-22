@@ -17,7 +17,6 @@ from ..infra import (
     MessageStartEvent,
     SessionEndEvent,
     SessionStartEvent,
-    Tool,
     TurnEndEvent,
     TurnStartEvent,
 )
@@ -108,15 +107,6 @@ def allow_executor():
     )
 
 
-def echo_tool():
-    async def fn(args):
-        return args.get("v", "echoed")
-
-    return Tool(
-        name="echo", description="echo", parameters={"v": {"type": "string"}}, fn=fn
-    )
-
-
 async def test_runner_emits_lifecycle(allow_executor):
     bus = EventBus()
     events = []
@@ -137,11 +127,7 @@ async def test_runner_emits_lifecycle(allow_executor):
         history=InMemoryMessages(),
         bus=bus,
     )
-    result = await runner.run(
-        Agent(name="default", tools=lambda: [echo_tool()]),
-        "hi",
-        env=env,
-    )
+    result = await runner.run(Agent(name="default"), "hi", env=env)
 
     # 单轮：agent_start, turn_start, turn_end, agent_end 依次
     assert events[0] == "AgentStartEvent"
@@ -190,11 +176,7 @@ async def test_runner_emits_full_session_lifecycle(allow_executor):
         session_id="s1",
         bus=bus,
     )
-    result = await runner.run(
-        Agent(name="default", tools=lambda: [echo_tool()]),
-        "hi",
-        env=env,
-    )
+    result = await runner.run(Agent(name="default"), "hi", env=env)
 
     # 事件对边界：session_start 开头、session_end 收尾；message 包裹 agent
     assert events[0] == "SessionStartEvent"
@@ -220,7 +202,5 @@ async def test_runner_no_events_when_no_subscribers(allow_executor):
         history=InMemoryMessages(),
         bus=EventBus(),
     )
-    result = await runner.run(
-        Agent(name="default", tools=lambda: [echo_tool()]), "hi", env=env
-    )
+    result = await runner.run(Agent(name="default"), "hi", env=env)
     assert result.output == "x"

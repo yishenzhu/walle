@@ -1,4 +1,4 @@
-"""CLI 客户端：独立进程交互（CLIClient），连接 channel.server 的 CLIChannel。
+"""CLI 客户端：独立进程交互（CLIClient），连接 channel.server 的 CLIServer。
 
 用法：python -m walle.channel.cli [--attach <session_id>] [--list]。
 双循环：stdin 行 → input 帧；socket notify → 渲染，call → 交互后回 reply。
@@ -13,17 +13,17 @@ import uuid
 from pydantic import TypeAdapter, ValidationError
 
 from ...spec import (
-    Approval,
+    ApprovalRequest,
     Delta,
     DeltaEnd,
     Error,
     Inquiry,
     NotificationUnion,
-    ServiceUnion,
+    RequestUnion,
     ToolResult,
     ToolStart,
 )
-from .server import HOST, PORT
+from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 # CLI 终端渲染颜色
 CYAN = "\033[36m"
@@ -32,8 +32,8 @@ RED = "\033[31m"
 RESET = "\033[0m"
 
 # notify/call 载荷按 type 判别为具体模型（与 schemas 判别联合一致）
-Notify = TypeAdapter(NotificationUnion)
-Service = TypeAdapter(ServiceUnion)
+NotificationAdapter = TypeAdapter(NotificationUnion)
+RequestAdapter = TypeAdapter(RequestUnion)
 
 
 class CLIClient:
@@ -65,38 +65,53 @@ class CLIClient:
         self._quit = asyncio.Event()  # 退出信号：EOF / 服务端断开 / 本地 /exit
 
     @staticmethod
-    def render_notification(n) -> None:
+    def _render_error(code: str, message: str) -> None:
+        text = f"{code}: {message}" if code else message
+        print(f"  {RED}⚠️ {text}{RESET}", flush=True)
+
+    @staticmethod
+    def render_notification(notification: NotificationUnion) -> None:
         """渲染服务端 notify 帧（Delta 流式 / 工具事件 / 错误）。"""
-        if isinstance(n, Delta):
-            print(n.delta, end="", flush=True)
-        elif isinstance(n, DeltaEnd):
+        if isinstance(notification, Delta):
+            print(notification.delta, end="", flush=True)
+        elif isinstance(notification, DeltaEnd):
             print()
-            if n.reason:
-                text = f"{n.reason}: {n.detail}" if n.detail else n.reason
+            if notification.reason:
+                text = (
+                    f"{notification.reason}: {notification.detail}"
+                    if notification.detail
+                    else notification.reason
+                )
                 print(f"  {RED}⚠️ {text}{RESET}", flush=True)
-        elif isinstance(n, ToolStart):
-            print(f"  {CYAN}🔧 {n.tool_name}{RESET} {n.arguments}", flush=True)
-        elif isinstance(n, ToolResult):
-            if n.error:
-                print(f"  {RED}❌ {n.tool_call_id}{RESET} {n.error}", flush=True)
+        elif isinstance(notification, ToolStart):
+            print(
+                f"  {CYAN}🔧 {notification.tool_name}{RESET} "
+                f"{notification.arguments}",
+                flush=True,
+            )
+        elif isinstance(notification, ToolResult):
+            if notification.error:
+                print(
+                    f"  {RED}❌ {notification.tool_call_id}{RESET} "
+                    f"{notification.error}",
+                    flush=True,
+                )
             else:
-                print(f"  {GREEN}✅ {n.tool_call_id}{RESET} {n.result}", flush=True)
-        elif isinstance(n, Error):
-            text = f"{n.code}: {n.message}" if n.code else n.message
-            print(f"  {RED}⚠️ {text}{RESET}", flush=True)
+                print(
+                    f"  {GREEN}✅ {notification.tool_call_id}{RESET} "
+                    f"{notification.result}",
+                    flush=True,
+                )
+        elif isinstance(notification, Error):
+            CLIClient._render_error(notification.code, notification.message)
 
     @classmethod
     def render_history(cls, messages: list[dict]) -> None:
-        """渲染 attach 时的最近对话快照（system / tool 已由服务端过滤）。"""
-        rows = [
-            m
-            for m in messages
-            if m.get("role") in ("user", "assistant") and m.get("content")
-        ]
-        if not rows:
+        """渲染 attach 时的最近对话快照（server 已过滤 system / tool）。"""
+        if not messages:
             return
-        print(f"  {CYAN}── 历史 {len(rows)} 条 ──{RESET}")
-        for m in rows:
+        print(f"  {CYAN}── 历史 {len(messages)} 条 ──{RESET}")
+        for m in messages:
             who = "You" if m["role"] == "user" else "AI"
             print(f"  {who}> {m['content']}")
         print(f"  {CYAN}────────────────{RESET}")
@@ -107,7 +122,10 @@ class CLIClient:
         退出只有一条路：_quit 置位。EOF、服务端断开、本地 /exit 都归一为它，
         事件循环自然收尾；stdin 读线程是 daemon，不阻塞进程退出。
         """
-        reader, writer = await asyncio.open_connection(self._host, self._port)
+        reader, writer = await asyncio.open_connection(
+            self._host, self._port, limit=MAX_FRAME
+        )
+        link = JSONLineConn(reader, writer)
         hello = {
             "type": "hello",
             "chat_id": self._chat_id,
@@ -120,35 +138,25 @@ class CLIClient:
             hello["model"] = self._model  # 客户端模型配置（服务端建会话级 provider）
         if self._agent:
             hello["agent"] = self._agent  # 新会话使用的 agent（缺省 default）
-        await self._send(writer, hello)
-        line = await reader.readline()
-        if not line:
+        await link.send(hello)
+        welcome = await link.recv()
+        if welcome is None:
             print("服务端未响应")
-            writer.close()
-            await writer.wait_closed()
-            return
-        try:
-            welcome = json.loads(line)
-        except json.JSONDecodeError:
-            print("服务端响应格式错误")
-            writer.close()
-            await writer.wait_closed()
+            link.close()
+            await link.wait_closed()
             return
         if welcome.get("type") == "error":
-            code = welcome.get("code", "")
-            message = welcome.get("message", "")
-            text = f"{code}: {message}" if code else message
-            print(f"  {RED}⚠️ {text}{RESET}")
-            writer.close()
-            await writer.wait_closed()
+            self._render_error(welcome.get("code", ""), welcome.get("message", ""))
+            link.close()
+            await link.wait_closed()
             return
         self.render_history(welcome.get("history") or [])
         mode = "恢复会话" if self._attach else "新会话"
         print(
             f"已连接 {self._host}:{self._port}（{mode} {self._chat_id}，Ctrl+C / /exit 退出）"
         )
-        stdin_task = asyncio.create_task(self._read_stdin(writer))
-        sock_task = asyncio.create_task(self._read_socket(reader, writer))
+        stdin_task = asyncio.create_task(self._read_stdin(link))
+        sock_task = asyncio.create_task(self._read_socket(link))
         try:
             await self._quit.wait()  # 任一退出源置位即收尾
         finally:
@@ -156,11 +164,11 @@ class CLIClient:
             stdin_task.cancel()
             sock_task.cancel()
             await asyncio.gather(stdin_task, sock_task, return_exceptions=True)
-            writer.close()
-            await writer.wait_closed()
+            link.close()
+            await link.wait_closed()
 
     # ── 双循环 ────────────────────────────────────────
-    async def _read_stdin(self, writer) -> None:
+    async def _read_stdin(self, link: JSONLineConn) -> None:
         """stdin → input 帧；发送后等回复完成再提示下一个。
 
         ⚠️ 提示符交给 input()（readline 才知道它占几列），时序靠这里 await 回复完成。
@@ -175,42 +183,45 @@ class CLIClient:
                 self._quit.set()
                 return
             if content:
-                await self._send(
-                    writer,
-                    {"type": "input", "content": content, "chat_id": self._chat_id},
+                await link.send(
+                    {"type": "input", "content": content, "chat_id": self._chat_id}
                 )
                 self._reply_done.clear()
                 await self._reply_done.wait()  # 等回复完成再提示下一行
 
-    async def _read_socket(self, reader, writer) -> None:
+    async def _read_socket(self, link: JSONLineConn) -> None:
         """socket 帧：notify → 渲染；delta_end 置回复完成；call → 交互并回 reply。"""
-        while line := await reader.readline():
-            if not line:
-                break  # 服务端断开
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if msg.get("type") == "notify":
-                try:
-                    n = Notify.validate_python(msg["data"])
-                except ValidationError:
-                    continue
-                self.render_notification(n)
-                # delta_end：正常回复完成；error：服务端处理失败（如模型限流）。
-                if isinstance(n, (DeltaEnd, Error)):
-                    self._reply_done.set()
-            elif msg.get("type") == "call":
-                try:
-                    service = Service.validate_python(msg["data"])
-                except ValidationError:
-                    continue
-                reply = await self._handle_call(service)
-                await self._send(
-                    writer, {"type": "reply", "id": msg.get("id"), "data": reply}
-                )
-        self._reply_done.set()  # 断开：解除等回复的挂起
-        self._quit.set()  # 归一退出
+        try:
+            while (msg := await link.recv()) is not None:
+                if msg.get("type") == "notify":
+                    try:
+                        notification = NotificationAdapter.validate_python(msg["data"])
+                    except ValidationError:
+                        continue
+                    self.render_notification(notification)
+                    # delta_end：正常回复完成；error：服务端处理失败（如模型限流）。
+                    if isinstance(notification, (DeltaEnd, Error)):
+                        self._reply_done.set()
+                elif msg.get("type") == "call":
+                    try:
+                        request = RequestAdapter.validate_python(msg["data"])
+                    except ValidationError:
+                        continue
+                    reply = await self._handle_request(request)
+                    await link.send(
+                        {"type": "reply", "id": msg.get("id"), "data": reply}
+                    )
+        except FrameTooLargeError:
+            print(f"  {RED}⚠️ 服务端帧过大{RESET}", flush=True)
+        except OSError as exc:
+            print(f"  {RED}⚠️ 连接中断: {exc}{RESET}", flush=True)
+        finally:
+            self._reply_done.set()  # 断开：解除等回复的挂起
+            self._quit.set()  # 归一退出
+
+    @staticmethod
+    async def _ask(prompt: str) -> str:
+        return (await asyncio.to_thread(input, prompt)).strip()
 
     @staticmethod
     def _format_arguments(arguments: dict) -> str:
@@ -224,52 +235,37 @@ class CLIClient:
             shown.append(f"...（其余 {len(lines) - 12} 行省略）")
         return "\n".join(shown)
 
-    async def _handle_call(self, service) -> dict:
-        """处理 call 载荷（Inquiry / Approval），返回 reply 数据。"""
-        if isinstance(service, Inquiry):
+    async def _handle_request(self, request) -> dict:
+        """处理 call 载荷中的请求（Inquiry / ApprovalRequest），返回 reply 数据。"""
+        if isinstance(request, Inquiry):
             print(f"  {CYAN}┌─ ❓ 提问 ─────────────────────────────────────{RESET}")
-            print(f"  {CYAN}│{RESET} {service.question}")
-            options = service.options or []
+            print(f"  {CYAN}│{RESET} {request.question}")
+            options = request.options or []
             if options:
                 print(f"  {CYAN}│{RESET} 选项:")
                 for i, opt in enumerate(options, 1):
                     print(f"  {CYAN}│{RESET}   {GREEN}{i}.{RESET} {opt}")
             print(f"  {CYAN}└──────────────────────────────────────────────{RESET}")
-            return {"content": (await asyncio.to_thread(input, "  回答: ")).strip()}
-        if isinstance(service, Approval):
-            args_text = self._format_arguments(service.arguments)
+            return {"content": await self._ask("  回答: ")}
+        if isinstance(request, ApprovalRequest):
+            args_text = self._format_arguments(request.arguments)
             print(f"  {CYAN}┌─ 🔐 审批请求 ─────────────────────────────────{RESET}")
-            print(f"  {CYAN}│{RESET} 工具: {service.tool_name}")
+            print(f"  {CYAN}│{RESET} 工具: {request.tool_name}")
             print(f"  {CYAN}│{RESET} 参数:")
             for ln in args_text.splitlines():
                 print(f"  {CYAN}│{RESET}   {ln}")
             print(f"  {CYAN}└──────────────────────────────────────────────{RESET}")
             while True:
                 answer = (
-                    (
-                        await asyncio.to_thread(
-                            input, f"  {GREEN}允许执行?{RESET} (y=是 / n=否): "
-                        )
-                    )
-                    .strip()
-                    .lower()
-                )
+                    await self._ask(f"  {GREEN}允许执行?{RESET} (y=是 / n=否): ")
+                ).lower()
                 if answer in ("y", "yes"):
                     return {"approved": True}
                 if answer in ("n", "no"):
-                    reason = (
-                        await asyncio.to_thread(
-                            input, f"  {RED}拒绝原因(可选){RESET}: "
-                        )
-                    ).strip()
+                    reason = await self._ask(f"  {RED}拒绝原因(可选){RESET}: ")
                     return {"approved": False, "reason": reason or None}
                 print(f"  {RED}请输入 y 或 n{RESET}")
         return {}
-
-    @staticmethod
-    async def _send(writer, msg: dict) -> None:
-        writer.write(json.dumps(msg).encode() + b"\n")
-        await writer.drain()
 
     # ── 会话列表（一次性查询渲染，不持有/不缓存）──────
     @classmethod
@@ -280,14 +276,17 @@ class CLIClient:
         一次性拉取渲染，客户端不持有全局会话列表。异常统一兜底报错。
         """
         try:
-            reader, writer = await asyncio.open_connection(host, port)
+            reader, writer = await asyncio.open_connection(
+                host, port, limit=MAX_FRAME
+            )
+            link = JSONLineConn(reader, writer)
             try:
-                await cls._send(writer, {"type": "list"})
-                line = await reader.readline()
+                await link.send({"type": "list"})
+                msg = await link.recv()
             finally:
-                writer.close()
-                await writer.wait_closed()
-            sessions = json.loads(line).get("sessions") or []
+                link.close()
+                await link.wait_closed()
+            sessions = (msg or {}).get("sessions") or []
         except Exception as exc:
             print(f"获取会话列表失败: {exc}")
             return

@@ -1,14 +1,14 @@
 """通道载荷：Channel 协议 notify / call 两个原语的消息模型。
 
 - 通知（Notification）：广播，无返回；对应 JSON-RPC 2.0 的无 id 消息。
-- 服务（Service）：点对点，有返回；对应带 id 的 Request/Response。
+- 请求（Request）：点对点，有返回；对应带 id 的 Request/Response。
 
-命名约定：类名不带 Notification / Service 后缀，类别由 Channel 方法表达，
-如 `channel.notify(Delta(...))`、`channel.call(Receive())`。判别联合
-（NotificationUnion / ServiceUnion）按 `type` 字段区分。
+命名约定：载荷按语义命名，类别由 Channel 方法表达，如
+`channel.notify(Delta(...))`、`channel.call(ApprovalRequest(...))`。判别联合
+（NotificationUnion / RequestUnion）按 `type` 字段区分。
 
-会话建立的连接载荷（SessionConn / ModelConfig）与交互返回（UserInput /
-ApprovalRsp）同属通道契约，故一并置于本模块。
+会话建立的创建载荷（SessionSpec / ModelConfig）与交互返回（UserInput /
+ApprovalResponse）同属通道契约，故一并置于本模块。
 """
 
 from typing import Annotated, Any, Literal
@@ -29,8 +29,8 @@ class ModelConfig(BaseModel):
     model: str
 
 
-class SessionConn(BaseModel):
-    """新建会话的连接载荷：会话身份（chat_id）、工作目录（cwd）、模型配置与 agent 名。
+class SessionSpec(BaseModel):
+    """新建会话的规格：会话身份（chat_id）、工作目录（cwd）、模型配置与 agent 名。
 
     model 由客户端随握手提供——不同连接可指向不同端点；缺省（None）回退默认。
     agent 为 agent 名（对应 .agent/agents/<name>.md）；缺省 None = default。
@@ -47,7 +47,7 @@ class UserInput(BaseModel):
     chat_id: str = ""  # 来源会话
 
 
-class ApprovalRsp(BaseModel):
+class ApprovalResponse(BaseModel):
     approved: bool
     reason: str | None = None
 
@@ -111,19 +111,13 @@ NotificationUnion = Annotated[
 # ── 服务（点对点，有返回）──────────────────────────────────────
 
 
-class Service(BaseModel):
+class Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
     chat_id: str = ""  # 目标会话（路由字段）
 
 
-class Receive(Service):
-    """读用户输入。返回 UserInput。"""
-
-    type: Literal["receive"] = "receive"
-
-
-class Inquiry(Service):
+class Inquiry(Request):
     """向用户提问（ask_user 工具）。返回 str。"""
 
     type: Literal["inquiry"] = "inquiry"
@@ -131,8 +125,8 @@ class Inquiry(Service):
     options: list[str] | None = None
 
 
-class Approval(Service):
-    """请求工具执行审批。返回 ApprovalRsp。"""
+class ApprovalRequest(Request):
+    """请求工具执行审批。返回 ApprovalResponse。"""
 
     type: Literal["approval"] = "approval"
     tool_name: str
@@ -140,7 +134,7 @@ class Approval(Service):
     tool_call_id: str  # 工具调用 id，卡片按钮回调按此路由
 
 
-ServiceUnion = Annotated[
-    Receive | Inquiry | Approval,
+RequestUnion = Annotated[
+    Inquiry | ApprovalRequest,
     Field(discriminator="type"),
 ]

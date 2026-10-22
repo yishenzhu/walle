@@ -4,8 +4,8 @@ from ..infra import (
     EventBus,
     Extension,
     ExtensionAPI,
+    ExtensionManager,
     ExtensionMount,
-    ExtensionRegistry,
     ExtensionRunner,
     ExtensionState,
     Handler,
@@ -22,9 +22,9 @@ from .runner import (
 )
 from .session import (
     Session,
-    SessionBusy,
-    SessionClosed,
-    SessionRegistry,
+    SessionBusyError,
+    SessionClosedError,
+    SessionManager,
 )
 
 __all__ = [
@@ -38,11 +38,11 @@ __all__ = [
     "SessionContext",
     # executor — 工具执行器
     "ToolExecutor",
-    # session — 会话实体与注册表
+    # session — 会话实体与管理器
     "Session",
-    "SessionBusy",
-    "SessionClosed",
-    "SessionRegistry",
+    "SessionBusyError",
+    "SessionClosedError",
+    "SessionManager",
     # 扩展面（自 infra 转发，core 对外统一出口）
     "Command",
     "DiagnosticType",
@@ -50,7 +50,7 @@ __all__ = [
     "Extension",
     "ExtensionAPI",
     "ExtensionMount",
-    "ExtensionRegistry",
+    "ExtensionManager",
     "ExtensionRunner",
     "ExtensionState",
     "Handler",

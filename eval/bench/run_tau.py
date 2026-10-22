@@ -28,20 +28,12 @@ from ...infra import OpenAIProvider
 from ...messages import InMemoryMessages
 from ..harness import RecordingExecutor, TaskResult, TrackedProvider
 from ..metrics import Pricing, aggregate
-from ..report import (
-    load_results_detail,
-    load_results_json,
-    now_iso,
-    render_report,
-    save_results_detail,
-    save_results_json,
-    write_results_csv,
-)
+from ..report import load_results, save_reports, utc_timestamp
 from .tau_adapter import (
     DEFAULT_MAX_TURNS,
     WalleUserSimulationEnv,
+    build_task_spec,
     build_tau_tools,
-    make_task_spec,
 )
 
 DEFAULT_OUTDIR = Path(__file__).resolve().parent.parent / "report" / "tau"
@@ -76,9 +68,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def load_done_indices(outdir: Path) -> set[int]:
+def load_completed_indices(outdir: Path) -> set[int]:
     """读已有 results_detail.json，返回已完成的用例下标。"""
-    d = load_results_detail(outdir / "results_detail.json")
+    d = load_results(outdir / "results_detail.json")
     if not d:
         return set()
     done: set[int] = set()
@@ -94,7 +86,7 @@ async def run_tau_case(
     env,
     task_index: int,
     agent_provider: OpenAIProvider,
-    tools_src,
+    tool_source,
     state: dict,
     max_turns: int,
 ) -> TaskResult:
@@ -117,19 +109,19 @@ async def run_tau_case(
         )
     )
     bus = EventBus()
-    ext_runner = ExtensionRunner(bus)
-    ext_runner.register_tool(*tools_src())
+    extension_runner = ExtensionRunner(bus)
+    extension_runner.register_tool(*tool_source())
     walle_env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        ext_runner=ext_runner,
+        extension_runner=extension_runner,
         bus=bus,
     )
     agent = Agent(
         name="tau",
-        description=f"tau-bench {env_name(env)} agent",
+        description=f"tau-bench {env_slug(env)} agent",
         instruction=env.wiki
         + (
             "\n\nIMPORTANT: You MUST use the 'respond' tool to send any message to the user. "
@@ -174,8 +166,8 @@ async def run_tau_case(
                 break
     except TimeoutError:
         error = "timeout after 900s"
-    except Exception as e:
-        error = f"{type(e).__name__}: {e}"
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
     finally:
         # 线程内必须显式关闭 client，否则 httpx 连接在事件循环关闭后
         # 才尝试 aclose，报 "Event loop is closed"
@@ -191,8 +183,8 @@ async def run_tau_case(
         success, detail = reward == 1.0, [f"tau reward={reward}"]
 
     return TaskResult(
-        task=make_task_spec(
-            task_index, env.tasks[task_index].instruction[:120], env_name(env)
+        task=build_task_spec(
+            task_index, env.tasks[task_index].instruction[:120], env_slug(env)
         ),
         success=success,
         detail=detail,
@@ -209,7 +201,7 @@ async def run_tau_case(
     )
 
 
-def env_name(env) -> str:
+def env_slug(env) -> str:
     return type(env).__name__.replace("Mock", "").replace("DomainEnv", "").lower()
 
 
@@ -233,26 +225,26 @@ def main(argv: list[str] | None = None) -> int:
         构造期用 human strategy：litellm 的 LLM 策略构造时会立即发起 API 调用，
         构造后替换为走同一网关的 WalleUserSimulationEnv。
         """
-        e = MockRetailDomainEnv(
+        env = MockRetailDomainEnv(
             user_strategy="human",
             user_model=user_model,
             user_provider="openai",
             task_split=args.split,
         )
-        e.user = WalleUserSimulationEnv(
+        env.user = WalleUserSimulationEnv(
             api_key=api_key, base_url=base_url, model=user_model
         )
-        tools_i, state_i = build_tau_tools(e)
-        provider_i = OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
-        return e, lambda: tools_i, state_i, provider_i
+        tool_source, state = build_tau_tools(env)
+        provider = OpenAIProvider(api_key=api_key, base_url=base_url, model=model)
+        return env, lambda: tool_source, state, provider
 
     # 探路 env：仅取任务列表 / 任务描述（并发跑时不共享）
     probe_env = build_env()[0]
     indices = list(range(args.start, len(probe_env.tasks)))
     if args.limit > 0:
         indices = indices[: args.limit]
-    done = load_done_indices(args.outdir) if args.resume else set()
-    indices = [idx for idx in indices if idx not in done]
+    done = load_completed_indices(args.outdir) if args.resume else set()
+    indices = [index for index in indices if index not in done]
     if done:
         print(f"resume: 跳过已完成的 {len(done)} 个用例，剩余 {len(indices)}")
     print(
@@ -270,65 +262,48 @@ def main(argv: list[str] | None = None) -> int:
 
     def restore_done() -> None:
         """续跑：把已完成用例的 TaskResult 从 detail json 恢复进 results。"""
-        prev_detail = load_results_detail(args.outdir / "results_detail.json")
+        prev_detail = load_results(args.outdir / "results_detail.json")
         if not prev_detail:
             return
         for row in prev_detail["results"]:
             try:
-                idx = int(row["name"].rsplit("_", 1)[1])
+                index = int(row["name"].rsplit("_", 1)[1])
             except (ValueError, KeyError):
                 continue
-            results.append(
-                TaskResult(
-                    task=make_task_spec(
-                        idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)
-                    ),
-                    success=row["success"],
-                    detail=row.get("detail", []),
-                    turns=row.get("turns", 0),
-                    llm_calls=row.get("llm_calls", 0),
-                    prompt_tokens=row.get("prompt_tokens", 0),
-                    completion_tokens=row.get("completion_tokens", 0),
-                    tool_calls=row.get("tool_calls", []),
-                    tool_errors=row.get("tool_errors", 0),
-                    elapsed=row.get("elapsed", 0.0),
-                    error=row.get("error"),
-                    output=row.get("output"),
-                    last_agent=row.get("last_agent"),
-                )
+            task = build_task_spec(
+                index, probe_env.tasks[index].instruction[:120], env_slug(probe_env)
             )
+            results.append(TaskResult.from_row(task, row))
 
     if args.resume:
         restore_done()
 
-    def write_artifacts(partial: list[TaskResult]) -> None:
-        """增量写报告（每完成一个用例调用，中断最多丢当前用例）。"""
-        meta = {
-            "timestamp": now_iso(),
+    def report_meta() -> dict:
+        return {
+            "timestamp": utc_timestamp(),
             "model": model,
             "user_model": user_model,
             "repeat": 1,
             "bench": f"tau_{args.env}_{args.split}",
         }
-        report_md = render_report(partial, pricing, meta, previous=None)
-        (args.outdir / "report.md").write_text(report_md, encoding="utf-8")
-        write_results_csv(partial, pricing, args.outdir / "results.csv")
-        save_results_json(partial, pricing, meta, args.outdir / "results.json")
-        save_results_detail(partial, args.outdir / "results_detail.json")
+
+    def write_artifacts(partial: list[TaskResult]) -> None:
+        """增量写报告（每完成一个用例调用，中断最多丢当前用例）。"""
+        save_reports(partial, pricing, report_meta(), args.outdir)
 
     print_lock = threading.Lock()
 
-    def run_one(idx: int) -> TaskResult:
+    def run_one(index: int) -> TaskResult:
         """线程内跑单个用例：独立 env/provider，互不共享。"""
-        e, tools_src_i, state_i, provider_i = build_env()
+        env, tool_source, state, provider = build_env()
         try:
             return asyncio.run(
-                run_tau_case(e, idx, provider_i, tools_src_i, state_i, args.max_turns)
+                run_tau_case(env, index, provider, tool_source, state, args.max_turns)
             )
         except Exception as exc:  # 线程级兜底：不因单用例异常中断整批
             return TaskResult(
-                task=make_task_spec(
-                    idx, probe_env.tasks[idx].instruction[:120], env_name(probe_env)
+                task=build_task_spec(
+                    index, probe_env.tasks[index].instruction[:120], env_slug(probe_env)
                 ),
                 success=False,
                 detail=[f"thread error: {type(exc).__name__}: {exc}"],
@@ -336,55 +311,48 @@ def main(argv: list[str] | None = None) -> int:
                 tool_calls=[],
             )
 
+    def record_result(result: TaskResult) -> None:
+        results.append(result)
+        write_artifacts(results)
+
+    def summary(result: TaskResult) -> str:
+        mark = "PASS" if result.success else "FAIL"
+        return (
+            f"{mark} turns={result.turns} tokens={result.tokens}"
+            f" tools={len(result.tool_calls)} {result.elapsed:.0f}s"
+            + (f"  {result.error}" if result.error else "")
+        )
+
     done_count = 0
     if args.concurrency <= 1:
-        for i, idx in enumerate(indices, 1):
-            print(f"[{i}/{len(indices)}] task {idx} ...", end="", flush=True)
-            res = run_one(idx)
-            results.append(res)
-            write_artifacts(results)
-            mark = "PASS" if res.success else "FAIL"
+        for i, index in enumerate(indices, 1):
+            print(f"[{i}/{len(indices)}] task {index} ...", end="", flush=True)
+            result = run_one(index)
+            record_result(result)
             with print_lock:
-                print(
-                    f" {mark} turns={res.turns} tokens={res.tokens}"
-                    f" tools={len(res.tool_calls)} {res.elapsed:.0f}s"
-                    + (f"  {res.error}" if res.error else "")
-                )
+                print(f" {summary(result)}")
     else:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-            futures = {pool.submit(run_one, idx): idx for idx in indices}
-            for fut in as_completed(futures):
-                idx = futures[fut]
-                res = fut.result()
-                results.append(res)
-                write_artifacts(results)
+            futures = {pool.submit(run_one, index): index for index in indices}
+            for future in as_completed(futures):
+                index = futures[future]
+                result = future.result()
+                record_result(result)
                 done_count += 1
-                mark = "PASS" if res.success else "FAIL"
                 with print_lock:
                     print(
-                        f"[{done_count}/{len(indices)}] task {idx} ... {mark}"
-                        f" turns={res.turns} tokens={res.tokens}"
-                        f" tools={len(res.tool_calls)} {res.elapsed:.0f}s"
-                        + (f"  {res.error}" if res.error else "")
+                        f"[{done_count}/{len(indices)}] task {index} ... "
+                        f"{summary(result)}"
                     )
 
     # 最终报告（带趋势对比；续跑时 detail 已是最新，跳过重复写）
     if not args.resume:
-        meta = {
-            "timestamp": now_iso(),
-            "model": model,
-            "user_model": user_model,
-            "repeat": 1,
-            "bench": f"tau_{args.env}_{args.split}",
-        }
-        prev = load_results_json(args.outdir / "results.json")
-        report_md = render_report(results, pricing, meta, previous=prev)
-        (args.outdir / "report.md").write_text(report_md, encoding="utf-8")
-        write_results_csv(results, pricing, args.outdir / "results.csv")
-        save_results_json(results, pricing, meta, args.outdir / "results.json")
-        save_results_detail(results, args.outdir / "results_detail.json")
+        prev = load_results(args.outdir / "results.json")
+        save_reports(
+            results, pricing, report_meta(), args.outdir, previous=prev
+        )
 
     overall = aggregate(results, pricing)
     print("\n=== 总览 ===")

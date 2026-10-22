@@ -15,7 +15,7 @@ class TestTool:
         result = await tool.run({"msg": "hello"})
         assert result == "echo: hello"
 
-    def test_formatted_schema(self):
+    def test_to_schema(self):
         async def dummy(args):
             return ""
 
@@ -25,19 +25,19 @@ class TestTool:
             parameters={"type": "object", "properties": {"cmd": {"type": "string"}}},
             fn=dummy,
         )
-        schema = tool.formatted_schema()
+        schema = tool.to_schema()
         assert schema["type"] == "function"
         assert schema["function"]["name"] == "bash"
         assert schema["function"]["description"] == "run bash"
         assert schema["function"]["strict"] is True
         assert schema["function"]["parameters"]["additionalProperties"] is False
 
-    def test_formatted_schema_non_strict(self):
+    def test_to_schema_non_strict(self):
         async def dummy(args):
             return ""
 
         tool = Tool(name="t", description="d", parameters={}, fn=dummy)
-        schema = tool.formatted_schema(strict=False)
+        schema = tool.to_schema(strict=False)
         assert schema["function"]["strict"] is False
         assert "additionalProperties" not in schema["function"]["parameters"]
 

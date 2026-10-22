@@ -1,13 +1,9 @@
-"""pytest 共享 fixture 与 mock 对象。"""
+"""pytest 共享 mock 对象与测试辅助函数。"""
 from dataclasses import dataclass, field
 from typing import Any
 
-import pytest
-
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import ToolExecutor
 from ..infra import OpenAIProvider
-from ..spec import Approval, ApprovalRsp, Inquiry, Receive, UserInput
+from ..spec import ApprovalRequest, ApprovalResponse, Inquiry
 
 # ── Mock LLM 响应对象 ──────────────────────────────────
 
@@ -112,51 +108,21 @@ class FakeChannel:
 
     def __init__(self):
         self.events: list = []  # 记录 notify 的通知
-        self._approval_response = ApprovalRsp(approved=True)
+        self._approval_response = ApprovalResponse(approved=True)
         self._inquiry_response = "mock answer"
 
     async def notify(self, notification):
         self.events.append(notification)
 
-    async def call(self, service):
-        match service:
-            case Receive():
-                return UserInput()
+    async def call(self, request):
+        match request:
             case Inquiry():
                 return self._inquiry_response
-            case Approval():
+            case ApprovalRequest():
                 return self._approval_response
 
     def set_approval(self, approved: bool, reason: str | None = None):
-        self._approval_response = ApprovalRsp(approved=approved, reason=reason)
-
-
-# ── Fixtures ───────────────────────────────────────────
-
-@pytest.fixture
-def fake_provider():
-    p = FakeProvider()
-    FakeProvider.set_default(p)
-    yield p
-    FakeProvider.set_default(None)
-
-
-@pytest.fixture
-def fake_channel():
-    return FakeChannel()
-
-
-@pytest.fixture
-def allow_all_config():
-    return ApprovalConfig(
-        rules=[],
-        default=ApprovalDecision.ALLOW,
-    )
-
-
-@pytest.fixture
-def executor(allow_all_config):
-    return ToolExecutor(ToolConfig(approval=allow_all_config))
+        self._approval_response = ApprovalResponse(approved=approved, reason=reason)
 
 
 @dataclass
@@ -167,7 +133,7 @@ class FakeSession:
     jobs: dict = field(default_factory=dict)
     cwd: str | None = None
     history: Any = None
-    ext_runner: Any = None
+    extension_runner: Any = None
     bus: Any = None
 
 
@@ -177,7 +143,7 @@ def make_session(
     jobs=None,
     cwd=None,
     history=None,
-    ext=None,
+    extension_runner=None,
     bus=None,
 ) -> FakeSession:
     """构造测试用会话视图（tool_context 注入它）。"""
@@ -186,11 +152,6 @@ def make_session(
         jobs=jobs if jobs is not None else {},
         cwd=cwd,
         history=history,
-        ext_runner=ext,
+        extension_runner=extension_runner,
         bus=bus,
     )
-
-
-@pytest.fixture
-def tool_context(fake_channel):
-    return make_session(channel=fake_channel)

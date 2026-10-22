@@ -2,7 +2,7 @@ import logging
 import logging.handlers
 from pathlib import Path
 
-from ..conf import PROJ_ROOT, LogConfig, auto_path
+from ..conf import PROJECT_ROOT, LogConfig, resolve_path
 
 
 class TraceInjectingFilter(logging.Filter):
@@ -18,7 +18,7 @@ class TraceInjectingFilter(logging.Filter):
 
 def setup_logger(conf: LogConfig):
 
-    log_path = Path(auto_path(conf.path))
+    log_path = Path(resolve_path(conf.path))
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     root = logging.getLogger()
@@ -42,4 +42,4 @@ def setup_logger(conf: LogConfig):
     handler.addFilter(TraceInjectingFilter())
     root.addHandler(handler)
 
-    logging.getLogger(PROJ_ROOT.name).setLevel(conf.level_int)
+    logging.getLogger(PROJECT_ROOT.name).setLevel(conf.level_number)

@@ -1,6 +1,6 @@
 """CLI 通道入口：python -m walle.channel.cli 启动交互客户端。
 
-实现拆分：服务端在 .server（CLIChannel），客户端交互在 .client（CLIClient）。
+实现拆分：服务端在 .server（CLIServer），客户端交互在 .client（CLIClient）。
 """
 
 import asyncio

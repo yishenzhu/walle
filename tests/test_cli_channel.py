@@ -1,7 +1,7 @@
 """CLI 通道回归测试：读循环并发与审批回复验证。
 
 覆盖修复：
-- CLIConn.run 读循环不被 on_input 阻塞（agent 运行中仍能读取 reply 帧，
+- CLIConnection.run 读循环不被 on_input 阻塞（agent 运行中仍能读取 reply 帧，
   否则 ask_user / 审批等双向交互会死锁）。
 - ChannelApprover.ask 接受真实通道返回的 dict（JSON 反序列化），验证为模型。
 """
@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-from ..channel.cli import CLIChannel, CLIConn
+from ..channel.cli import CLIConnection, CLIServer
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import SessionRegistry
-from ..spec import Approval, ApprovalRsp, UserMessage
+from ..core import SessionManager
+from ..spec import ApprovalRequest, ApprovalResponse, UserMessage
 from ..tools.approval import ChannelApprover
 
 
@@ -23,12 +23,12 @@ async def test_conn_run_processes_reply_while_input_in_flight():
     results: dict = {}
 
     async def handle_client(reader, writer):
-        conn = CLIConn("test-conn", reader, writer)
+        conn = CLIConnection("test-conn", reader, writer)
 
         async def on_input(content):
             # 模拟 agent run：处理消息期间发起审批 call 并等待 reply
             rsp = await conn.call(
-                Approval(tool_name="bash", arguments={}, tool_call_id="tc1")
+                ApprovalRequest(tool_name="bash", arguments={}, tool_call_id="tc1")
             )
             results["approval"] = rsp
 
@@ -37,7 +37,7 @@ async def test_conn_run_processes_reply_while_input_in_flight():
         finally:
             # 须显式关服务端侧连接：3.12 起 server.wait_closed() 会等所有
             # 连接结束，服务端 transport 不关则 _active_count 不归零 → 挂起。
-            # （生产 CLIChannel._handle_conn 同样在 finally 里关 writer）
+            # （生产 CLIServer._handle_conn 同样在 finally 里关 writer）
             writer.close()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
@@ -85,7 +85,7 @@ async def test_conn_run_notifies_error_on_input_failure():
     """
 
     async def handle_client(reader, writer):
-        conn = CLIConn("err-conn", reader, writer)
+        conn = CLIConnection("err-conn", reader, writer)
 
         async def on_input(content):
             raise RuntimeError("boom")
@@ -121,7 +121,7 @@ async def test_conn_run_processes_consecutive_inputs():
     done = asyncio.Event()
 
     async def handle_client(reader, writer):
-        conn = CLIConn("test-conn2", reader, writer)
+        conn = CLIConnection("test-conn2", reader, writer)
 
         async def on_input(content):
             seen.append(content)
@@ -152,7 +152,7 @@ async def test_conn_run_processes_consecutive_inputs():
         await server.wait_closed()
 
 
-class _DictReplyChannel:
+class DictReplyChannel:
     """模拟真实通道：call 返回 JSON 反序列化后的 dict。"""
 
     def __init__(self, data: dict):
@@ -168,31 +168,31 @@ class _DictReplyChannel:
 @pytest.mark.parametrize(
     "reply,expected",
     [
-        ({"approved": True}, ApprovalRsp(approved=True)),
+        ({"approved": True}, ApprovalResponse(approved=True)),
         (
             {"approved": False, "reason": "dangerous"},
-            ApprovalRsp(approved=False, reason="dangerous"),
+            ApprovalResponse(approved=False, reason="dangerous"),
         ),
     ],
 )
 async def test_channel_approver_accepts_dict_reply(reply, expected):
-    """ChannelApprover.ask 将真实通道的 dict 回复验证为 ApprovalRsp。"""
-    approver = ChannelApprover(_DictReplyChannel(reply))
+    """ChannelApprover.ask 将真实通道的 dict 回复验证为 ApprovalResponse。"""
+    approver = ChannelApprover(DictReplyChannel(reply))
     rsp = await approver.ask("bash", {"cmd": "ls"}, "tc1")
-    assert isinstance(rsp, ApprovalRsp)
+    assert isinstance(rsp, ApprovalResponse)
     assert rsp.approved == expected.approved
     assert rsp.reason == expected.reason
 
 
 async def test_channel_approver_passthrough_model_reply():
-    """内存 / 测试通道直接返回 ApprovalRsp 实例时原样透传。"""
-    model = ApprovalRsp(approved=True)
+    """内存 / 测试通道直接返回 ApprovalResponse 实例时原样透传。"""
+    model = ApprovalResponse(approved=True)
 
-    class _ModelChannel(_DictReplyChannel):
-        async def call(self, service) -> ApprovalRsp:
+    class ModelChannel(DictReplyChannel):
+        async def call(self, service) -> ApprovalResponse:
             return model
 
-    approver = ChannelApprover(_ModelChannel(model))
+    approver = ChannelApprover(ModelChannel(model))
     rsp = await approver.ask("bash", {}, "tc1")
     assert rsp is model
 
@@ -200,17 +200,17 @@ async def test_channel_approver_passthrough_model_reply():
 # ── 轮3：attach/resume + 断开 detach 保留 + list 帧 ─────────────────────────
 
 
-class _TestServer:
-    """测试用 CLIChannel 服务端：起真实端口，自带 registry（注入构造参数）。"""
+class ServerHarness:
+    """测试用 CLIServer 服务端：起真实端口，自带 manager（注入构造参数）。"""
 
     def __init__(self, db_path: str):
-        self.registry = SessionRegistry(
+        self.manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),
             db_path=db_path,
         )
-        self.channel = CLIChannel(sessions=self.registry)
+        self.server = CLIServer(sessions=self.manager)
 
     async def start(self):
         # 用端口 0 让内核分配空闲端口
@@ -221,13 +221,13 @@ class _TestServer:
         port = sock.getsockname()[1]
         sock.close()
         self._port = port
-        self.channel._host = "127.0.0.1"
-        self.channel._port = port
-        await self.channel.start()
+        self.server._host = "127.0.0.1"
+        self.server._port = port
+        await self.server.start()
         return port
 
     async def stop(self):
-        await self.channel.stop()
+        await self.server.stop()
 
 
 async def _connect(port: int, hello: dict):
@@ -246,76 +246,76 @@ async def _read_line(reader):
 
 
 async def test_cli_attach_reattaches_existing_session(tmp_path):
-    """attach 帧：同 chat_id 重连恢复到 registry 中的会话（resume）。"""
-    server = _TestServer(str(tmp_path / "s.db"))
-    reg = server.registry
+    """attach 帧：同 chat_id 重连恢复到 manager 中的会话（resume）。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
     port = await server.start()
     try:
         # 首次连接：新建会话
-        r1, w1 = await _connect(port, {"type": "hello", "chat_id": "sess-1"})
+        r1, w1 = await _connect(port, {"type": "hello", "chat_id": "session-1"})
         await _read_line(r1)  # welcome
-        assert reg.get("sess-1") is not None
-        await reg.get("sess-1")._history.add([UserMessage(content="before")])
+        assert manager.get("session-1") is not None
+        await manager.get("session-1")._history.add([UserMessage(content="before")])
         w1.close()
         await w1.wait_closed()
         # 等服务端读到 EOF 并 detach（异步传播）
         for _ in range(100):
-            if not reg.get("sess-1").attached:
+            if not manager.get("session-1").attached:
                 break
             await asyncio.sleep(0.02)
-        assert reg.get("sess-1").attached is False
+        assert manager.get("session-1").attached is False
 
         # 重连：attach 同一会话，attached 恢复
         r2, w2 = await _connect(
-            port, {"type": "hello", "chat_id": "sess-1", "attach": True}
+            port, {"type": "hello", "chat_id": "session-1", "attach": True}
         )
         welcome = await _read_line(r2)
         assert welcome["history"] == [{"role": "user", "content": "before"}]
-        assert reg.get("sess-1").attached is True
+        assert manager.get("session-1").attached is True
         # 仍是同一个 Session 实例（messages 保留）
         w2.close()
         await w2.wait_closed()
         await asyncio.sleep(0.05)
     finally:
         await server.stop()
-        await reg.close()
+        await manager.close()
 
 
 async def test_cli_disconnect_detaches_not_closes(tmp_path):
-    """连接断开 → 会话 detach 保留（不销毁），registry 中仍存在。"""
-    server = _TestServer(str(tmp_path / "s.db"))
-    reg = server.registry
+    """连接断开 → 会话 detach 保留（不销毁），manager 中仍存在。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
     port = await server.start()
     try:
-        r, w = await _connect(port, {"type": "hello", "chat_id": "sess-2"})
+        r, w = await _connect(port, {"type": "hello", "chat_id": "session-2"})
         await _read_line(r)  # welcome
-        sess = reg.get("sess-2")
-        assert sess is not None
+        session = manager.get("session-2")
+        assert session is not None
         # 断开前先写一条历史
-        await sess._history.add([UserMessage(content="before-disconnect")])
+        await session._history.add([UserMessage(content="before-disconnect")])
         w.close()
         await w.wait_closed()
         # 等服务端读到 EOF 并 detach
         for _ in range(100):
-            if not reg.get("sess-2").attached:
+            if not manager.get("session-2").attached:
                 break
             await asyncio.sleep(0.02)
 
         # 会话仍注册、已 detach，且历史保留
-        sess2 = reg.get("sess-2")
-        assert sess2 is not None
-        assert sess2.attached is False
-        msgs = await sess2._history.get()
+        session_after = manager.get("session-2")
+        assert session_after is not None
+        assert session_after.attached is False
+        msgs = await session_after._history.get()
         assert len(msgs) == 1 and msgs[0].content == "before-disconnect"
     finally:
         await server.stop()
-        await reg.close()
+        await manager.close()
 
 
 async def test_cli_attach_unknown_session_errors(tmp_path):
     """attach 不存在的会话 → 服务端回 error 帧。"""
-    server = _TestServer(str(tmp_path / "s.db"))
-    reg = server.registry
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
     port = await server.start()
     try:
         r, w = await _connect(
@@ -328,13 +328,13 @@ async def test_cli_attach_unknown_session_errors(tmp_path):
         await w.wait_closed()
     finally:
         await server.stop()
-        await reg.close()
+        await manager.close()
 
 
 async def test_cli_list_frame_returns_sessions(tmp_path):
-    """list 帧：返回 registry 中全部会话（含 attached 状态）。"""
-    server = _TestServer(str(tmp_path / "s.db"))
-    reg = server.registry
+    """list 帧：返回 manager 中全部会话（含 attached 状态）。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
     port = await server.start()
     try:
         # 建两个会话，一个断开
@@ -346,7 +346,7 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         await w1.wait_closed()
         # 等服务端 detach a
         for _ in range(100):
-            if not reg.get("a").attached:
+            if not manager.get("a").attached:
                 break
             await asyncio.sleep(0.02)
 
@@ -361,4 +361,4 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         await w3.wait_closed()
     finally:
         await server.stop()
-        await reg.close()
+        await manager.close()

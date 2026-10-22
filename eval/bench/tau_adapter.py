@@ -39,15 +39,15 @@ class WalleUserSimulationEnv:
         self.completion_tokens = 0
 
     def _generate(self, messages: list[dict[str, Any]]) -> str:
-        resp = self._client.chat.completions.create(
+        response = self._client.chat.completions.create(
             model=self.model, messages=messages, temperature=0
         )
-        msg = resp.choices[0].message
-        self.messages.append(msg.model_dump())
-        if resp.usage is not None:
-            self.prompt_tokens += resp.usage.prompt_tokens or 0
-            self.completion_tokens += resp.usage.completion_tokens or 0
-        return msg.content or ""
+        message = response.choices[0].message
+        self.messages.append(message.model_dump())
+        if response.usage is not None:
+            self.prompt_tokens += response.usage.prompt_tokens or 0
+            self.completion_tokens += response.usage.completion_tokens or 0
+        return message.content or ""
 
     def build_system_prompt(self, instruction: str | None) -> str:
         instruction_display = (
@@ -91,10 +91,10 @@ def build_tau_tools(env: Env) -> tuple[list[Tool], dict[str, Any]]:
     def make_step_fn(name: str) -> Callable[[dict[str, Any]], Any]:
         async def fn(args: dict[str, Any]) -> str:
             async with lock:
-                resp = env.step(Action(name=name, kwargs=args))
-            if resp.done:
-                state["reward"] = resp.reward
-            return resp.observation
+                step_result = env.step(Action(name=name, kwargs=args))
+            if step_result.done:
+                state["reward"] = step_result.reward
+            return step_result.observation
 
         return fn
 
@@ -114,11 +114,11 @@ def build_tau_tools(env: Env) -> tuple[list[Tool], dict[str, Any]]:
         async with lock:
             if state["stopped"]:
                 return "对话已结束。"
-            resp = env.step(Action(name=RESPOND_ACTION_NAME, kwargs=args))
-            if resp.done:
-                state["reward"] = resp.reward
+            step_result = env.step(Action(name=RESPOND_ACTION_NAME, kwargs=args))
+            if step_result.done:
+                state["reward"] = step_result.reward
                 state["stopped"] = True
-            return resp.observation
+            return step_result.observation
 
     tools.append(
         Tool(
@@ -140,14 +140,14 @@ def build_tau_tools(env: Env) -> tuple[list[Tool], dict[str, Any]]:
     return tools, state
 
 
-def make_task_spec(idx: int, first_observation: str, env_name: str) -> TaskSpec:
+def build_task_spec(idx: int, first_observation: str, env_slug: str) -> TaskSpec:
     """把 τ-bench 用例包装成 TaskSpec（复用现有 metrics/report 管线）。
 
     success 不经过 graders（由 τ-bench reward 决定），ground_truth 仅为满足 schema。
     """
     return TaskSpec(
-        name=f"tau_{env_name}_{idx}",
-        domain=f"tau_{env_name}",
+        name=f"tau_{env_slug}_{idx}",
+        domain=f"tau_{env_slug}",
         prompt=first_observation,
         max_turns=DEFAULT_MAX_TURNS,
         timeout=900.0,

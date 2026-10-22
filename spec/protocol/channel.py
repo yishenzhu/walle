@@ -6,25 +6,24 @@
 
 from typing import Any, Protocol, runtime_checkable
 
-from ..schemas import NotificationUnion, ServiceUnion, SessionConn
+from ..schemas import NotificationUnion, RequestUnion, SessionSpec
 
 
 @runtime_checkable
 class Channel(Protocol):
     async def notify(self, notification: NotificationUnion) -> None: ...  # 广播，无返回
-    async def call(self, service: ServiceUnion) -> Any: ...               # 点对点，有返回
+    async def call(self, request: RequestUnion) -> Any: ...               # 点对点，有返回
 
 
 @runtime_checkable
 class Sessions(Protocol):
-    """会话管理能力：get / create / register / list / remove / close。
+    """通道可见的会话能力：get / create / list / close。
 
-    使用方只依赖本能力面，不 import 具体实现；remove/close 供停机清理。
+    使用方只依赖本能力面，不 import 具体实现；register/remove 属会话
+    装配根内部管理，不暴露给 channel。
     """
 
     def get(self, session_id: str) -> Any: ...
-    def create(self, conn: SessionConn, ext_names: list[str] | None = None) -> Any: ...
-    def register(self, session: Any) -> None: ...
+    def create(self, conn: SessionSpec, extension_names: list[str] | None = None) -> Any: ...
     def list(self) -> list[dict]: ...
-    def remove(self, session_id: str) -> Any: ...
     async def close(self) -> None: ...

@@ -7,7 +7,7 @@
 - hidden_paths 用空视图遮罩：目录→空 tmpfs，文件→ /dev/null（读为空）
 - network=False 时 --unshare-net 断网
 
-形态：沙箱作为进程级扩展（main 里 extensions.add("sandbox", Sandbox().as_ext)），
+形态：沙箱作为进程级扩展（main 里 extensions.add("sandbox", Sandbox().as_extension)），
 同名覆盖内置工具（builtin 先激活、沙箱后激活 → 后到覆盖先到）。
 配置随沙箱实例构造注入，不挂全局 conf；"是否沙箱"体现在装配哪个扩展。
 沙箱依赖会话工作目录（cwd）：无 cwd 时沙箱工具直接报错，不回退。
@@ -36,7 +36,7 @@ class SandboxConfig:
 class Sandbox:
     """沙箱扩展：覆盖内置工具为沙箱实现（当前覆盖 bash，可扩展）。
 
-    用法（main.py）：extensions.add("sandbox", Sandbox().as_ext)，
+    用法（main.py）：extensions.add("sandbox", Sandbox().as_extension)，
     须在 builtin 之后注册——会话激活时后到者同名覆盖先到者。
     """
 
@@ -67,7 +67,7 @@ class Sandbox:
             args += ["--unshare-net"]
         return [*args, "bash", "-c", cmd]
 
-    async def as_ext(self, api: ExtensionAPI) -> None:
+    async def as_extension(self, api: ExtensionAPI) -> None:
         """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，激活后到覆盖）。
 
         宿主机无 bwrap 时抛异常 → 扩展加载期标记 FAILED，自动跳过

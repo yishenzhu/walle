@@ -76,7 +76,7 @@ class ProjectedMessages(Projection):
         if self._store is not None:
             await self._store.clear()
 
-    async def projection(self) -> int | None:
+    async def get_projection(self) -> int | None:
         """读当前切点；无投影返回 None。"""
         await self._ensure_restored()
         return self._cut

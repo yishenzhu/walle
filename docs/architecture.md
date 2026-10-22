@@ -1,7 +1,7 @@
 # 运行时架构：协议驱动分层（Protocol-First Layering）
 
 walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时"**；跨层只依赖
-**能力协议**，具体实现由**装配根**（`main.py` / `SessionRegistry`）注入，
+**能力协议**，具体实现由**装配根**（`main.py` / `SessionManager`）注入，
 避免具体类型跨层牵扯。
 
 本文界定分层、能力协议清单、装配原则与依赖方向约束。文中所有路径与依赖
@@ -18,7 +18,7 @@ walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时
    |---|---|---|---|
    | 能力/操作 | 可被调用方依赖的操作契约 | `spec/protocol/`（Protocol） | 本身是协议 |
    | 领域数据 | 跨边界流动的**值类型**（无后端行为：`Message`/`Usage`/`Job`…） | `spec/schemas/` | ✅ 应当引用 |
-   | 具体实现 | 有状态/后端的实现类（`SQLiteMessages`/`CLIChannel`…） | 各自模块 | ❌ 禁止引用 |
+   | 具体实现 | 有状态/后端的实现类（`SQLiteMessages`/`CLIServer`…） | 各自模块 | ❌ 禁止引用 |
 
    判定：协议方法/返回里出现的是"数据怎么流过"→ 数据模型，合法；出现的是
    "哪个实现来做"→ 越界。`Message` 是领域数据模型，故
@@ -29,7 +29,7 @@ walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时
    不提及任何具体实现。`spec/` 是**叶子包**：不 import 任何其他层。
 
 3. **装配根是唯一 new 具体类的地方** —— `main.py` 组合扩展池 / 进程默认
-   provider；`SessionRegistry.create` 组合 Session 具体实现（历史存储、会话级
+   provider；`SessionManager.create` 组合 Session 具体实现（历史存储、会话级
    provider）。除此之外的模块代码不得 `new` 别的模块的具体实现。
 
 4. **核心引擎只依赖协议** —— `Runner` 依赖 `Messages` / `LLM` / `ToolTable`
@@ -52,7 +52,7 @@ channel   ──▶ spec
 infra     ──▶ conf, spec
 messages  ──▶ infra, spec
 tools     ──▶ conf, infra, spec
-core      ──▶ conf, infra, messages, spec               （含装配根 SessionRegistry）
+core      ──▶ conf, infra, messages, spec               （含装配根 SessionManager）
 ```
 
 | 层 | 位置 | 职责 | 允许依赖 |
@@ -61,10 +61,10 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 | 自身 |
 | 基建实现 | `infra/` | EventBus、Tool、Provider(LLM 实现)、诊断、遥测、日志、扩展加载/激活 | `conf`, `spec` |
 | 消息实现 | `messages/` | InMemory / SQLite / Projected（Messages 协议实现）+ 装配工厂 | `infra`, `spec` |
-| 执行引擎 | `core/` | Runner / ToolExecutor / Agent；Session 与会话装配根 SessionRegistry | `conf`, `infra`, `messages`, `spec` |
+| 执行引擎 | `core/` | Runner / ToolExecutor / Agent；Session 与会话装配根 SessionManager | `conf`, `infra`, `messages`, `spec` |
 | 工具/扩展 | `tools/` | 内置工具、mcp、skill、approval、sandbox（扩展声明） | `conf`, `infra`, `spec` |
 | 传输通道 | `channel/` | CLI server/client，实现 `Channel`/会话接入 | `spec` |
-| **装配根** | `main.py` | 唯一组装进程级具体实现（provider / 扩展表 / 注册表） | 全部 |
+| **装配根** | `main.py` | 唯一组装进程级具体实现（provider / 扩展表 / 会话管理器） | 全部 |
 
 > 依赖方向总则：**协议面最底、装配根最顶；一切跨层引用都要指向协议面，而非
 > 实现类。** 一个模块若需要借用别的模块的能力，就在 `spec/protocol/` 声明能力
@@ -73,6 +73,10 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 > `core/session.py` 是**会话装配根**，按设计允许 import `messages` 并构造具体
 > 存储；`core` 的其余模块（runner / executor / agent）不得依赖具体注入件——
 > 该规则由 `tests/test_layering.py` 强制。
+>
+> `channel/transport.py` 是 CLI server/client 与 Web bridge 共用的 JSON-line
+> 帧实现（编解码 / 超时 / 帧上限 / 幂等关闭）；`CLIConnection` 只保留
+> Channel 语义（notify / call / pending / input worker）。
 
 ## 3. 统一协议清单（`spec/protocol/`）
 
@@ -80,8 +84,8 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 
 ### 通道与交互（`channel.py`）
 - `Channel`（notify 广播 / call 点对点）—— 服务端与传输层的唯一稳定契约。
-- `Sessions`（会话管理能力：get / create / register / list / remove / close）
-  —— channel 只依赖它，不依赖 core 实现类。
+- `Sessions`（通道可见的会话能力：get / create / list / close）
+  —— channel 只依赖它，不依赖 core 实现类；register/remove 属管理器内部管理。
 
 ### 历史存储（`messages.py`）
 - `Messages`（get/add/clear/pop/query/search/count/close）
@@ -89,7 +93,7 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 - `ProjectionStore`（切点持久化）
 
 ### 会话视图（`view.py`）
-- `SessionView`：工具可见面（channel / jobs / cwd / history / ext_runner / bus）。
+- `SessionView`：工具可见面（channel / jobs / cwd / history / extension_runner / bus）。
   `tool_context: ContextVar[SessionView | None]` 保持；实现由装配注入，工具不依赖
   Session 具体类。刻意不含 provider / agents / depth / session_id。
 
@@ -111,13 +115,13 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 ## 4. 会话装配（Session 私有件）
 
 ```
-SessionRegistry.create(conn)                 # 装配根
+SessionManager.create(conn)                 # 装配根
 ├─ build_history(storage, db, session_id)    # messages.factory：投影包装
 ├─ provider（conn.model 新建 / 沿用进程默认）  # 均为 spec.LLM
 └─ Session(session_id, history, provider, extensions, transport, cwd)
     ├─ _bus            EventBus        # 会话私有事件总线（唯一事实源）
     ├─ _agent_runner   Runner          # 构造注入按会话新建的 ToolExecutor
-    ├─ _ext_runner     ExtensionRunner # 注入 _bus；activate() 选中扩展
+    ├─ _extension_runner     ExtensionRunner # 注入 _bus；activate() 选中扩展
     ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
@@ -134,7 +138,7 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
 | 上下文 | 给谁 | 使命 | 构造/注入 |
 |---|---|---|---|
 | `SessionContext`(context) | Runner.run、外部访问 | 跨**轮**会话状态（history/jobs/工具源） | Session property 现造（channel 取当前 _transport） |
-| `tool_view` ContextVar | 工具 / 审批扩展 / preflight | 跨单轮所有工具执行的会话能力（经 `tool_context` 注入） | runner 每轮 set；后台任务 run_job 内自设 |
+| `tool_context` ContextVar | 工具 / 审批扩展 / preflight | 跨单轮所有工具执行的会话能力（`SessionView` 视图） | runner 每轮 set；后台任务 run_job 内自设 |
 | `CommandContext` | 命令 handler | 单条命令的执行能力 | handle 每次现造 |
 
 > `SessionView`（协议）与 `tool_context` ContextVar 承载运行时注入的会话对象；
@@ -151,8 +155,8 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
   job_result 读）。
 - **工具表**：事实源在 ExtensionRunner（activate / define_tool 动态注册实时反映
   到下一轮）；Agent 不持有工具源。
-- **provider**：进程默认由装配根构造一次注入 Registry；会话自带 `model` 配置时
-  由 Registry 就地新建，其余沿用进程默认。
+- **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时
+  由 SessionManager 就地新建，其余沿用进程默认。
 - **子 agent 历史**：`SessionContext.history_factory` 提供隔离历史来源（装配注入
   的内存工厂），引擎不 import 具体存储。
 
@@ -163,11 +167,11 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
 
 | 事件 | 生产者 | 消费者 |
 |---|---|---|
-| `MESSAGE_DELTA` | Runner 流式增量 | Session → transport.notify(Delta) |
-| `MESSAGE_END` | Runner 文本完成 | Session → transport.notify(DeltaEnd)（output 非 None 时） |
-| `TOOL_EXECUTION_START` | executor | 审批扩展（Approval）、guard 钩子 |
-| `TOOL_EXECUTION_END` | executor | 观测型扩展 |
-| `SESSION/AGENT/TURN/MESSAGE_*` | Runner | 观测 / 会话管理 |
+| `MessageDeltaEvent` | Runner 流式增量 | Session → transport.notify(Delta) |
+| `MessageEndEvent` | Runner 文本完成 | Session → transport.notify(DeltaEnd)（output 非 None 时） |
+| `ToolExecutionStartEvent` | executor | 审批扩展（Approval）、guard 钩子 |
+| `ToolExecutionEndEvent` | executor | 观测型扩展 |
+| `Session*Event` / `Agent*Event` / `Turn*Event` / `MessageStartEvent` | Runner | 观测 / 会话管理 |
 
 > 载荷只携带值类型：需要与会话状态交互的 handler 从 `SessionView` /
 > `tool_context` 取，事件本身不塞 `Messages` / `LLM` 等能力对象——否则
@@ -180,7 +184,7 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
 
 | 现状耦合 | 目标 |
 |---|---|
-| `messages/` 依赖 `infra.SQLiteStore`（sqlite 连接辅助，`sqlite.py` / `meta.py`） | 存储辅助可下沉到独立模块，或上提为协议面注入 |
+| `messages/` 依赖 `infra.SQLiteStore`（sqlite 连接辅助，`sqlite.py` / `projection_store.py`） | 存储辅助可下沉到独立模块，或上提为协议面注入 |
 | executor 直发 channel（ToolStart/ToolResult）与事件通道并存 | 收敛为事件→监听转发（待后续统一） |
 | `conf/` 被 `infra`/`tools`/`core` 直接 import | 配置可作为装配参数注入，使 `conf` 也归装配根 |
 

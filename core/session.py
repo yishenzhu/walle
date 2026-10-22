@@ -1,7 +1,7 @@
 """会话实体：每个会话自持一套完整运行时。
 
 会话 = 独立边界：自己的事件总线(bus)、工具执行器(executor)、扩展激活
-(ExtensionRunner)、agent 循环(Runner)。扩展声明(ExtensionRegistry 加载的
+(ExtensionRunner)、agent 循环(Runner)。扩展声明(ExtensionManager 加载的
 Extension)跨会话共享，但"激活到哪个会话"由本会话的 ExtensionRunner 决定
 ——不同会话可激活不同扩展组合。
 
@@ -9,7 +9,7 @@ Extension)跨会话共享，但"激活到哪个会话"由本会话的 ExtensionR
 new 具体实现——换后端或测试替换替身都无需改本模块。
 
 会话能力与状态的统一访问点是 context(SessionContext)：channel（attach/
-detach 切换）、jobs（后台作业表）、ext_runner（工具/技能源）都在其上。
+detach 切换）、jobs（后台作业表）、extension_runner（工具/技能源）都在其上。
 
 生命周期：transport 可切换（attach/detach）。连接断开时 detach 保留
 messages（状态跨连接存活，供重连恢复）；真正销毁走 close()。
@@ -35,8 +35,9 @@ from ..spec import (
     Delta,
     DeltaEnd,
     Job,
+    Message,
     Messages,
-    SessionConn,
+    SessionSpec,
     UserInput,
 )
 from .agent import Agent
@@ -44,18 +45,18 @@ from .executor import ToolExecutor
 from .runner import Runner, RunOptions, SessionContext
 
 
-class SessionBusy(RuntimeError):
+class SessionBusyError(RuntimeError):
     code = "session_busy"
 
 
-class SessionClosed(RuntimeError):
+class SessionClosedError(RuntimeError):
     code = "session_closed"
 
 
 class Session:
     """单会话运行时：自持 bus / agent 循环 / 扩展激活。
 
-    transport 由 attach() 注入（通常为某连接的 CLIConn），作为会话的
+    transport 由 attach() 注入（通常为某连接的 CLIConnection），作为会话的
     channel 端点直接使用（chat_id 补全在连接内完成）。能力与状态统一经
     self.context（SessionContext）访问。
     """
@@ -73,7 +74,7 @@ class Session:
         agent: str | None = None,
     ) -> None:
         self.id = session_id
-        # 创建时间内聚在 Session（注册表/连接仅读取展示）
+        # 创建时间内聚在 Session（管理器/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
         self._cwd = cwd
@@ -83,17 +84,17 @@ class Session:
         # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
         executor = ToolExecutor(tool_config or ToolConfig())
         self._agent_runner = Runner(executor=executor)
-        self._ext_runner = ExtensionRunner(
+        self._extension_runner = ExtensionRunner(
             self._bus
         )  # 会话级扩展激活（含工具表/命令表）
         if extensions:
-            self._ext_runner.activate(*extensions)  # 按会话选择激活扩展
+            self._extension_runner.activate(*extensions)  # 按会话选择激活扩展
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
 
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
-        # 注册表缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
+        # 管理器缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
         self._agents: dict[str, Agent] = {}
         self._agent = self._build_agent(agent)
         # 依赖由装配根注入：模型（协议面）与会话历史（已包投影视图）
@@ -120,7 +121,7 @@ class Session:
             history=self._history,
             session_id=self.id,
             jobs=self._jobs,
-            ext_runner=self._ext_runner,  # 工具执行期动态注册通道
+            extension_runner=self._extension_runner,  # 工具执行期动态注册通道
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
@@ -147,7 +148,7 @@ class Session:
     def transport(self) -> Channel | None:
         return self._transport
 
-    async def recent(self, limit: int = 20) -> list:
+    async def recent_messages(self, limit: int = 20) -> list[Message]:
         """最近 limit 条原始消息（attach 时给客户端做历史快照）。"""
         total = await self._history.count()
         start = max(0, total - limit)
@@ -177,7 +178,7 @@ class Session:
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
         if self._state == "closed":
-            raise SessionClosed(f"session '{self.id}' is closed")
+            raise SessionClosedError(f"session '{self.id}' is closed")
         self._transport = transport
 
     def detach(self, transport: Channel | None = None) -> bool:
@@ -188,13 +189,13 @@ class Session:
         return True
 
     async def handle(self, user_input: UserInput) -> None:
-        """提交并等待一次 run；忙时抛 SessionBusy，不排队。"""
+        """提交并等待一次 run；忙时抛 SessionBusyError，不排队。"""
         if self._state == "closed":
-            raise SessionClosed(f"session '{self.id}' is closed")
+            raise SessionClosedError(f"session '{self.id}' is closed")
         if self._transport is None:
-            raise SessionClosed(f"session '{self.id}' is detached, attach first")
+            raise SessionClosedError(f"session '{self.id}' is detached, attach first")
         if self._state in ("running", "cancelling"):
-            raise SessionBusy(f"session '{self.id}' is busy ({self._state})")
+            raise SessionBusyError(f"session '{self.id}' is busy ({self._state})")
 
         content = user_input.content or ""
         self._state = "running"
@@ -215,7 +216,7 @@ class Session:
         try:
             # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
             # （messages/provider），命令 handler 按需自取。
-            if await self._ext_runner.dispatch(
+            if await self._extension_runner.dispatch(
                 content,
                 CommandContext(
                     channel=self._transport,
@@ -229,7 +230,7 @@ class Session:
                 self._agent,
                 content,
                 env=self.context,
-                options=RunOptions(streamed=True),
+                options=RunOptions(stream=True),
             )
         except asyncio.CancelledError:
             # 主动取消：先发终态再正常返回，调用方不必处理 CancelledError。
@@ -252,12 +253,7 @@ class Session:
         self._state = "cancelling"
         self._cancel_reason = reason
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+        await asyncio.gather(task, return_exceptions=True)
         if self._state != "closed":
             self._state = "idle"
         return True
@@ -281,10 +277,10 @@ class Session:
         await self._history.close()
 
 
-class SessionRegistry:
-    """进程级会话注册表 + 工厂：session_id → Session。
+class SessionManager:
+    """进程级会话管理器 + 工厂：session_id → Session。
 
-    连接断开只 detach（保留状态），会话仍在 registry 中可被重连 attach；
+    连接断开只 detach（保留状态），会话仍在 manager 中可被重连 attach；
     显式 remove/close 才真正销毁。附加元数据（创建时间等）供列表展示。
 
     agent 由 Session 内部按名 Agent.load；本类是会话装配根：按配置构造
@@ -308,17 +304,17 @@ class SessionRegistry:
 
     def create(
         self,
-        conn: SessionConn,
-        ext_names: list[str] | None = None,
+        conn: SessionSpec,
+        extension_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。
 
-        ext_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
+        extension_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
         （跳过加载失败的声明）。模型接入：客户端随握手提供则为本会话新建
         provider（可指向不同端点），否则沿用进程默认。历史存储按 storage
         配置构造（投影包装），与 provider 一并注入 Session。
         """
-        extensions = self.active_ext(ext_names)
+        extensions = self.select_extensions(extension_names)
         model_cfg = conn.model
         provider = (
             OpenAIProvider(
@@ -342,12 +338,12 @@ class SessionRegistry:
         self.register(session)
         return session
 
-    def active_ext(self, ext_names: list[str] | None) -> list[Extension]:
+    def select_extensions(self, extension_names: list[str] | None) -> list[Extension]:
         """从扩展声明池按名单挑扩展（默认全部可用声明；跳过加载失败的）。"""
         pool = [e for e in self._extensions if e.error is None]
-        if ext_names is None:
+        if extension_names is None:
             return pool
-        wanted = set(ext_names)
+        wanted = set(extension_names)
         return [e for e in pool if e.name in wanted]
 
     def register(self, session: Session) -> None:
@@ -360,7 +356,7 @@ class SessionRegistry:
         return self._sessions.get(session_id)
 
     def remove(self, session_id: str) -> Session | None:
-        """从注册表移除（不 close，调用方决定是否销毁）。"""
+        """从管理器移除（不 close，调用方决定是否销毁）。"""
         return self._sessions.pop(session_id, None)
 
     def list(self) -> list[dict]:

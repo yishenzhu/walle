@@ -3,7 +3,7 @@
 单测只验 argv 构造 / 扩展覆盖（不依赖 bwrap 存在）；集成测试真跑
 bwrap 验证隔离，宿主机无 bwrap 时自动跳过。
 
-集成测试的可写区 = 会话 cwd，用 PROJ_ROOT/data/sandbox/_test/ 下的
+集成测试的可写区 = 会话 cwd，用 PROJECT_ROOT/data/sandbox/_test/ 下的
 真实目录：bwrap 的挂载目标须在沙箱视图中已存在（ro-bind / 提供），
 全新路径会因 mkdir 只读失败；/tmp 下路径又被 --tmpfs /tmp 替换。
 """
@@ -13,23 +13,23 @@ import subprocess
 
 import pytest
 
-from ..conf import PROJ_ROOT
+from ..conf import PROJECT_ROOT
 from ..tools import Sandbox, SandboxConfig
 
 HAVE_BWRAP = shutil.which("bwrap") is not None
 
 pytestmark = pytest.mark.skipif(not HAVE_BWRAP, reason="bwrap not installed")
 
-_TEST_ROOT = PROJ_ROOT / "data" / "sandbox" / "_test"
+TEST_ROOT = PROJECT_ROOT / "data" / "sandbox" / "_test"
 
 
 @pytest.fixture
 def ws():
     """宿主真实存在的可写工作区（会话 cwd 角色）。"""
-    d = _TEST_ROOT / "ws"
+    d = TEST_ROOT / "ws"
     d.mkdir(parents=True, exist_ok=True)
     yield d
-    shutil.rmtree(_TEST_ROOT, ignore_errors=True)
+    shutil.rmtree(TEST_ROOT, ignore_errors=True)
 
 
 def make_sandbox(**kw) -> Sandbox:
@@ -110,7 +110,7 @@ class TestSandboxExt:
         api = FakeAPI()
 
         async def run():
-            await Sandbox().as_ext(api)
+            await Sandbox().as_extension(api)
 
         asyncio.run(run())
         assert [t.name for t in api.tools] == ["bash"]
@@ -119,7 +119,7 @@ class TestSandboxExt:
         monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: None)
 
         async def run():
-            await Sandbox().as_ext(object())  # noqa: BLE001
+            await Sandbox().as_extension(object())  # noqa: BLE001
 
         with pytest.raises(RuntimeError):
             asyncio.run(run())
@@ -135,7 +135,7 @@ class TestIntegration:
         assert (ws / "probe").exists()
 
     async def test_outside_write_fails(self, ws):
-        outside = _TEST_ROOT / "outside_probe"
+        outside = TEST_ROOT / "outside_probe"
         outside.write_text("x")
         argv = make_sandbox().argv(str(ws), f"echo hi > {outside} 2>&1; echo rc=$?")
         out = await exec_argv(argv)

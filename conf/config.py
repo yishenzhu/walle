@@ -6,14 +6,14 @@ from typing import NamedTuple
 import yaml
 from pydantic import BaseModel, Field
 
-PROJ_ROOT = Path(__file__).resolve().parent.parent
-DOT_AGENT = PROJ_ROOT / ".agent"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+AGENT_DIR = PROJECT_ROOT / ".agent"
 
 
-def auto_path(path: str) -> str:
+def resolve_path(path: str) -> str:
     p = Path(path)
     if not p.is_absolute():
-        p = PROJ_ROOT / p
+        p = PROJECT_ROOT / p
     return str(p.resolve())
 
 
@@ -35,7 +35,7 @@ class OTLPConfig(BaseModel):
 
 class TelemetryConfig(BaseModel):
     enabled: bool = False
-    service_name: str = PROJ_ROOT.name
+    service_name: str = PROJECT_ROOT.name
     otlp: OTLPConfig = OTLPConfig()
     console_export: bool = False
 
@@ -46,7 +46,7 @@ class LogConfig(BaseModel):
     backup_count: int
 
     @property
-    def level_int(self) -> int:
+    def level_number(self) -> int:
         return getattr(logging, self.level.upper(), logging.DEBUG)
 
 
@@ -56,13 +56,13 @@ class ApprovalDecision(StrEnum):
     ASK = "ask"
 
 
-class RawRule(NamedTuple):
+class ApprovalRuleSpec(NamedTuple):
     action: ApprovalDecision
     pattern: str
 
 
 class ApprovalConfig(BaseModel):
-    rules: list[RawRule] = Field(default_factory=list)
+    rules: list[ApprovalRuleSpec] = Field(default_factory=list)
     default: ApprovalDecision = ApprovalDecision.ASK
 
 
@@ -108,6 +108,6 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):
-        with open(auto_path(path), encoding="utf-8") as f:
+        with open(resolve_path(path), encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return cls.model_validate(data)

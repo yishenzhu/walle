@@ -24,5 +24,5 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    ext_runner: ToolTable | None
+    extension_runner: ToolTable | None
     bus: EventBus | None

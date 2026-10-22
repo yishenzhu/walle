@@ -33,19 +33,19 @@
 ```mermaid
 flowchart TD
     Main["main.py<br/>组装扩展池 · 启动"]
-    Reg["ExtensionRegistry<br/>进程级加载器<br/>builtin / sandbox / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
-    SR["SessionRegistry<br/>会话注册表 · 工厂<br/>持扩展声明池 / tool_config"]
-    S["Session<br/>会话运行时容器<br/>bus · executor · runner · ext_runner"]
+    ExtManager["ExtensionManager<br/>进程级加载器<br/>builtin / sandbox / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
+    SessionManager["SessionManager<br/>会话管理器 · 工厂<br/>持扩展声明池 / tool_config"]
+    S["Session<br/>会话运行时容器<br/>bus · executor · runner · extension_runner"]
     ER["ExtensionRunner<br/>会话级激活层<br/>工具表 / 技能表 / 命令表"]
     R["Runner<br/>Agent 循环 · 流式增量事件"]
     E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
     A["Agent<br/>定义 · tool_filter · 技能白名单"]
     T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
-    Ch["Channel<br/>notify / call<br/>CLI 多会话"]
+    Ch["Channel<br/>notify / call<br/>CLI / Web 多会话"]
 
-    Main --> Reg
-    Reg -->|Extension 声明池| SR
-    SR -->|create 会话| S
+    Main --> ExtManager
+    ExtManager -->|Extension 声明池| SessionManager
+    SessionManager -->|create 会话| S
     S -->|activate 选中扩展| ER
     S --> R
     S --> E
@@ -57,7 +57,7 @@ flowchart TD
     classDef entry fill:#e8f5e9,stroke:#2e7d32
     classDef core fill:#e3f2fd,stroke:#1565c0
     classDef tool fill:#fff3e0,stroke:#e65100
-    class Main,Reg,SR entry
+    class Main,ExtManager,SessionManager entry
     class S,ER,R,E,A core
     class T,Ch tool
 ```
@@ -68,7 +68,7 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant C as Channel(CLI)
+    participant C as Channel(CLI/Web)
     participant S as Session
     participant R as Runner
     participant B as Bus(会话事件)
@@ -83,7 +83,7 @@ sequenceDiagram
         M-->>R: tool_calls / 文本
         alt 有 tool_calls
             R->>R: tool_context 统一注入本轮 ctx
-            R->>E: execute_calls（并发）
+            R->>E: execute_tool_calls（并发）
             E->>B: TOOL_EXECUTION_START（审批扩展 deny/ask → 人工确认）
             E->>E: 执行工具（超时）→ TOOL_EXECUTION_END
             E-->>R: 结果
@@ -109,9 +109,9 @@ sequenceDiagram
 | 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
 | 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、进程默认 provider、CLI 服务端 |
 | 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
-| 核心引擎 | `core/` | 会话装配（SessionRegistry：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
+| 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
 | 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
-| 交互通道 | `channel/` | CLI 多会话服务端（JSON-line 协议），实现 Channel 协议 |
+| 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ CLI 多会话服务端 + Web 对话桥接，实现 Channel 协议 |
 | 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
 | 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
@@ -185,6 +185,12 @@ PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.
 
 `--api-key/--base-url/--model` 三项齐全时，服务端为该会话新建 provider——不同连接可指向不同 OpenAI 兼容端点；缺省回退服务端 `.env` 配置。
 
+Web 对话（可选，需先安装 `fastapi` / `uvicorn`）：
+
+```bash
+PYTHONPATH=.. python -m walle.channel.web   # 默认 http://127.0.0.1:8080
+```
+
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
@@ -239,7 +245,7 @@ extension:
   enabled: []                         # 空 = 全部启用；非空 = 白名单
   disabled: []                        # disabled 优先于 enabled
 
-# MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（模型可动态添加）
+# MCP server 配置不在此文件，统一放在 .agent/mcp.yaml（手动编辑）
 ```
 
 #### 审批规则
@@ -314,13 +320,13 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问会话视图 SessionView（channel / jobs / bus / ext_runner / cwd / history）
+    ctx = tool_context.get()   # 访问会话视图 SessionView（channel / jobs / bus / extension_runner / cwd / history）
     return f"result: {query}"
 ```
 
 ```python
 # main.py 引导扩展里注册（内置工具也走扩展系统，先于用户扩展）
-async def builtin_ext(api) -> None:
+async def builtin_extension(api) -> None:
     for fn in (bash, ask_user, read, edit, write, ..., history, new_window):
         api.register_tool(Tool.from_function(fn))
 ```
@@ -446,17 +452,22 @@ walle/
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（并发·超时）
-│   ├── session.py             #   Session + SessionRegistry（会话装配根）
+│   ├── session.py             #   Session + SessionManager（会话装配根）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
-│   └── cli/                   #   CLI 多会话（JSON-line 协议）
-│       ├── server.py          #     服务端（CLIChannel）
-│       ├── client.py          #     交互客户端（CLIClient）
-│       └── __main__.py        #     客户端入口（python -m walle.channel.cli）
+│   ├── transport.py           #   JSON-line 帧传输（CLI/Web 共用）
+│   ├── cli/                   #   CLI 多会话（JSON-line 协议）
+│   │   ├── server.py          #     服务端（CLIServer）
+│   │   ├── client.py          #     交互客户端（CLIClient）
+│   │   └── __main__.py        #     客户端入口（python -m walle.channel.cli）
+│   └── web/                   #   Web 对话（WebSocket ↔ CLI）
+│       ├── app.py             #     FastAPI 应用与桥接
+│       ├── index.html         #     对话页面
+│       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明
-│   ├── mcp.py                 #   MCP 配置 + 客户端（Registry.as_ext）
-│   ├── skill.py               #   技能扫描（Skill.as_ext）
-│   ├── approval.py            #   审批扩展（Approval.as_ext：规则 + 人工确认）
+│   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.as_extension）
+│   ├── skill.py               #   技能扫描（SkillLoader.as_extension）
+│   ├── approval.py            #   审批扩展（Approval.as_extension：规则 + 人工确认）
 │   ├── sandbox.py             #   沙箱扩展（bwrap 同名覆盖内置 bash）
 │   ├── __init__.py            #   tools 公共导出
 │   └── builtin/               #   内置工具扩展
@@ -465,7 +476,7 @@ walle/
 │       ├── edit.py            #     文件局部替换（降级匹配 + 换行/BOM 保真）
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
-│       ├── defined.py         #     define_tool 动态定义工具
+│       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
 │       └── extension.py       #     builtin 扩展声明
@@ -473,10 +484,10 @@ walle/
 │   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化
 │   ├── projected.py           #   投影视图（切点截断模型视野）
-│   ├── meta.py                #   切点持久化
+│   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
-│   ├── extension.py           #   ExtensionRegistry / ExtensionRunner / CommandContext
+│   ├── extension.py           #   ExtensionManager / ExtensionRunner / CommandContext
 │   ├── event_bus.py           #   会话事件总线（具体实现）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断

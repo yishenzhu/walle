@@ -7,12 +7,12 @@ import asyncio
 import sqlite3
 from pathlib import Path
 
-from ..conf import auto_path
+from ..conf import resolve_path
 
 
 class SQLiteStore:
     def __init__(self, db_path: str):
-        self._db_path = auto_path(db_path)
+        self._db_path = resolve_path(db_path)
         self._conn: sqlite3.Connection | None = None
 
     async def _get_conn(self) -> sqlite3.Connection:

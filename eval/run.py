@@ -21,17 +21,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .harness import OUT_DIR, TaskResult, build_tool_system, run_task
+from .harness import OUT_DIR, TaskResult, build_tool_source, run_task
 from .metrics import Pricing, aggregate
-from .report import (
-    load_results_detail,
-    load_results_json,
-    now_iso,
-    render_report,
-    save_results_detail,
-    save_results_json,
-    write_results_csv,
-)
+from .report import load_results, save_reports, utc_timestamp
 from .spec import TASKS_DIR, load_tasks
 
 DEFAULT_OUTDIR = Path(__file__).resolve().parent / "report"
@@ -78,7 +70,7 @@ def pick_tasks(args: argparse.Namespace):
 
 def render_only(args: argparse.Namespace) -> int:
     """不调 LLM：从 results_detail.json 重建 TaskResult 并重渲染报告。"""
-    detail = load_results_detail(args.outdir / "results_detail.json")
+    detail = load_results(args.outdir / "results_detail.json")
     if detail is None:
         print(f"缺少 {args.outdir / 'results_detail.json'}，先跑一次评测")
         return 1
@@ -89,31 +81,15 @@ def render_only(args: argparse.Namespace) -> int:
         if task is None:
             print(f"跳过未知任务: {row['name']}（任务定义可能已删除）")
             continue
-        results.append(
-            TaskResult(
-                task=task,
-                success=row["success"],
-                detail=row.get("detail", []),
-                turns=row.get("turns", 0),
-                llm_calls=row.get("llm_calls", 0),
-                prompt_tokens=row.get("prompt_tokens", 0),
-                completion_tokens=row.get("completion_tokens", 0),
-                tool_calls=row.get("tool_calls", []),
-                tool_errors=row.get("tool_errors", 0),
-                elapsed=row.get("elapsed", 0.0),
-                error=row.get("error"),
-                output=row.get("output"),
-                last_agent=row.get("last_agent"),
-            )
-        )
+        results.append(TaskResult.from_row(task, row))
     pricing = Pricing(
         prompt_per_m=args.price_prompt, completion_per_m=args.price_completion
     )
-    meta = {"timestamp": now_iso(), "model": "re-render", "repeat": 1}
-    prev = load_results_json(args.outdir / "results.json")
-    report_md = render_report(results, pricing, meta, previous=prev)
-    (args.outdir / "report.md").write_text(report_md, encoding="utf-8")
-    write_results_csv(results, pricing, args.outdir / "results.csv")
+    meta = {"timestamp": utc_timestamp(), "model": "re-render", "repeat": 1}
+    prev = load_results(args.outdir / "results.json")
+    save_reports(
+        results, pricing, meta, args.outdir, previous=prev, with_json=False
+    )
     print(f"重渲染完成: {args.outdir}/report.md（{len(results)} 条结果，未调 LLM）")
     return 0
 
@@ -137,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         prompt_per_m=args.price_prompt, completion_per_m=args.price_completion
     )
     tasks = pick_tasks(args)
-    tools_src = build_tool_system()
+    tool_source = build_tool_source()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     args.outdir.mkdir(parents=True, exist_ok=True)
 
@@ -149,20 +125,21 @@ def main(argv: list[str] | None = None) -> int:
             if args.repeat > 1:
                 tag += f" (rep {rep + 1})"
             print(f"{tag} {task.name} ...", end="", flush=True)
-            res = None
+            result = None
             for attempt in range(max(1, args.retry)):
-                res = asyncio.run(run_task(task, provider, tools_src))
-                if res.error is None:
+                result = asyncio.run(run_task(task, provider, tool_source))
+                if result.error is None:
                     break
                 if attempt + 1 < args.retry:
                     print(f" retry{attempt + 2}...", end="", flush=True)
-            assert res is not None
-            results.append(res)
-            mark = "PASS" if res.success else "FAIL"
+            assert result is not None
+            results.append(result)
+            mark = "PASS" if result.success else "FAIL"
             print(
-                f" {mark} turns={res.turns} tokens={res.tokens}"
-                f" tools={len(res.tool_calls)}/{res.tool_errors}"
-                f" {res.elapsed:.1f}s" + (f"  {res.error}" if res.error else "")
+                f" {mark} turns={result.turns} tokens={result.tokens}"
+                f" tools={len(result.tool_calls)}/{result.tool_errors}"
+                f" {result.elapsed:.1f}s"
+                + (f"  {result.error}" if result.error else "")
             )
 
     # 全部任务级失败（provider 故障）时拒绝覆盖已有报告，避免好数据被冲掉
@@ -171,13 +148,9 @@ def main(argv: list[str] | None = None) -> int:
         print("样例错误:", results[0].error)
         return 1
 
-    meta = {"timestamp": now_iso(), "model": model, "repeat": args.repeat}
-    prev = load_results_json(args.outdir / "results.json")
-    report_md = render_report(results, pricing, meta, previous=prev)
-    (args.outdir / "report.md").write_text(report_md, encoding="utf-8")
-    write_results_csv(results, pricing, args.outdir / "results.csv")
-    save_results_json(results, pricing, meta, args.outdir / "results.json")
-    save_results_detail(results, args.outdir / "results_detail.json")
+    meta = {"timestamp": utc_timestamp(), "model": model, "repeat": args.repeat}
+    prev = load_results(args.outdir / "results.json")
+    save_reports(results, pricing, meta, args.outdir, previous=prev)
 
     overall = aggregate(results, pricing)
     print("\n=== 总览 ===")

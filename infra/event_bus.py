@@ -19,7 +19,7 @@ Handler = Callable[[Any], Awaitable[Any]]
 
 
 class EventBus:
-    """进程级事件广播器：按事件类注册，按实例分发。"""
+    """会话级事件广播器：按事件类注册，按实例分发。"""
 
     def __init__(self) -> None:
         self._handlers: dict[type, list[Handler]] = {}
@@ -31,11 +31,8 @@ class EventBus:
     def off(self, event_type: type, handler: Handler) -> None:
         """退订（扩展卸载时精确摘除）。不存在则忽略。"""
         handlers = self._handlers.get(event_type)
-        if handlers:
-            try:
-                handlers.remove(handler)
-            except ValueError:
-                pass
+        if handlers and handler in handlers:
+            handlers.remove(handler)
 
     async def emit(self, event: Any) -> list[Any]:
         """广播一个事件实例：按实例类型分发给订阅者。
@@ -60,7 +57,3 @@ class EventBus:
     def clear(self) -> None:
         """清空全部监听器（停机 / 重载扩展时用）。"""
         self._handlers.clear()
-
-    def handler_count(self) -> dict[type, int]:
-        """各事件类监听器数量（调试 / 测试断言用）。"""
-        return {t: len(h) for t, h in self._handlers.items()}

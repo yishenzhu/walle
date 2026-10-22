@@ -52,7 +52,7 @@ class Projection(Protocol):
     async def clear_projection(self) -> None:
         """清除切点，恢复底层原始视图。"""
 
-    async def projection(self) -> int | None:
+    async def get_projection(self) -> int | None:
         """读当前切点；无投影返回 None。"""
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from pyflakes.api import check
 from pyflakes.reporter import Reporter
 
-from ...conf import DOT_AGENT
+from ...conf import AGENT_DIR
 from ...infra import Tool, tool_context
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class DefinedTool:
     """模型定义的代码工具：校验、持久化（.agent/tools/<name>/code.py）、加载。"""
 
     def __init__(self, root: Path | None = None):
-        self._root = root or DOT_AGENT / "tools"
+        self._root = root or AGENT_DIR / "tools"
 
     @staticmethod
     def _validate_code(code: str, name: str) -> None:
@@ -100,7 +100,7 @@ class DefinedTool:
         fn = self._load_from_file(str(path), name)
         return Tool.from_function(fn)
 
-    def _codes(self) -> dict[str, str]:
+    def _read_codes(self) -> dict[str, str]:
         """扫描全部已持久化工具，返回 name -> code。"""
         result: dict[str, str] = {}
         if not self._root.exists():
@@ -117,7 +117,7 @@ class DefinedTool:
     def load(self) -> list[Tool]:
         """加载全部已持久化工具为可注册的 Tool（单个失败跳过）。"""
         tools: list[Tool] = []
-        for name, code in self._codes().items():
+        for name, code in self._read_codes().items():
             try:
                 tools.append(self.create(name, code))
             except Exception as e:
@@ -135,7 +135,7 @@ async def define_tool(name: str = "", code: str = "") -> str:
     except (ToolCodeError, OSError, ValueError) as e:
         return f"定义失败: {e}"
     ctx = tool_context.get()
-    if ctx is None or ctx.ext_runner is None:
+    if ctx is None or ctx.extension_runner is None:
         return f"定义失败: 当前无会话注册通道（{name} 已持久化）"
-    ctx.ext_runner.register_tool(tool)
+    ctx.extension_runner.register_tool(tool)
     return f"工具已定义并生效: {name}"

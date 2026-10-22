@@ -10,7 +10,7 @@ from pathlib import Path
 MAX_BYTES = 256 * 1024  # 同 read：256KB 上限
 
 # 降级匹配的空白比较函数，按严格度递进
-COMPARE = (str.rstrip, str.strip)
+LINE_MATCHERS = (str.rstrip, str.strip)
 
 
 def match_exact(text: str, old: str) -> list[tuple[int, int]]:
@@ -83,11 +83,12 @@ async def edit(path: str, old_text: str, new_text: str = "") -> str:
     new = new_text.replace("\r\n", "\n")
 
     spans = match_exact(text, old)
-    cmp = None  # 命中的降级策略（None = 精确）
+    strategy = None  # 命中的降级策略（None = 精确）
     if not spans:
-        for cmp in COMPARE:
-            spans = match_lines(text, old, cmp)
+        for candidate in LINE_MATCHERS:
+            spans = match_lines(text, old, candidate)
             if spans:
+                strategy = candidate
                 break
     if len(spans) > 1:
         return (
@@ -102,7 +103,7 @@ async def edit(path: str, old_text: str, new_text: str = "") -> str:
 
     start, end = spans[0]
     note = ""
-    if cmp is str.strip:
+    if strategy is str.strip:
         # 行首空白被忽略过：新内容按命中处的缩进重排，避免写坏格式
         line = text[start:].split("\n", 1)[0]
         indent = line[: len(line) - len(line.lstrip(" \t"))]
@@ -119,7 +120,7 @@ async def edit(path: str, old_text: str, new_text: str = "") -> str:
                     lines.append(indent + line.lstrip(" \t"))
             new = "\n".join(lines)
         note = " (ignored indentation)"
-    elif cmp is str.rstrip:
+    elif strategy is str.rstrip:
         note = " (ignored trailing whitespace)"
 
     new_text = text[:start] + new + text[end:]

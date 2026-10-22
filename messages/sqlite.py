@@ -100,16 +100,10 @@ class SQLiteMessages(SQLiteStore):
     async def add(self, items: Sequence[Message], usage: Usage | None = None):
         if not items:
             return
-        conn = await self._get_conn()
-
-        def _insert():
-            conn.executemany(
-                "INSERT INTO messages (session_id, data) VALUES (?, ?)",
-                [(self._session_id, item.model_dump_json()) for item in items],
-            )
-            conn.commit()
-
-        await asyncio.to_thread(_insert)
+        await self.executemany(
+            "INSERT INTO messages (session_id, data) VALUES (?, ?)",
+            [(self._session_id, item.model_dump_json()) for item in items],
+        )
 
     async def pop(self) -> Message | None:
         conn = await self._get_conn()

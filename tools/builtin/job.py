@@ -1,7 +1,7 @@
 """后台作业工具对：background（派发）+ job_result（查询取回）。
 
 background 只登记 pending 作业到 ctx.jobs（不碰 executor）；本轮工具执行
-完后由 executor.launch_pending 统一拉起，结果用 job_result 稍后查询取回。
+完后由 executor.launch_pending_jobs 统一拉起，结果用 job_result 稍后查询取回。
 """
 
 import uuid

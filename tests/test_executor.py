@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, RawRule, TimeoutConfig, ToolConfig
+from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, TimeoutConfig, ToolConfig
 from ..core.executor import ToolExecutor
 from ..infra import Tool
 from .conftest import FakeChannel, FakeProvider, FakeToolCall, make_session
@@ -31,12 +31,12 @@ async def mount_approval(ctx, config) -> None:
 
     审批不再由 executor 内置——测试经扩展验证 deny/ask 语义。
     """
-    from ..core import EventBus, ExtensionRegistry, ExtensionRunner
+    from ..core import EventBus, ExtensionManager, ExtensionRunner
     from ..infra import tool_context
     from ..tools.approval import Approval
 
-    loader = ExtensionRegistry()
-    loader.add("approval", Approval(config).as_ext)
+    loader = ExtensionManager()
+    loader.add("approval", Approval(config).as_extension)
     await loader.load()
     assert loader.extensions[0].error is None
     if ctx.bus is None:
@@ -71,13 +71,13 @@ class TestExecute:
         )
         tool = make_tool("echo", "hello")
         tc = make_tool_call(name="echo")
-        tc_id, result = await executor.execute_call(tc, {"echo": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"echo": tool})
         assert tc_id == "tc1"
         assert result == "hello"
 
     async def test_execute_denied_by_policy(self):
         config = ApprovalConfig(
-            rules=[RawRule(ApprovalDecision.DENY, "bash")],
+            rules=[ApprovalRuleSpec(ApprovalDecision.DENY, "bash")],
             default=ApprovalDecision.ALLOW,
         )
         ctx = make_session()
@@ -85,7 +85,7 @@ class TestExecute:
         executor = ToolExecutor()
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute_call(tc, {"bash": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"bash": tool})
         assert "denied by policy" in result
 
     async def test_execute_unknown_tool(self, ctx):
@@ -93,7 +93,7 @@ class TestExecute:
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
         )
         tc = make_tool_call(name="nonexistent")
-        tc_id, result = await executor.execute_call(tc, {})
+        tc_id, result = await executor.execute_tool_call(tc, {})
         assert "Unknown tool" in result
 
     async def test_execute_tool_exception(self, ctx):
@@ -110,7 +110,7 @@ class TestExecute:
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
         )
         tc = make_tool_call(name="boom")
-        tc_id, result = await executor.execute_call(tc, {"boom": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"boom": tool})
         assert "Error: boom" in result
 
     async def test_execute_user_approves(self, channel):
@@ -120,7 +120,7 @@ class TestExecute:
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             tc, {"bash": tool}
         )
         assert result == "done"
@@ -132,7 +132,7 @@ class TestExecute:
         executor = ToolExecutor()
         tool = make_tool("bash", "done")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             tc, {"bash": tool}
         )
         assert "denied by user" in result
@@ -144,7 +144,7 @@ class TestExecute:
         executor = ToolExecutor()
         tool = make_tool("bash")
         tc = make_tool_call(name="bash")
-        tc_id, result = await executor.execute_call(tc, {"bash": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"bash": tool})
         assert "no approval channel" in result
 
     async def test_execute_timeout(self, ctx):
@@ -167,7 +167,7 @@ class TestExecute:
             )
         )
         tc = make_tool_call(name="slow")
-        tc_id, result = await executor.execute_call(tc, {"slow": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"slow": tool})
         assert "timed out" in result
 
     async def test_execute_no_timeout_when_none(self, ctx):
@@ -187,7 +187,7 @@ class TestExecute:
             )
         )
         tc = make_tool_call(name="ok")
-        tc_id, result = await executor.execute_call(tc, {"ok": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"ok": tool})
         assert result == "ok"
 
     async def test_execute_timeout_overrides_global(self, ctx):
@@ -211,7 +211,7 @@ class TestExecute:
             )
         )
         tc = make_tool_call(name="ask_user")
-        tc_id, result = await executor.execute_call(tc, {"ask_user": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"ask_user": tool})
         assert result == "answered"  # 未被 0.1s 全局超时打断
 
     async def test_execute_timeout_exempt_with_none(self, ctx):
@@ -235,19 +235,19 @@ class TestExecute:
             )
         )
         tc = make_tool_call(name="ask_user")
-        tc_id, result = await executor.execute_call(tc, {"ask_user": tool})
+        tc_id, result = await executor.execute_tool_call(tc, {"ask_user": tool})
         assert result == "answered"
 
 
-class TestExecuteCalls:
-    """execute_calls：并发执行一批工具调用，按完成序产出（async for 或收集）。"""
+class TestExecuteToolCalls:
+    """execute_tool_calls：并发执行一批工具调用，按完成序产出（async for 或收集）。"""
 
     def _executor(self) -> ToolExecutor:
         return ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
         )
 
-    def _tools_tcs(self):
+    def _tools_and_calls(self):
         tools = {
             "a": make_tool("a", "result_a"),
             "b": make_tool("b", "result_b"),
@@ -257,8 +257,8 @@ class TestExecuteCalls:
 
     async def test_calls_yield_all(self):
         executor = self._executor()
-        tools, tcs = self._tools_tcs()
-        results = [r async for r in executor.execute_calls(tcs, tools)]
+        tools, tool_calls = self._tools_and_calls()
+        results = [r async for r in executor.execute_tool_calls(tool_calls, tools)]
         assert len(results) == 2
         result_map = dict(results)
         assert result_map["t1"] == "result_a"
@@ -266,9 +266,9 @@ class TestExecuteCalls:
 
     async def test_calls_iterate_inline(self):
         executor = self._executor()
-        tools, tcs = self._tools_tcs()
+        tools, tool_calls = self._tools_and_calls()
         results = []
-        async for tc_id, result in executor.execute_calls(tcs, tools):
+        async for tc_id, result in executor.execute_tool_calls(tool_calls, tools):
             results.append((tc_id, result))
         assert {tc_id for tc_id, _ in results} == {"t1", "t2"}
 
@@ -278,8 +278,6 @@ class TestToolHooks:
 
     def test_empty_hook_verdict_rejected(self):
         """空 HookVerdict()（不表态）是编程错误，构造即抛 ValueError。"""
-        import pytest
-
         from ..core import HookVerdict
 
         with pytest.raises(ValueError):
@@ -303,7 +301,7 @@ class TestToolHooks:
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "ran")
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             make_tool_call(name="echo"), {"echo": tool}
         )
         assert result == "ran"
@@ -328,7 +326,7 @@ class TestToolHooks:
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "ran")
-        await executor.execute_call(make_tool_call(name="echo"), {"echo": tool})
+        await executor.execute_tool_call(make_tool_call(name="echo"), {"echo": tool})
         assert seen["ctx"] is ctx  # handler 拿到的是本次执行的上下文（含 channel）
 
     async def test_after_hook_notified(self, ctx):
@@ -351,7 +349,7 @@ class TestToolHooks:
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "ran")
-        await executor.execute_call(make_tool_call(name="echo"), {"echo": tool})
+        await executor.execute_tool_call(make_tool_call(name="echo"), {"echo": tool})
         assert seen == ["echo"]
 
     async def test_no_bus_skips_hooks(self, ctx):
@@ -359,7 +357,7 @@ class TestToolHooks:
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
         )
         tool = make_tool("echo", "ran")
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             make_tool_call(name="echo"), {"echo": tool}
         )
         assert result == "ran"  # ctx.bus 为 None，钩子跳过
@@ -383,7 +381,7 @@ class TestToolHooks:
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "should-not-run")
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             make_tool_call(name="echo"), {"echo": tool}
         )
         assert tc_id == "tc1"
@@ -420,7 +418,7 @@ class TestToolHooks:
             parameters={"type": "object", "properties": {}},
             fn=echo,
         )
-        tc_id, result = await executor.execute_call(
+        tc_id, result = await executor.execute_tool_call(
             make_tool_call(name="bash", arguments={"command": "ls"}), {"bash": tool}
         )
         assert result == "done"
@@ -449,7 +447,7 @@ class TestToolHooks:
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
         tool = make_tool("echo", "hello")
-        await executor.execute_call(make_tool_call(name="echo"), {"echo": tool})
+        await executor.execute_tool_call(make_tool_call(name="echo"), {"echo": tool})
         assert seen["result"] == "hello"
         assert seen["error"] is None
         assert seen["elapsed_ms"] is not None

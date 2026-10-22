@@ -3,7 +3,7 @@
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Session, SessionRegistry
+from ..core import Session, SessionManager
 from ..infra import AgentStartEvent, MessageDeltaEvent, MessageEndEvent
 from ..messages import (
     InMemoryMessages,
@@ -27,9 +27,9 @@ def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"
     )
 
 
-def make_registry(db_path: str) -> SessionRegistry:
-    """构造带 Session 构造参数的 registry（register 测试用）。"""
-    return SessionRegistry(
+def make_manager(db_path: str) -> SessionManager:
+    """构造带 Session 构造参数的 manager（register 测试用）。"""
+    return SessionManager(
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
@@ -124,30 +124,30 @@ class TestSessionLifecycle:
         await s.close()
 
 
-class TestSessionRegistry:
+class TestSessionManager:
     async def test_register_get_remove(self, tmp_path):
-        reg = make_registry(str(tmp_path / "s.db"))
-        s = make_session("reg-1", str(tmp_path / "s.db"))
-        reg.register(s)
-        assert reg.get("reg-1") is s
-        assert reg.remove("reg-1") is s
-        assert reg.get("reg-1") is None
+        manager = make_manager(str(tmp_path / "s.db"))
+        s = make_session("session-1", str(tmp_path / "s.db"))
+        manager.register(s)
+        assert manager.get("session-1") is s
+        assert manager.remove("session-1") is s
+        assert manager.get("session-1") is None
         await s.close()
 
     async def test_duplicate_register_raises(self, tmp_path):
-        reg = make_registry(str(tmp_path / "s.db"))
+        manager = make_manager(str(tmp_path / "s.db"))
         s = make_session("dup", str(tmp_path / "s.db"))
-        reg.register(s)
+        manager.register(s)
         with pytest.raises(ValueError):
-            reg.register(s)
+            manager.register(s)
         await s.close()
 
     async def test_list_shows_attach_state(self, tmp_path):
-        reg = make_registry(str(tmp_path / "s.db"))
+        manager = make_manager(str(tmp_path / "s.db"))
         s = make_session("list-1", str(tmp_path / "s.db"))
-        reg.register(s)
+        manager.register(s)
         s.detach()
-        items = reg.list()
+        items = manager.list()
         assert len(items) == 1
         assert items[0]["session_id"] == "list-1"
         assert items[0]["attached"] is False
@@ -155,24 +155,24 @@ class TestSessionRegistry:
         await s.close()
 
     async def test_close(self, tmp_path):
-        reg = make_registry(str(tmp_path / "s.db"))
+        manager = make_manager(str(tmp_path / "s.db"))
         s1 = make_session("c1", str(tmp_path / "s.db"))
         s2 = make_session("c2", str(tmp_path / "s.db"))
-        reg.register(s1)
-        reg.register(s2)
-        await reg.close()
-        assert reg.list() == []
+        manager.register(s1)
+        manager.register(s2)
+        await manager.close()
+        assert manager.list() == []
 
 
 class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
         """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
-        from ..core import ExtensionAPI, ExtensionRegistry
+        from ..core import ExtensionAPI, ExtensionManager
         from ..spec import UserInput
 
         ch = FakeChannel()
         # 构造一个注册了 /ping 命令的扩展声明，激活进会话
-        loader = ExtensionRegistry()
+        loader = ExtensionManager()
 
         async def load_cli(api: ExtensionAPI):
             from ..spec import Delta, DeltaEnd
@@ -186,7 +186,7 @@ class TestSessionCommandDispatch:
 
         loader.add("cli", load_cli)
         await loader.load()
-        ext = loader.extensions[0]
+        extension = loader.extensions[0]
 
         s = Session(
             session_id="cmd-1",
@@ -194,7 +194,7 @@ class TestSessionCommandDispatch:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=[ext],
+            extensions=[extension],
             transport=ch,
         )
 
@@ -208,11 +208,11 @@ class TestSessionCommandDispatch:
 
     async def test_silent_command_no_push(self, tmp_path):
         """静默命令（handler 返回 None）：命中但无任何推送。"""
-        from ..core import ExtensionAPI, ExtensionRegistry
+        from ..core import ExtensionAPI, ExtensionManager
         from ..spec import UserInput
 
         ch = FakeChannel()
-        loader = ExtensionRegistry()
+        loader = ExtensionManager()
 
         async def load_cli(api: ExtensionAPI):
             async def noop(args: str, ctx):
@@ -249,8 +249,8 @@ class TestSessionModelConfig:
             self.model = model
             self.agent = None
 
-    def _registry(self, tmp_path):
-        return SessionRegistry(
+    def _manager(self, tmp_path):
+        return SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -259,38 +259,38 @@ class TestSessionModelConfig:
         )
 
     async def test_conn_model_creates_session_provider(self, tmp_path):
-        reg = self._registry(tmp_path)
+        manager = self._manager(tmp_path)
         cfg = ModelConfig(
             api_key="sk-a", base_url="https://a.example/v1", model="model-a"
         )
-        s = reg.create(self.Conn("cfg-1", cfg))
+        s = manager.create(self.Conn("cfg-1", cfg))
         try:
             p = s.context.provider
             assert p is not None
             assert p.model == "model-a"
             # 客户端配置优先于进程默认 provider
-            assert p is not reg._provider
+            assert p is not manager._provider
         finally:
             await s.close()
 
     async def test_no_conn_model_uses_default(self, tmp_path):
-        reg = self._registry(tmp_path)
-        s = reg.create(self.Conn("cfg-2"))
+        manager = self._manager(tmp_path)
+        s = manager.create(self.Conn("cfg-2"))
         try:
-            assert s.context.provider is reg._provider
+            assert s.context.provider is manager._provider
         finally:
             await s.close()
 
     async def test_sessions_isolated_providers(self, tmp_path):
         """两个会话各自的模型配置互不影响。"""
-        reg = self._registry(tmp_path)
-        s1 = reg.create(
+        manager = self._manager(tmp_path)
+        s1 = manager.create(
             self.Conn(
                 "iso-1",
                 ModelConfig(api_key="k1", base_url="https://a/v1", model="m1"),
             )
         )
-        s2 = reg.create(
+        s2 = manager.create(
             self.Conn(
                 "iso-2",
                 ModelConfig(api_key="k2", base_url="https://b/v1", model="m2"),
@@ -340,13 +340,13 @@ class TestSessionStreamForward:
         finally:
             await s.close()
 
-    async def _registry(self, tmp_path) -> SessionRegistry:
-        from ..core import ExtensionAPI, ExtensionRegistry
+    async def _manager(self, tmp_path) -> SessionManager:
+        from ..core import ExtensionAPI, ExtensionManager
         from ..infra import Tool
 
-        loader = ExtensionRegistry()
+        loader = ExtensionManager()
 
-        async def ext_a(api: ExtensionAPI):
+        async def extension_a(api: ExtensionAPI):
             async def fa(args):
                 return "a"
 
@@ -355,7 +355,7 @@ class TestSessionStreamForward:
             )
             api.on(AgentStartEvent, lambda evt: None)
 
-        async def ext_b(api: ExtensionAPI):
+        async def extension_b(api: ExtensionAPI):
             async def fb(args):
                 return "b"
 
@@ -363,12 +363,12 @@ class TestSessionStreamForward:
                 Tool(name="tool_b", description="b", parameters={}, fn=fb)
             )
 
-        loader.add("ext_a", ext_a)
-        loader.add("ext_b", ext_b)
+        loader.add("extension_a", extension_a)
+        loader.add("extension_b", extension_b)
         await loader.load()
         pool = [e for e in loader.extensions if e.error is None]
 
-        reg = SessionRegistry(
+        manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
@@ -376,11 +376,11 @@ class TestSessionStreamForward:
             storage="memory",
             db_path=str(tmp_path / "s.db"),
         )
-        return reg
+        return manager
 
     async def test_sessions_activate_different_extensions(self, tmp_path):
-        """会话 1 用全部扩展；会话 2 只激活 ext_a——工具表不同、事件隔离。"""
-        reg = await self._registry(tmp_path)
+        """会话 1 用全部扩展；会话 2 只激活 extension_a——工具表不同、事件隔离。"""
+        manager = await self._manager(tmp_path)
 
         class Conn:
             def __init__(self, chat_id):
@@ -389,27 +389,27 @@ class TestSessionStreamForward:
                 self.model = None
                 self.agent = None
 
-        s1 = reg.create(Conn("s1"))  # 默认：全部扩展
-        s2 = reg.create(Conn("s2"), ext_names=["ext_a"])  # 只激活 ext_a
+        s1 = manager.create(Conn("s1"))  # 默认：全部扩展
+        s2 = manager.create(Conn("s2"), extension_names=["extension_a"])  # 只激活 extension_a
 
-        names1 = {t.name for t in s1.context.ext_runner.all_tools()}
-        names2 = {t.name for t in s2.context.ext_runner.all_tools()}
+        names1 = {t.name for t in s1.context.extension_runner.all_tools()}
+        names2 = {t.name for t in s2.context.extension_runner.all_tools()}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
-        assert names2 == {"tool_a"}  # 会话 2 只有 ext_a
+        assert names2 == {"tool_a"}  # 会话 2 只有 extension_a
 
         # 运行时隔离：各自 context / 扩展激活层独立（bus/工具表随会话）
         assert s1.context is not s2.context
-        assert s1.context.ext_runner is not s2.context.ext_runner
-        assert s1.context.ext_runner.active_names == {"ext_a", "ext_b"}
-        assert s2.context.ext_runner.active_names == {"ext_a"}
+        assert s1.context.extension_runner is not s2.context.extension_runner
+        assert s1.context.extension_runner.active_extensions == {"extension_a", "extension_b"}
+        assert s2.context.extension_runner.active_extensions == {"extension_a"}
 
-        await reg.close()
+        await manager.close()
 
-    async def test_mcp_extension_tools_visible_in_session(self, tmp_path):
+    async def test_mcp_extensionension_tools_visible_in_session(self, tmp_path):
         """MCP 工具经扩展组装进会话：extension → 扩展声明 → 会话激活。"""
-        from ..core import ExtensionRegistry
+        from ..core import ExtensionManager
         from ..infra import Tool
-        from ..tools.mcp import MCPRegistry
+        from ..tools.mcp import MCPManager
 
         async def fake_fn(args):
             return "mcp-result"
@@ -425,20 +425,20 @@ class TestSessionStreamForward:
             name = "remote"
             tools = [fake_tool]
 
-        mcp = MCPRegistry()
+        mcp = MCPManager()
         mcp._clients.append(FakeMcpClient())
 
-        # main 组装路径：MCPRegistry 作为扩展声明
-        loader = ExtensionRegistry()
-        loader.add("mcp", mcp.as_ext)
+        # main 组装路径：MCPManager 作为扩展声明
+        loader = ExtensionManager()
+        loader.add("mcp", mcp.as_extension)
         await loader.load()
-        mcp_ext = [e for e in loader.extensions if e.error is None]
+        mcp_extension = [e for e in loader.extensions if e.error is None]
 
-        reg = SessionRegistry(
+        manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=mcp_ext,
+            extensions=mcp_extension,
             storage="memory",
             db_path=str(tmp_path / "s.db"),
         )
@@ -449,8 +449,8 @@ class TestSessionStreamForward:
             model = None
             agent = None
 
-        s = reg.create(Conn())
-        names = {t.name for t in s.context.ext_runner.all_tools()}
+        s = manager.create(Conn())
+        names = {t.name for t in s.context.extension_runner.all_tools()}
         assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
 
-        await reg.close()
+        await manager.close()

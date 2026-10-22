@@ -1,6 +1,6 @@
 from .ask_user import ask_user
 from .bash import bash
-from .defined import define_tool
+from .defined_tool import define_tool
 from .edit import edit
 from .history import history, new_window
 from .job import background, job_result

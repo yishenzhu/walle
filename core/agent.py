@@ -8,7 +8,7 @@ from typing import Any
 import frontmatter
 from pydantic import BaseModel, Field, model_validator
 
-from ..conf import DOT_AGENT
+from ..conf import AGENT_DIR
 from ..infra import Skill, Tool
 
 
@@ -22,13 +22,13 @@ class ToolFilter(BaseModel):
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
-    def includes(self, name: str) -> bool:
+    def allows(self, name: str) -> bool:
         if any(fnmatch.fnmatchcase(name, pat) for pat in self.deny):
             return False
         return any(fnmatch.fnmatchcase(name, pat) for pat in self.allow)
 
     def apply(self, tools: list[Tool]) -> list[Tool]:
-        return [t for t in tools if self.includes(t.name)]
+        return [t for t in tools if self.allows(t.name)]
 
 
 class Handoff(BaseModel):
@@ -38,7 +38,7 @@ class Handoff(BaseModel):
 
     @model_validator(mode="after")
     def _validate_target(self) -> Handoff:
-        self.target._validate_as_tool()
+        self.target._validate_tool_metadata()
         return self
 
     def __str__(self) -> str:
@@ -107,7 +107,7 @@ class Agent(BaseModel):
         agent 配置——运行时由会话扩展 runner 提供。
         """
         name = name or "default"
-        root = root or DOT_AGENT / "agents"
+        root = root or AGENT_DIR / "agents"
         path = root / f"{name}.md"
         if not path.exists():
             raise ValueError(f"agent file not found: {path}")
@@ -133,17 +133,17 @@ class Agent(BaseModel):
         """从会话工具源过滤出本 agent 可用工具（tool_filter allow/deny）。"""
         return self.tool_filter.apply(source)
 
-    def _validate_as_tool(self) -> None:
+    def _validate_tool_metadata(self) -> None:
         if self.name is None or self.description is None:
             raise ValueError("Agent must have a name and description")
 
     def as_tool(self, env):
-        """派发子 agent 的工具：隔离历史，继承 provider/ext/cwd/agents/bus。
+        """派发子 agent 的工具：隔离历史，继承 provider/extension_runner/cwd/agents/bus。
 
         深度由子环境 +1 承担，供 runner 卡住递归。
         子 agent headless：不继承 channel（无 ask_user / 交互式审批）。
         """
-        self._validate_as_tool()
+        self._validate_tool_metadata()
         agent = self
 
         async def fn(input: str) -> str:
@@ -156,7 +156,7 @@ class Agent(BaseModel):
             child = SessionContext(
                 history=env.history_factory(),  # 子 agent 独立历史，不继承父对话
                 provider=env.provider,
-                ext_runner=env.ext_runner,
+                extension_runner=env.extension_runner,
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,

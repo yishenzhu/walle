@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from pathlib import Path
@@ -11,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from ..cli.server import HOST, MAX_FRAME, PORT
+from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Walle Web")
@@ -21,21 +20,6 @@ INDEX = Path(__file__).with_name("index.html")
 @app.get("/")
 async def index() -> HTMLResponse:
     return HTMLResponse(INDEX.read_text(encoding="utf-8"))
-
-
-async def _send(writer: asyncio.StreamWriter, msg: dict) -> None:
-    writer.write(json.dumps(msg).encode() + b"\n")
-    await writer.drain()
-
-
-async def _recv(reader: asyncio.StreamReader) -> dict | None:
-    line = await reader.readline()
-    if not line:
-        return None
-    try:
-        return json.loads(line)
-    except json.JSONDecodeError:
-        return None
 
 
 @app.websocket("/ws/chat")
@@ -49,17 +33,17 @@ async def chat(ws: WebSocket) -> None:
         await ws.close()
         return
 
+    link = JSONLineConn(reader, writer)
     try:
-        await _send(
-            writer,
+        await link.send(
             {
                 "type": "hello",
                 "chat_id": chat_id,
                 "attach": False,
                 "cwd": str(Path.cwd()),
-            },
+            }
         )
-        welcome = await _recv(reader)
+        welcome = await link.recv()
         if welcome is None:
             await ws.send_json({"type": "error", "message": "agent 未响应"})
             return
@@ -68,14 +52,14 @@ async def chat(ws: WebSocket) -> None:
             return
 
         async def agent_to_ws() -> None:
-            while True:
-                msg = await _recv(reader)
-                if msg is None:
-                    await ws.send_json(
-                        {"type": "error", "message": "agent 连接已断开"}
-                    )
-                    return
-                await ws.send_json(msg)
+            try:
+                while (msg := await link.recv()) is not None:
+                    await ws.send_json(msg)
+                await ws.send_json(
+                    {"type": "error", "message": "agent 连接已断开"}
+                )
+            except FrameTooLargeError:
+                await ws.send_json({"type": "error", "message": "agent 帧过大"})
 
         async def ws_to_agent() -> None:
             while True:
@@ -84,46 +68,38 @@ async def chat(ws: WebSocket) -> None:
                 except (WebSocketDisconnect, RuntimeError):
                     return
                 if data.get("type") == "input":
-                    await _send(
-                        writer,
+                    await link.send(
                         {
                             "type": "input",
                             "content": data.get("content", ""),
                             "chat_id": chat_id,
-                        },
+                        }
                     )
                 elif data.get("type") == "reply":
-                    await _send(
-                        writer,
+                    await link.send(
                         {
                             "type": "reply",
                             "id": data.get("id"),
                             "data": data.get("data"),
-                        },
+                        }
                     )
 
         tasks = [
             asyncio.create_task(agent_to_ws()),
             asyncio.create_task(ws_to_agent()),
         ]
-        done, pending = await asyncio.wait(
-            tasks, return_when=asyncio.FIRST_COMPLETED
-        )
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        for task in done:
-            exc = task.exception()
-            if exc and not isinstance(
-                exc, (WebSocketDisconnect, asyncio.CancelledError, OSError)
-            ):
-                logger.warning("web chat ended: %s", exc)
+        for task in tasks:
+            if task.done() and not task.cancelled() and task.exception() is not None:
+                exc = task.exception()
+                if not isinstance(exc, (WebSocketDisconnect, OSError)):
+                    logger.warning("web chat ended: %s", exc)
     finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
+        link.close()
+        await link.wait_closed()
         try:
             await ws.close()
         except RuntimeError:

@@ -22,7 +22,7 @@ tool_context: ContextVar[SessionView | None] = ContextVar("tool_context", defaul
 class Tool:
     """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。
 
-    纯数据 + 行为，不需要 pydantic 序列化（schema 由 formatted_schema 生成）。
+    纯数据 + 行为，不需要 pydantic 序列化（schema 由 to_schema 生成）。
     """
 
     name: str
@@ -33,7 +33,7 @@ class Tool:
     async def run(self, args: dict[str, Any]) -> Any:
         return await self.fn(args)
 
-    def formatted_schema(self, strict: bool = True) -> dict[str, Any]:
+    def to_schema(self, strict: bool = True) -> dict[str, Any]:
         args = self.parameters.copy()
         if strict:
             args["additionalProperties"] = False
