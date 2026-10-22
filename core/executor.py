@@ -154,12 +154,25 @@ class ToolExecutor:
         tool_calls: list,
         tools: dict[str, Tool],
     ) -> AsyncIterator[tuple[str, Any]]:
-        """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。"""
-        for task in asyncio.as_completed(
-            [self.execute_tool_call(tool_call, tools) for tool_call in tool_calls]
-        ):
-            tc_id, result = await task
-            yield tc_id, result
+        """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。
+
+        工具任务显式持有：run 被取消时（生成器被关闭）一并取消未完成的
+        工具任务——否则 as_completed 的协程任务会脱离 run 继续执行
+        （bash 的 killpg 清理也不会触发）。
+        """
+        tasks = [
+            asyncio.create_task(self.execute_tool_call(tool_call, tools))
+            for tool_call in tool_calls
+        ]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                tc_id, result = await fut
+                yield tc_id, result
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def launch_pending_jobs(self, tools: dict[str, Tool]) -> None:
         """本轮工具执行完后：把 background 写下的 pending 作业拉起（create_task）。

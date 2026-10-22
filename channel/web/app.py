@@ -41,6 +41,9 @@ async def chat(ws: WebSocket) -> None:
                 "chat_id": chat_id,
                 "attach": False,
                 "cwd": str(Path.cwd()),
+                # Web 是人在环审批：不设交互超时，避免用户暂时离开就过期；
+                # 浏览器断开会让挂起请求立即失败，页面也有停止按钮兜底。
+                "call_timeout": None,
             }
         )
         welcome = await link.recv()
@@ -83,6 +86,10 @@ async def chat(ws: WebSocket) -> None:
                             "data": data.get("data"),
                         }
                     )
+                elif data.get("type") == "cancel":
+                    # 服务端读循环支持 cancel（取消当前 run 并回终态），
+                    # Web 端补上转发，页面才能中断卡住/过长的执行。
+                    await link.send({"type": "cancel"})
 
         tasks = [
             asyncio.create_task(agent_to_ws()),

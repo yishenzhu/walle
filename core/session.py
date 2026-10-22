@@ -167,13 +167,15 @@ class Session:
             await self._transport.notify(Delta(delta=evt.delta))
 
     async def _on_message_end(self, evt: MessageEndEvent) -> None:
-        """run 终态 → DeltaEnd；正常输出不带 reason，max_turns/cancel 带 reason。"""
+        """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。
+
+        MessageEndEvent 只在 run 结束时发出（正常结束 / max_turns / 取消），
+        因此无论 output 是否为空都必须推送 DeltaEnd——否则客户端会一直等待
+        结束信号（Web 停在"生成中"、CLI 不再出现提示符）。
+        """
         if self._transport is None:
             return
-        if evt.output is not None:
-            await self._transport.notify(DeltaEnd())
-        elif evt.reason is not None:
-            await self._transport.notify(DeltaEnd(reason=evt.reason))
+        await self._transport.notify(DeltaEnd(reason=evt.reason))
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""

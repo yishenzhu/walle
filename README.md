@@ -163,11 +163,15 @@ cp .env.example .env             # LLM API Key
 ./scripts/run.sh                 # 启动 agent + 可观测性（默认）
 ./scripts/run.sh --no-obs        # 仅启动 agent
 ./scripts/run.sh --cli           # 服务端 + CLI 客户端（一键对话）
-./scripts/run.sh --status        # 服务端状态 + 会话列表
+./scripts/run.sh --web           # 服务端 + Web 通道（一键开启）
+./scripts/run.sh --status        # 服务端 / Web 状态 + 会话列表
 ./scripts/run.sh --attach <id>   # 恢复（attach）已有会话
-./scripts/run.sh --stop          # 停止常驻 agent 服务端
+./scripts/run.sh --stop          # 停止全部服务（agent / Web / 可观测性）
+./scripts/run.sh --stop-agent    # 仅停止 agent 服务端
+./scripts/run.sh --stop-web      # 仅停止 Web 服务
+./scripts/run.sh --stop-obs      # 仅停止可观测性
+#   停止项可组合，例如：./scripts/run.sh --stop-web --stop-obs
 ./scripts/run.sh --obs-only      # 仅启动可观测性容器
-./scripts/run.sh --stop-obs      # 停止可观测性
 ./scripts/run.sh --test          # 运行测试
 ```
 
@@ -188,7 +192,9 @@ PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.
 Web 对话（可选，需先安装 `fastapi` / `uvicorn`）：
 
 ```bash
-PYTHONPATH=.. python -m walle.channel.web   # 默认 http://127.0.0.1:8080
+./scripts/run.sh --web              # 服务端未运行时自动后台启动 + Web 通道（前台）
+./scripts/run.sh --web --port 8081  # --web 之后的参数原样转给 Web 服务
+PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http://127.0.0.1:8080
 ```
 
 会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。

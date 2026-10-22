@@ -330,13 +330,14 @@ class TestSessionStreamForward:
         finally:
             await s.close()
 
-    async def test_tool_turn_no_delta_end(self, tmp_path):
-        """MESSAGE_END output=None（工具轮/异常）→ 不发 DeltaEnd。"""
+    async def test_empty_output_still_ends_stream(self, tmp_path):
+        """MESSAGE_END output=None 也是 run 终态 → 必须发 DeltaEnd（防客户端挂起）。"""
         ch = FakeChannel()
         s = self._session(tmp_path, ch)
         try:
             await s._bus.emit(MessageEndEvent(output=None, session_id=None))
-            assert ch.events == []
+            assert [type(e).__name__ for e in ch.events] == ["DeltaEnd"]
+            assert ch.events[0].reason is None
         finally:
             await s.close()
 

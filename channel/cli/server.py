@@ -256,6 +256,18 @@ class CLIServer:
             attach = bool(msg.get("attach", False))
             extension_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
             cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
+            # 交互等待上限：缺省 CALL_TIMEOUT；显式 null = 不设上限
+            # （Web 端人机审批用；连接断开会 fail 挂起请求，页面另有停止按钮）
+            call_timeout: float | None = CALL_TIMEOUT
+            if "call_timeout" in msg:
+                raw_timeout = msg.get("call_timeout")
+                if raw_timeout is None:
+                    call_timeout = None
+                else:
+                    try:
+                        call_timeout = float(raw_timeout)
+                    except (TypeError, ValueError):
+                        logger.warning(f"ignoring invalid call_timeout: {raw_timeout}")
             # 客户端模型配置（可选；非法/缺失回退进程默认 provider）
             model = None
             raw_model = msg.get("model")
@@ -272,6 +284,7 @@ class CLIServer:
                 cwd=cwd,
                 model=model,
                 agent=msg.get("agent") or None,
+                call_timeout=call_timeout,
                 link=link,
             )
 

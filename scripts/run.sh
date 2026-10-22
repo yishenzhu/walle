@@ -49,12 +49,15 @@ walle 启动脚本
 选项:
   --no-obs       不启动可观测性容器，仅启动 agent
   --obs-only     仅启动可观测性容器，不启动 agent
-  --stop-obs     停止可观测性容器
-  --stop         停止常驻 agent 服务端
+  --stop         停止全部服务（agent / Web / 可观测性）
+  --stop-agent   仅停止 agent 服务端
+  --stop-web     仅停止 Web 服务
+  --stop-obs     仅停止可观测性容器
   --test         运行测试，不启动 agent
   --cli          启动 agent 服务端并自动连接一个 CLI 客户端
+  --web          启动 agent 服务端并开启 Web 对话通道
   --attach <id>  恢复（attach）已有会话
-  --status       检查 agent 服务端运行状态并列出会话
+  --status       检查 agent / Web 状态并列出会话
   --help         显示此帮助信息
 
 示例:
@@ -62,11 +65,14 @@ walle 启动脚本
   ./scripts/run.sh --no-obs           # 仅启动 agent
   ./scripts/run.sh --cli              # 服务端 + CLI 客户端（一键对话）
   #   --cli 之后的参数原样转给客户端，例如：./scripts/run.sh --cli --agent <name>
+  ./scripts/run.sh --web              # 服务端 + Web 通道（一键开启）
+  #   --web 之后的参数原样转给 Web 服务，例如：./scripts/run.sh --web --port 8081
   ./scripts/run.sh --attach cli-xxx   # 恢复会话
-  ./scripts/run.sh --status           # 服务端状态
-  ./scripts/run.sh --stop             # 停止常驻 agent 服务端
+  ./scripts/run.sh --status           # 服务端 / Web 状态
+  ./scripts/run.sh --stop             # 停止全部服务
+  ./scripts/run.sh --stop-web         # 只停 Web（--stop-agent / --stop-obs 同理）
+  ./scripts/run.sh --stop-web --stop-obs  # 停止项可自由组合
   ./scripts/run.sh --obs-only         # 仅启动可观测性
-  ./scripts/run.sh --stop-obs         # 停止可观测性
   ./scripts/run.sh --test             # 运行测试
 EOF
     exit 0
@@ -111,8 +117,11 @@ stop_obs() {
     require_compose
 
     log_step "停止可观测性容器 ..."
-    compose down
-    log_info "可观测性容器已停止"
+    if compose down; then
+        log_info "可观测性容器已停止"
+    else
+        log_warn "可观测性容器停止失败（Docker 可能未运行）"
+    fi
 }
 
 # ── 启动 agent ────────────────────────────────────────
@@ -123,16 +132,91 @@ start_agent() {
     run_py -m walle.main
 }
 
+ensure_agent() {
+    # 服务端若未运行则后台常驻起一个（setsid 脱离终端与信号，
+    # Ctrl+C 只停当前前台客户端/Web，不波及服务端）
+    if port_in_use 8899; then
+        log_info "agent 已在运行，直接连接"
+        return 0
+    fi
+    run_py_detached -m walle.main
+    log_info "agent 已在后台启动（常驻，--stop 停止）"
+    for _ in $(seq 1 100); do
+        if port_in_use 8899; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    log_error "agent 未在 20 秒内就绪，请检查日志: logs/agent.log"
+    exit 1
+}
+
 stop_agent() {
     # 按进程名精确匹配 walle.main（setsid 起的服务端 PID 会 fork，不能用 PID 文件）
     local pids
     pids=$(pgrep -f "python.* -m walle.main" || true)
     if [ -n "$pids" ]; then
         log_step "停止 agent 服务端 (pid $pids) ..."
-        kill $pids 2>/dev/null
-        log_info "agent 服务端已停止"
+        if kill $pids 2>/dev/null; then
+            log_info "agent 服务端已停止"
+        else
+            log_warn "部分 agent 进程无法停止: $pids"
+        fi
     else
         log_info "agent 服务端未在运行"
+    fi
+}
+
+# ── 启动 Web 通道 ─────────────────────────────────────
+start_web() {
+    # 参数原样转给 walle.channel.web（--host / --port 等由 Web 入口自己解析）
+    local args=("$@")
+    local host="127.0.0.1"
+    local port="8080"
+    local i=0
+    while [ "$i" -lt "${#args[@]}" ]; do
+        case "${args[$i]}" in
+            --host) i=$((i + 1)); host="${args[$i]:-$host}" ;;
+            --port) i=$((i + 1)); port="${args[$i]:-$port}" ;;
+            --host=*) host="${args[$i]#*=}" ;;
+            --port=*) port="${args[$i]#*=}" ;;
+        esac
+        i=$((i + 1))
+    done
+    log_step "启动 Web 对话通道 ..."
+    if port_in_use "$port"; then
+        log_info "Web 通道已在运行: http://$host:$port（重启请先 --stop）"
+        return 0
+    fi
+    log_info "Web 对话: http://$host:$port（Ctrl+C 停止；agent 用 --stop 停止）"
+    cd "$PROJECT_ROOT"
+    run_py -m walle.channel.web "${args[@]}"
+}
+
+stop_web() {
+    local pids
+    pids=$(pgrep -f "python.* -m walle.channel.web" || true)
+    if [ -n "$pids" ]; then
+        log_step "停止 Web 服务 (pid $pids) ..."
+        if kill $pids 2>/dev/null; then
+            log_info "Web 服务已停止"
+        else
+            log_warn "部分 Web 进程无法停止: $pids"
+        fi
+    else
+        log_info "Web 服务未在运行"
+    fi
+}
+
+stop_all() {
+    stop_agent
+    stop_web
+    if command -v docker &>/dev/null \
+        && docker compose version &>/dev/null \
+        && [ -f "$OBS_COMPOSE" ]; then
+        stop_obs
+    else
+        log_info "Docker 或可观测性配置不可用，跳过容器清理"
     fi
 }
 
@@ -148,7 +232,7 @@ start_cli_client() {
 # ── 会话管理 ──────────────────────────────────────────
 require_server() {
     if ! port_in_use 8899; then
-        log_error "agent 服务端未在运行，请先启动（./scripts/run.sh --no-obs 或 --cli）"
+        log_error "agent 服务端未在运行，请先启动（./scripts/run.sh --no-obs、--cli 或 --web）"
         exit 1
     fi
 }
@@ -178,6 +262,14 @@ agent_status() {
     else
         log_info "agent 服务端: 未运行"
     fi
+
+    local web_pids
+    web_pids=$(pgrep -f "python.* -m walle.channel.web" || true)
+    if [ -n "$web_pids" ]; then
+        log_info "Web 通道: 运行中（pid $web_pids）"
+    else
+        log_info "Web 通道: 未运行"
+    fi
 }
 
 # ── 端口检测 ─────────────────────────────────────────
@@ -198,13 +290,17 @@ main() {
     local no_obs=false
     local obs_only=false
     local stop_obs_flag=false
+    local stop_web_flag=false
     local stop_agent_flag=false
+    local stop_all_flag=false
     local test_only=false
     local cli=false
+    local web=false
     local status_flag=false
     local attach_flag=false
     local attach_id=""
     local client_args=()
+    local web_args=()
 
     # 解析参数
     while [ $# -gt 0 ]; do
@@ -212,9 +308,12 @@ main() {
             --no-obs)      no_obs=true ;;
             --obs-only)    obs_only=true ;;
             --stop-obs)    stop_obs_flag=true ;;
-            --stop)        stop_agent_flag=true ;;
+            --stop-web)    stop_web_flag=true ;;
+            --stop-agent)  stop_agent_flag=true ;;
+            --stop)        stop_all_flag=true ;;
             --test)        test_only=true ;;
             --cli)         cli=true; shift; client_args=("$@"); break ;;
+            --web)         web=true; shift; web_args=("$@"); break ;;
             --status)      status_flag=true ;;
             --attach)      attach_flag=true; shift; attach_id="${1:-}" ;;
             --help|-h)     usage ;;
@@ -240,21 +339,25 @@ main() {
         exit 0
     fi
 
-    # 停止常驻 agent 服务端
-    if [ "$stop_agent_flag" = true ]; then
-        stop_agent
+    # 停止全部服务（agent / Web / 可观测性）
+    if [ "$stop_all_flag" = true ]; then
+        stop_all
+        exit 0
+    fi
+
+    # 细分停止项（可自由组合：--stop-web --stop-obs 等）
+    if [ "$stop_agent_flag" = true ] \
+        || [ "$stop_web_flag" = true ] \
+        || [ "$stop_obs_flag" = true ]; then
+        if [ "$stop_agent_flag" = true ]; then stop_agent; fi
+        if [ "$stop_web_flag" = true ]; then stop_web; fi
+        if [ "$stop_obs_flag" = true ]; then stop_obs; fi
         exit 0
     fi
 
     # 运行测试
     if [ "$test_only" = true ]; then
         run_tests
-        exit 0
-    fi
-
-    # 停止可观测性
-    if [ "$stop_obs_flag" = true ]; then
-        stop_obs
         exit 0
     fi
 
@@ -271,26 +374,18 @@ main() {
         start_obs
     fi
 
-    # --cli：服务端若未运行则后台常驻起一个（setsid 脱离终端与信号，
-    # Ctrl+C 客户端不波及服务端）；等就绪后前台连客户端（一键对话）
+    # --cli：服务端若未运行则后台常驻起一个；就绪后前台连客户端（一键对话）
     if [ "$cli" = true ]; then
-        if ! port_in_use 8899; then
-            run_py_detached -m walle.main
-            log_info "agent 已在后台启动（常驻，--stop 停止）"
-            for _ in $(seq 1 100); do
-                if port_in_use 8899; then
-                    break
-                fi
-                sleep 0.2
-            done
-            if ! port_in_use 8899; then
-                log_error "agent 未在 20 秒内就绪，请检查日志: logs/agent.log"
-                exit 1
-            fi
-        else
-            log_info "agent 已在运行，直接连接"
-        fi
+        ensure_agent
         start_cli_client "${client_args[@]}"
+        exit 0
+    fi
+
+    # --web：服务端若未运行则后台常驻起一个；就绪后前台开 Web 通道
+    # （Ctrl+C 只停 Web，agent 继续常驻，--stop 一并停止）
+    if [ "$web" = true ]; then
+        ensure_agent
+        start_web "${web_args[@]}"
         exit 0
     fi
 

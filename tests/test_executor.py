@@ -147,6 +147,22 @@ class TestExecute:
         tc_id, result = await executor.execute_tool_call(tc, {"bash": tool})
         assert "no approval channel" in result
 
+    async def test_execute_approval_failure_blocks_tool(self):
+        """审批调用超时/断连：必须拒绝执行（异常不能被当作放行）。"""
+
+        class BrokenChannel(FakeChannel):
+            async def call(self, request):
+                raise TimeoutError("no reply for 'approval'")
+
+        ctx = make_session(channel=BrokenChannel())
+        await mount_approval(ctx, ApprovalConfig(default=ApprovalDecision.ASK))
+        executor = ToolExecutor()
+        tool = make_tool("bash", "done")
+        tc = make_tool_call(name="bash")
+        tc_id, result = await executor.execute_tool_call(tc, {"bash": tool})
+        assert "approval failed" in result
+        assert result != "done"
+
     async def test_execute_timeout(self, ctx):
         import asyncio
 
@@ -271,6 +287,42 @@ class TestExecuteToolCalls:
         async for tc_id, result in executor.execute_tool_calls(tool_calls, tools):
             results.append((tc_id, result))
         assert {tc_id for tc_id, _ in results} == {"t1", "t2"}
+
+    async def test_cancel_stops_inflight_tools(self):
+        """消费方取消（run 中止）时，未完成的工具任务必须被取消。"""
+        import asyncio
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def slow(args):
+            started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return "late"
+
+        tool = Tool(
+            name="slow",
+            description="d",
+            parameters={"type": "object", "properties": {}},
+            fn=slow,
+        )
+        executor = self._executor()
+        tcs = [make_tool_call(id="t1", name="slow")]
+
+        async def consume():
+            return [r async for r in executor.execute_tool_calls(tcs, {"slow": tool})]
+
+        task = asyncio.create_task(consume())
+        await asyncio.wait_for(started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(cancelled.wait(), 1)
+        assert cancelled.is_set()
 
 
 class TestToolHooks:

@@ -12,6 +12,7 @@ import json
 import pytest
 
 from ..channel.cli import CLIConnection, CLIServer
+from ..channel.cli.server import CALL_TIMEOUT
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import SessionManager
 from ..spec import ApprovalRequest, ApprovalResponse, UserMessage
@@ -359,6 +360,30 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         assert sessions["b"]["attached"] is True
         w3.close()
         await w3.wait_closed()
+    finally:
+        await server.stop()
+        await manager.close()
+
+
+async def test_hello_call_timeout_override(tmp_path):
+    """hello 显式 call_timeout=null → 不设交互超时；缺省仍为 CALL_TIMEOUT。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
+    port = await server.start()
+    try:
+        r1, w1 = await _connect(
+            port, {"type": "hello", "chat_id": "no-timeout", "call_timeout": None}
+        )
+        await _read_line(r1)  # welcome
+        assert manager.get("no-timeout").transport._call_timeout is None
+        w1.close()
+        await w1.wait_closed()
+
+        r2, w2 = await _connect(port, {"type": "hello", "chat_id": "default"})
+        await _read_line(r2)
+        assert manager.get("default").transport._call_timeout == CALL_TIMEOUT
+        w2.close()
+        await w2.wait_closed()
     finally:
         await server.stop()
         await manager.close()

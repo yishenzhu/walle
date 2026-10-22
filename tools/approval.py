@@ -5,6 +5,7 @@ Approval(config).as_extension 与 mcp/skill 同形态——main 里作为 "appro
 """
 
 import fnmatch
+import logging
 from typing import Any
 
 from pydantic import BaseModel
@@ -17,6 +18,8 @@ from ..infra import (
     tool_context,
 )
 from ..spec import ApprovalRequest, ApprovalResponse, Channel
+
+logger = logging.getLogger(__name__)
 
 
 class ArgMatch(BaseModel):
@@ -146,7 +149,13 @@ class Approval:
             ctx = tool_context.get()
             if ctx is None or ctx.channel is None:
                 return HookVerdict(block=f"Tool '{name}' denied: no approval channel")
-            response = await ChannelApprover(ctx.channel).ask(name, args, tc_id)
+            try:
+                response = await ChannelApprover(ctx.channel).ask(name, args, tc_id)
+            except Exception as exc:
+                # 审批拿不到答复（超时 / 连接断开）时必须拒绝：EventBus 会把
+                # 监听器异常当作"无意见"吞掉，放行会绕过审批执行工具。
+                logger.warning(f"approval for '{name}' failed: {exc}")
+                return HookVerdict(block=f"Tool '{name}' denied: approval failed ({exc})")
             if response.approved:
                 return None
             reason = f"Tool '{name}' denied by user"
