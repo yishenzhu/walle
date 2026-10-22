@@ -17,26 +17,40 @@
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; height: 100vh; display: flex; justify-content: center;
+      margin: 0; min-height: 100vh;
       background:
         radial-gradient(1100px 500px at 15% -10%, #17233a 0%, transparent 60%),
         var(--bg);
       color: var(--text);
       font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
     }
-    .app { width: min(100%, 880px); height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 10px; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
-    .brand { display: flex; align-items: baseline; gap: 10px; }
+    .shell {
+      width: 100%; max-width: 1680px; margin: 0 auto; height: 100vh;
+      display: flex; justify-content: center; align-items: stretch;
+      gap: 0; padding: 12px;
+    }
+    .app {
+      width: min(100%, 880px); max-width: 880px; min-width: 360px; flex: 0 1 880px;
+      height: 100%; display: flex; flex-direction: column; overflow: hidden;
+      background: var(--panel); border: 1px solid var(--border-strong); border-radius: 14px;
+    }
+    body.canvas-open .app { flex: 1 1 360px; }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 14px; min-height: 52px; flex: 0 0 auto;
+      background: #121821; border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .status { white-space: nowrap; }
     h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
     .brand small { color: var(--faint); font-size: 11px; }
+    #canvas-latest { align-self: center; padding: 4px 10px; font-size: 12px; }
     .status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
     .dot.on { background: var(--ok); box-shadow: 0 0 8px #3fb95088; }
     .dot.off { background: var(--danger); }
     .log {
-      flex: 1; overflow-y: auto; border: 1px solid var(--border);
-      background: var(--panel);
-      border-radius: 14px; padding: 16px;
+      flex: 1; min-height: 0; overflow-y: auto; padding: 16px;
       display: flex; flex-direction: column; gap: 10px;
       scroll-behavior: smooth;
     }
@@ -55,6 +69,63 @@
     }
     .msg.user .bubble { background: var(--accent); border-color: transparent; color: #fff; }
     .note { align-self: center; color: var(--muted); font-size: 12px; text-align: center; }
+
+    /* ── 空状态与快捷提示 ────────────────────────── */
+    .chat-empty {
+      margin: auto; max-width: 420px; padding: 20px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      text-align: center; color: var(--muted);
+    }
+    .chat-empty .empty-mark {
+      width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center;
+      font-size: 20px; color: #9cc7ff; background: var(--accent-soft); border: 1px solid #24507f;
+    }
+    .chat-empty strong { color: var(--text); font-size: 16px; }
+    .chat-empty p { margin: 0; font-size: 13px; line-height: 1.7; }
+    .hints { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+    .hint {
+      padding: 5px 10px; font-size: 12px; border-radius: 999px;
+      background: #121821; color: var(--muted); border: 1px solid var(--border);
+    }
+    .hint:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+
+    /* ── Markdown（仅助手消息）────────────────────── */
+    .bubble.md { white-space: normal; }
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md h1, .md h2, .md h3, .md h4 { margin: 14px 0 6px; line-height: 1.35; }
+    .md h1 { font-size: 1.35em; }
+    .md h2 { font-size: 1.2em; }
+    .md h3 { font-size: 1.08em; }
+    .md p { margin: 6px 0; }
+    .md ul, .md ol { margin: 6px 0; padding-left: 22px; }
+    .md li { margin: 2px 0; }
+    .md code {
+      font-family: var(--mono); font-size: .9em; padding: 1px 5px;
+      border-radius: 5px; background: #0b0f14; border: 1px solid var(--border);
+    }
+    .md pre {
+      margin: 8px 0; padding: 10px 12px; border-radius: 8px; overflow-x: auto;
+      background: #0b0f14; border: 1px solid var(--border);
+    }
+    .md pre code {
+      padding: 0; border: 0; background: none;
+      font-size: 12px; line-height: 1.55; white-space: pre;
+    }
+    .md blockquote {
+      margin: 8px 0; padding: 2px 12px; color: var(--muted);
+      border-left: 3px solid var(--border-strong);
+    }
+    .md a { color: #79b8ff; }
+    .md hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+    .md table {
+      border-collapse: collapse; margin: 8px 0; max-width: 100%;
+      display: block; overflow-x: auto;
+    }
+    .md th, .md td { border: 1px solid var(--border); padding: 5px 8px; font-size: 13px; }
+    .md th { background: #121821; }
+    .md img { max-width: 100%; border-radius: 8px; }
+    .md del { color: var(--faint); }
     .note.error { color: var(--danger); }
 
     /* ── 交互卡片（审批 / 提问）────────────────────── */
@@ -63,14 +134,10 @@
       display: flex; flex-direction: column; flex-shrink: 0;
       max-height: min(70vh, 560px);  /* 长参数不撑出视口，按钮始终可见 */
       background: linear-gradient(180deg, #1a2230 0%, #161d28 100%);
-      border: 1px solid var(--border-strong); border-left: 3px solid var(--warn);
+      border: 1px solid var(--border-strong);
       border-radius: 12px; overflow: hidden;
       box-shadow: 0 6px 24px #0005;
     }
-    .call[data-state="allowed"] { border-left-color: var(--accent); }
-    .call[data-state="denied"] { border-left-color: var(--danger); }
-    .call[data-state="done"] { border-left-color: var(--ok); }
-    .call[data-state="failed"] { border-left-color: var(--danger); }
     .call-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 8px; flex: 0 0 auto; }
     .call-ico {
       width: 30px; height: 30px; flex: 0 0 30px; border-radius: 9px;
@@ -120,7 +187,10 @@
       transform: rotate(90deg);
     }
     .args-block .args { margin-top: 6px; }
-    .args-label { color: var(--text); flex: 0 0 auto; }
+    .args-label {
+      color: var(--text); flex: 0 0 auto;
+      font-size: 12px; font-weight: 400; line-height: 1.45;
+    }
     .args-preview {
       color: var(--faint); font-family: var(--mono); font-size: 11px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
@@ -189,7 +259,7 @@
 
     /* ── 待审批提示条 ─────────────────────────────── */
     .approval-bar {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 8px; margin: 0 12px 8px;
       padding: 8px 12px; border-radius: 10px;
       border: 1px solid #5a4718; background: var(--warn-soft);
       color: #e3b341; font-size: 12px;
@@ -200,11 +270,89 @@
       color: #e3b341; border-color: #5a4718;
     }
 
+    /* ── 画布 ────────────────────────────────────── */
+    .canvas-card {
+      align-self: flex-start; width: min(100%, 520px);
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(180deg, #1a2230 0%, #161d28 100%);
+      border: 1px solid var(--border-strong);
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .canvas-card:hover { border-color: #4a5d78; background: #1b2431; }
+    .canvas-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .canvas-card .canvas-title { flex: 1; min-width: 0; }
+    .canvas-card .canvas-kicker { font-size: 11px; color: var(--muted); letter-spacing: .4px; }
+    .canvas-card .canvas-name {
+      font-size: 14px; font-weight: 600; margin-top: 1px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .canvas-card .canvas-open {
+      flex: 0 0 auto; padding: 5px 10px; font-size: 12px;
+      color: #79b8ff; white-space: nowrap;
+    }
+
+    .canvas-panel {
+      position: relative; z-index: 1; flex: 0 0 var(--canvas-width, 40%);
+      min-width: 320px; max-width: min(70%, calc(100% - 366px));
+      height: 100%; display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid var(--border-strong);
+      border-radius: 14px; overflow: hidden;
+    }
+
+    /* 6px 拖拽分隔条：无可见竖线，只保留拖拽热区 */
+    .splitter {
+      flex: 0 0 6px; align-self: stretch;
+      cursor: col-resize; touch-action: none;
+    }
+    .splitter[hidden] { display: none; }
+    body.resizing { cursor: col-resize; user-select: none; }
+    body.resizing iframe { pointer-events: none; }
+    .canvas-panel[hidden] { display: none; }
+    .canvas-panel.full {
+      position: fixed; inset: 0; z-index: 100; flex: none;
+      width: 100vw; height: 100vh; max-width: none; min-width: 0;
+      border: 0; border-radius: 0;
+    }
+    body.canvas-full .app, body.canvas-full .splitter { display: none; }
+    body.canvas-full { overflow: hidden; }
+    .canvas-head {
+      display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+      padding: 10px 12px; min-height: 52px;
+      border-bottom: 1px solid var(--border); background: #121821;
+    }
+    .canvas-head .canvas-title { flex: 1; min-width: 0; }
+    .canvas-head .canvas-kicker { font-size: 10px; color: var(--muted); letter-spacing: .4px; }
+    #canvas-name {
+      font-size: 13px; font-weight: 600; margin-top: 1px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .canvas-head button { padding: 5px 10px; font-size: 12px; }
+    .canvas-panel iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+    .canvas-panel iframe[hidden] { display: none; }
+    .canvas-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      padding: 32px 24px; color: var(--muted);
+      background: radial-gradient(480px 300px at 50% 42%, #1a2740 0%, transparent 72%);
+    }
+    .canvas-empty[hidden] { display: none; }
+    .canvas-empty-card {
+      width: min(100%, 430px); padding: 28px 24px; border-radius: 18px;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      text-align: center; border: 1px dashed var(--border-strong);
+      background: linear-gradient(180deg, #1a2230 0%, #141b26 100%);
+      box-shadow: inset 0 1px 0 #ffffff0a, 0 12px 40px #0004;
+    }
+    .canvas-empty strong { color: var(--text); font-size: 15px; }
+    .canvas-empty p { margin: 0; font-size: 13px; line-height: 1.7; }
+    .canvas-empty code { font-family: var(--mono); color: #9cc7ff; }
+
     /* ── 输入区 ──────────────────────────────────── */
     .composer {
-      display: flex; align-items: flex-end; gap: 8px;
-      border: 1px solid var(--border); background: var(--panel);
-      border-radius: 12px; padding: 8px;
+      display: flex; align-items: flex-end; gap: 8px; flex: 0 0 auto;
+      margin: 0 12px 12px; padding: 6px;
+      border: 1px solid var(--border); background: #121821;
+      border-radius: 10px;
     }
     textarea {
       flex: 1; resize: none; border: 0; outline: 0; background: transparent;
@@ -230,19 +378,48 @@
     .stop.running { color: var(--warn); border-color: #5a4718; }
     .stop[hidden] { display: none; }
 
+    @media (max-width: 860px) {
+      .shell { padding: 0; gap: 0; }
+      .app {
+        flex: 1 1 auto; width: 100%; max-width: none; min-width: 0;
+        border: 0; border-radius: 0;
+      }
+      .splitter { display: none; }
+      .canvas-panel {
+        position: fixed; inset: 0; z-index: 30; flex: none;
+        width: 100vw; max-width: none; height: 100vh;
+        border: 0; border-radius: 0;
+      }
+      header { padding: 10px; }
+      .log { padding: 10px; }
+    }
     @media (max-width: 560px) {
-      .app { padding: 10px; }
       .msg, .call, .tool-row, .tool-error { max-width: 100%; }
     }
   </style>
 </head>
 <body>
+  <div class="shell">
   <div class="app">
     <header>
-      <div class="brand"><h1>Walle</h1><small>web channel</small></div>
+      <div class="brand">
+        <h1>Walle</h1><small>web channel</small>
+        <button id="canvas-latest" class="ghost">画布</button>
+      </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
-    <main id="log" class="log"></main>
+    <main id="log" class="log">
+      <div id="chat-empty" class="chat-empty">
+        <div class="empty-mark">✦</div>
+        <strong>开始对话</strong>
+        <p>直接提问，或让 Walle 在右侧画布中画图、推公式、做动效。</p>
+        <div class="hints">
+          <button class="hint" data-prompt="解释一下 Transformer 的注意力机制">解释概念</button>
+          <button class="hint" data-prompt="帮我写一个 Python 脚本">写段代码</button>
+          <button class="hint" data-prompt="把这个任务拆成几个步骤">拆解任务</button>
+        </div>
+      </div>
+    </main>
     <div id="approval-bar" class="approval-bar" hidden>
       <span>🔔</span>
       <span id="approval-text">有工具等待审批</span>
@@ -254,8 +431,38 @@
       <button id="send" disabled>发送</button>
     </div>
   </div>
+  <div id="canvas-splitter" class="splitter" hidden
+    role="separator" aria-label="调整画布宽度" title="拖动调整宽度，双击重置"></div>
+  <aside id="canvas-panel" class="canvas-panel" hidden aria-label="画布">
+    <div class="canvas-head">
+      <div class="canvas-title">
+        <div class="canvas-kicker">画布</div>
+        <div id="canvas-name"></div>
+      </div>
+      <button id="canvas-full" class="ghost">放大</button>
+      <button id="canvas-close" class="ghost">关闭</button>
+    </div>
+    <div id="canvas-empty" class="canvas-empty">
+      <div class="canvas-empty-card">
+        <strong>画布准备好了</strong>
+        <p>让 Walle 在这里画图表、推导公式，<br>或做一段可交互的动效。</p>
+        <div class="hints">
+          <button class="hint" data-prompt="用 canvas 工具画一个 sin(x) 函数图像">sin(x) 函数</button>
+          <button class="hint" data-prompt="用 canvas 工具画一个排序算法流程图">算法流程图</button>
+          <button class="hint" data-prompt="用 canvas 工具演示一个弹簧振子动画">弹簧振子</button>
+        </div>
+      </div>
+    </div>
+    <iframe id="canvas-frame" title="画布内容" hidden
+      sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+      referrerpolicy="no-referrer"></iframe>
+  </aside>
+  </div>
+  <script src="/static/marked.min.js"></script>
+  <script src="/static/purify.min.js"></script>
   <script>
     const log = document.getElementById("log");
+    const chatEmpty = document.getElementById("chat-empty");
     const input = document.getElementById("input");
     const send = document.getElementById("send");
     const stop = document.getElementById("stop");
@@ -268,9 +475,26 @@
     // tool_call_id → { card, pill, hint, actions, allow, deny, decision }
     const approvals = new Map();
     const tools = new Map();
+    let prepareRow = null;
     const approvalBar = document.getElementById("approval-bar");
     const approvalText = document.getElementById("approval-text");
     const approvalJump = document.getElementById("approval-jump");
+    const canvasPanel = document.getElementById("canvas-panel");
+    const canvasSplitter = document.getElementById("canvas-splitter");
+    const canvasFrame = document.getElementById("canvas-frame");
+    const canvasEmpty = document.getElementById("canvas-empty");
+    const canvasName = document.getElementById("canvas-name");
+    const canvasFull = document.getElementById("canvas-full");
+    const canvasClose = document.getElementById("canvas-close");
+    const canvasLatest = document.getElementById("canvas-latest");
+    // canvas_id → { id, chatId, title, version, card, name }
+    const canvases = new Map();
+    let shownCanvas = null;
+    let latestCanvas = null;
+    const savedCanvasWidth = Number(localStorage.getItem("walle.canvasWidth"));
+    if (savedCanvasWidth >= 320) {
+      document.documentElement.style.setProperty("--canvas-width", `${savedCanvasWidth}px`);
+    }
 
     function setStatus(text, cls) {
       status.textContent = text;
@@ -287,9 +511,10 @@
     }
 
     function add(role, text) {
+      if (chatEmpty && chatEmpty.isConnected) chatEmpty.remove();
       const row = el("div", "msg " + role);
       const who = el("div", "who", role === "user" ? "你" : "AI");
-      const bubble = el("div", "bubble", text || "");
+      const bubble = el("div", "bubble" + (role === "assistant" ? " md" : ""), text || "");
       row.append(who, bubble);
       log.append(row);
       scroll();
@@ -343,9 +568,57 @@
       return sendFrame({ type: "reply", id, data });
     }
 
-    function valueText(value) {
+    function formatValue(value, depth = 0) {
+      const pad = "  ".repeat(depth);
       if (typeof value === "string") return value;
-      return JSON.stringify(value, null, 2);
+      if (Array.isArray(value)) {
+        if (!value.length) return "（空）";
+        return value.map((item) => {
+          if (item && typeof item === "object") {
+            return `${pad}- ${formatValue(item, depth + 1).trimStart()}`;
+          }
+          return `${pad}- ${formatValue(item, depth + 1)}`;
+        }).join("\n");
+      }
+      if (value && typeof value === "object") {
+        const entries = Object.entries(value);
+        if (!entries.length) return "（空）";
+        return entries.map(([key, item]) => {
+          if (item && typeof item === "object") {
+            return `${pad}${key}:\n${formatValue(item, depth + 1)}`;
+          }
+          return `${pad}${key}: ${formatValue(item, depth + 1)}`;
+        }).join("\n");
+      }
+      return String(value);
+    }
+
+    function valueText(value) {
+      return formatValue(value);
+    }
+
+    function renderMarkdown(text) {
+      if (!window.marked || !window.DOMPurify) return null;
+      const html = window.marked.parse(text, { gfm: true, breaks: true });
+      return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    }
+
+    let lastRender = 0;
+    function renderAssistant(force = false) {
+      if (!current) return;
+      const now = performance.now();
+      if (!force && now - lastRender < 80) return;
+      lastRender = now;
+      const html = renderMarkdown(current.text);
+      if (html === null) {
+        current.bubble.textContent = current.text;
+        return;
+      }
+      current.bubble.innerHTML = html;
+      for (const link of current.bubble.querySelectorAll("a")) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
     }
 
     function renderArgs(args) {
@@ -371,7 +644,7 @@
         .map((key) => [key, (args || {})[key]])
         .find(([, value]) => value !== undefined) || entries[0];
       const [key, value] = pick;
-      const raw = typeof value === "string" ? value : JSON.stringify(value);
+      const raw = valueText(value);
       const text = (raw || "").replace(/\s+/g, " ").trim();
       const limit = 90;
       return `${key}: ${text.length > limit ? text.slice(0, limit) + "…" : text}`;
@@ -442,22 +715,27 @@
 
     function resultText(data) {
       const value = data.error != null ? data.error : data.result;
-      let text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      let text = valueText(value);
       if (text == null) text = "";
       const LIMIT = 8000;
       return text.length > LIMIT ? text.slice(0, LIMIT) + "\n…（已截断）" : text;
+    }
+
+    function isCanvasResult(value) {
+      return !!value && typeof value === "object"
+        && value.type === "canvas" && !!value.canvas_id;
     }
 
     function attachResult(state, data) {
       if (state.resultAdded) return;
       state.resultAdded = true;
       const failed = !!data.error;
+      if (!failed && isCanvasResult(data.result)) return;
       const details = el("details", "result");
       if (failed) details.open = true;
-      details.append(
-        el("summary", "", failed ? "执行结果（失败）" : "执行结果"),
-        el("pre", "", resultText(data))
-      );
+      const summary = el("summary", "");
+      summary.append(el("span", "args-label", failed ? "执行结果（失败）" : "执行结果"));
+      details.append(summary, el("pre", "", resultText(data)));
       state.body.append(details);
     }
 
@@ -559,7 +837,29 @@
       updateComposer();
     }
 
+    function showPreparing(toolName) {
+      if (prepareRow) {
+        prepareRow.querySelector(".tool-name").textContent = toolName || "tool";
+        return;
+      }
+      prepareRow = el("div", "tool-row running");
+      prepareRow.append(
+        el("span", "tool-ico", "⚙"),
+        el("span", "tool-name", toolName || "tool"),
+        el("span", "tool-state", "生成参数…")
+      );
+      log.append(prepareRow);
+      scroll();
+    }
+
+    function clearPreparing() {
+      if (!prepareRow) return;
+      prepareRow.remove();
+      prepareRow = null;
+    }
+
     function startTool(data) {
+      clearPreparing();
       // 工具轮结束：后续文本（如最终回答）必须另起气泡，不能回填到工具前的回答里
       current = null;
       const row = el("div", "tool-row running");
@@ -582,13 +882,20 @@
         row.querySelector(".tool-state").textContent = data.error ? "失败" : "完成";
       }
       finishApproval(data);
-      if (data.error && !hasCard) {
+      if (!data.error && isCanvasResult(data.result)) {
+        // 保留调用状态条：即使无需审批，也要能看到 canvas 被调用
+        tools.delete(data.tool_call_id);
+        const state = canvasCard({ ...data.result, chat_id: data.chat_id });
+        // 面板已打开时：同画布版本更新直接刷新，新画布也直接切过去
+        if (!canvasPanel.hidden) openCanvas(state);
+      } else if (data.error && !hasCard) {
         log.append(el("div", "tool-error", data.error));
       }
       scroll();
     }
 
     function closePending(reason) {
+      clearPreparing();
       // run 已结束：未答复的审批不再可操作，只留状态徽章
       for (const state of approvals.values()) {
         state.pill.hidden = false;
@@ -614,6 +921,112 @@
       tools.clear();
     }
 
+    function canvasSrc(state) {
+      const chat = encodeURIComponent(state.chatId);
+      const id = encodeURIComponent(state.id);
+      return `/canvas/${chat}/${id}?v=${state.version}`;
+    }
+
+    function canvasCard(data) {
+      const existing = canvases.get(data.canvas_id);
+      if (existing) {
+        if (data.title) existing.title = data.title;
+        if (data.version) existing.version = data.version;
+        existing.name.textContent = existing.title;
+        if (shownCanvas === existing) canvasName.textContent = existing.title;
+        latestCanvas = existing;
+        return existing;
+      }
+      const card = el("div", "canvas-card");
+      const title = el("div", "canvas-title");
+      const name = el("div", "canvas-name", data.title || "画布");
+      title.append(el("div", "canvas-kicker", "画布"), name);
+      const open = el("button", "ghost canvas-open", "打开画布");
+      card.append(title, open);
+      const state = {
+        id: data.canvas_id,
+        chatId: data.chat_id || "",
+        title: data.title || "画布",
+        version: data.version || 0,
+        card, name, open,
+      };
+      card.onclick = () => toggleCanvas(state);
+      open.onclick = (event) => {
+        event.stopPropagation();
+        toggleCanvas(state);
+      };
+      canvases.set(state.id, state);
+      latestCanvas = state;
+      log.append(card);
+      scroll();
+      return state;
+    }
+
+    function toggleCanvas(state) {
+      if (!canvasPanel.hidden && shownCanvas === state && !canvasPanel.classList.contains("full")) {
+        closeCanvas();
+      } else {
+        openCanvas(state);
+      }
+    }
+
+    function syncCanvasButtons() {
+      const open = !canvasPanel.hidden && !canvasPanel.classList.contains("full");
+      for (const state of canvases.values()) {
+        if (!state.open) continue;
+        state.open.textContent = open && shownCanvas === state ? "收起画布" : "打开画布";
+      }
+      canvasLatest.textContent = open ? "收起" : "画布";
+    }
+
+    function syncSplitter() {
+      canvasSplitter.hidden = canvasPanel.hidden || canvasPanel.classList.contains("full");
+    }
+
+    function setCanvasFull(full) {
+      canvasPanel.classList.toggle("full", full);
+      document.body.classList.toggle("canvas-full", full);
+      canvasFull.textContent = full ? "还原" : "放大";
+      syncSplitter();
+      syncCanvasButtons();
+    }
+
+    function openCanvas(state) {
+      shownCanvas = state;
+      canvasPanel.hidden = false;
+      canvasEmpty.hidden = true;
+      canvasFrame.hidden = false;
+      canvasName.textContent = state.title;
+      document.body.classList.add("canvas-open");
+      const src = canvasSrc(state);
+      if (canvasFrame.dataset.src !== src) {
+        canvasFrame.dataset.src = src;
+        canvasFrame.src = src;
+      }
+      syncSplitter();
+      syncCanvasButtons();
+    }
+
+    function openEmptyCanvas() {
+      shownCanvas = null;
+      canvasPanel.hidden = false;
+      canvasEmpty.hidden = false;
+      canvasFrame.hidden = true;
+      canvasName.textContent = "尚未创建";
+      document.body.classList.add("canvas-open");
+      syncSplitter();
+      syncCanvasButtons();
+    }
+
+    function closeCanvas() {
+      shownCanvas = null;
+      if (canvasPanel.classList.contains("full")) setCanvasFull(false);
+      canvasPanel.hidden = true;
+      document.body.classList.remove("canvas-open");
+      syncSplitter();
+      syncCanvasButtons();
+    }
+
     function handle(msg) {
       if (msg.type === "call") {
         handleCall(msg);
@@ -635,16 +1048,23 @@
 
       const data = msg.data || {};
       if (data.type === "delta") {
-        if (!current) current = add("assistant", "");
+        if (!current) {
+          current = add("assistant", "");
+          lastRender = 0;
+        }
         current.text += data.delta || "";
-        current.bubble.textContent = current.text;
+        renderAssistant();
         scroll();
       } else if (data.type === "delta_end") {
+        clearPreparing();
+        renderAssistant(true);
         current = null;
         busy = false;
         closePending(data.reason);
         updateComposer();
         if (data.reason) note("结束：" + data.reason, data.reason !== "max_turns");
+      } else if (data.type === "tool_prepare") {
+        showPreparing(data.tool_name);
       } else if (data.type === "tool_start") {
         startTool(data);
       } else if (data.type === "tool_result") {
@@ -698,6 +1118,23 @@
       const first = pendingApprovals()[0];
       if (first) first.card.scrollIntoView({ behavior: "smooth", block: "end" });
     });
+    canvasClose.addEventListener("click", closeCanvas);
+    canvasLatest.addEventListener("click", () => {
+      if (!canvasPanel.hidden) {
+        closeCanvas();
+        return;
+      }
+      if (latestCanvas) openCanvas(latestCanvas);
+      else openEmptyCanvas();
+    });
+    canvasFull.addEventListener("click", () => {
+      setCanvasFull(!canvasPanel.classList.contains("full"));
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || canvasPanel.hidden) return;
+      if (canvasPanel.classList.contains("full")) setCanvasFull(false);
+      else closeCanvas();
+    });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -707,6 +1144,52 @@
     input.addEventListener("input", () => {
       input.style.height = "auto";
       input.style.height = Math.min(input.scrollHeight, 140) + "px";
+    });
+    for (const hint of document.querySelectorAll("[data-prompt]")) {
+      hint.addEventListener("click", () => {
+        input.value = hint.dataset.prompt || "";
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      });
+    }
+
+    let dragStartX = 0;
+    let dragStartWidth = 0;
+    let dragMaxWidth = 0;
+    canvasSplitter.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const shell = document.querySelector(".shell").getBoundingClientRect();
+      dragStartX = event.clientX;
+      dragStartWidth = canvasPanel.getBoundingClientRect().width;
+      dragMaxWidth = shell.width - 24 - canvasSplitter.offsetWidth - 360;
+      canvasSplitter.setPointerCapture(event.pointerId);
+      document.body.classList.add("resizing");
+      event.preventDefault();
+    });
+    canvasSplitter.addEventListener("pointermove", (event) => {
+      if (!document.body.classList.contains("resizing")) return;
+      const width = Math.max(
+        320,
+        Math.min(dragStartWidth + dragStartX - event.clientX, dragMaxWidth)
+      );
+      document.documentElement.style.setProperty("--canvas-width", `${Math.round(width)}px`);
+    });
+    const finishResize = (event) => {
+      if (!document.body.classList.contains("resizing")) return;
+      document.body.classList.remove("resizing");
+      if (canvasSplitter.hasPointerCapture(event.pointerId)) {
+        canvasSplitter.releasePointerCapture(event.pointerId);
+      }
+      localStorage.setItem(
+        "walle.canvasWidth",
+        String(Math.round(canvasPanel.getBoundingClientRect().width))
+      );
+    };
+    canvasSplitter.addEventListener("pointerup", finishResize);
+    canvasSplitter.addEventListener("pointercancel", finishResize);
+    canvasSplitter.addEventListener("dblclick", () => {
+      document.documentElement.style.removeProperty("--canvas-width");
+      localStorage.removeItem("walle.canvasWidth");
     });
 
     connect();

@@ -93,6 +93,13 @@ class MessageEndEvent:
 
 
 @dataclass
+class ToolCallPrepareEvent:
+    """模型开始生成工具调用（参数可能尚未完整，工具尚未执行）。"""
+
+    tool_name: str
+
+
+@dataclass
 class ToolExecutionStartEvent:
     """工具执行前（preflight 屏障：返回 HookVerdict 可阻止/改写）。"""
 

@@ -4,22 +4,49 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
+STATIC = Path(__file__).with_name("static")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
+SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 @app.get("/")
 async def index() -> HTMLResponse:
-    return HTMLResponse(INDEX.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        INDEX.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/canvas/{chat_id}/{canvas_id}")
+async def canvas_page(chat_id: str, canvas_id: str) -> HTMLResponse:
+    if not SAFE_ID.fullmatch(canvas_id):
+        raise HTTPException(status_code=404)
+    # 与 tools/builtin/canvas.py 的落盘规则保持一致
+    key = re.sub(r"[^A-Za-z0-9_-]", "_", chat_id)[:64] or "default"
+    path = CANVAS_ROOT / key / f"{canvas_id}.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404)
+    return HTMLResponse(
+        path.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.websocket("/ws/chat")

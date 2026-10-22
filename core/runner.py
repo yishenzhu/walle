@@ -27,6 +27,7 @@ from ..spec import (
     SessionEndEvent,
     SessionStartEvent,
     SystemMessage,
+    ToolCallPrepareEvent,
     ToolMessage,
     TurnEndEvent,
     TurnStartEvent,
@@ -247,13 +248,20 @@ class Runner:
         provider,
         bus: EventBus,
     ):
-        # 流式增量只发事件（MESSAGE_DELTA）——推给 channel 由监听者负责
+        # 流式增量只发事件——推给 channel 由监听者负责
+        prepared: set[int] = set()
         async with provider.stream(
             **self._request_params(agent, messages, tools)
         ) as stream:
             async for event in stream:
                 if event.type == "content.delta":
                     await bus.emit(MessageDeltaEvent(delta=event.delta))
+                elif event.type == "tool_calls.function.arguments.delta":
+                    # 工具参数由模型逐块生成，此时工具尚未执行；先通知客户端，
+                    # 避免大参数工具调用生成期间界面完全静默。
+                    if event.index not in prepared:
+                        prepared.add(event.index)
+                        await bus.emit(ToolCallPrepareEvent(tool_name=event.name))
 
             completion = await stream.get_final_completion()
         message, tool_results = await self._collect_tool_results(completion, tools)

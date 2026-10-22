@@ -25,6 +25,7 @@ tool:
       - [ask, write]                   # 整文件写入默认需人工确认（可覆盖全文）
       - [allow, edit(path=.agent/note.md)]  # 工作笔记 note.md 自动放行
       - [allow, ask_user]             # 提问工具自动放行
+      - [allow, canvas]               # 画布 HTML 在沙箱 iframe 内渲染，自动放行
       - [allow, read]                 # 读文件自动放行（技能按需加载）
       - [allow, history]              # 历史检索只读，自动放行
       - [allow, new_window]           # 模型主动开新窗口（仅改模型视野，不删原文）

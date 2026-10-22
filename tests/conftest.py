@@ -130,6 +130,7 @@ class FakeSession:
     """满足 SessionView 的测试替身：工具执行期可见的会话状态。"""
 
     channel: Any = None
+    session_id: str | None = None
     jobs: dict = field(default_factory=dict)
     cwd: str | None = None
     history: Any = None

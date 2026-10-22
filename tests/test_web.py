@@ -114,6 +114,46 @@ def test_index_serves_chat_page():
     assert "/ws/chat" in response.text
     assert "工具审批" in response.text
     assert "停止" in response.text
+    assert 'id="canvas-panel"' in response.text
+    assert 'id="canvas-latest"' in response.text
+    assert 'id="canvas-splitter"' in response.text
+    assert "打开画布" in response.text
+    assert "画布准备好了" in response.text
+    assert "开始对话" in response.text
+    assert "sin(x) 函数" in response.text
+    assert "生成参数" in response.text
+    assert "/static/marked.min.js" in response.text
+    assert "/static/purify.min.js" in response.text
+    assert 'sandbox="allow-scripts' in response.text
+    assert "allow-same-origin" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_static_markdown_assets_are_served():
+    client = TestClient(web.app)
+    marked = client.get("/static/marked.min.js")
+    assert marked.status_code == 200
+    assert "marked" in marked.text
+    purify = client.get("/static/purify.min.js")
+    assert purify.status_code == 200
+    assert "DOMPurify" in purify.text
+
+
+def test_canvas_route_serves_session_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(web, "CANVAS_ROOT", tmp_path)
+    session = tmp_path / "web-abc123"
+    session.mkdir()
+    (session / "c1.html").write_text("<h1>canvas</h1>", encoding="utf-8")
+
+    client = TestClient(web.app)
+    response = client.get("/canvas/web-abc123/c1")
+    assert response.status_code == 200
+    assert response.text == "<h1>canvas</h1>"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get("/canvas/web-abc123/missing").status_code == 404
+    assert client.get("/canvas/web-abc123/bad.id").status_code == 404
+
+
 
 
 def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):

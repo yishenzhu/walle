@@ -38,6 +38,8 @@ from ..spec import (
     Message,
     Messages,
     SessionSpec,
+    ToolCallPrepareEvent,
+    ToolPrepare,
     UserInput,
 )
 from .agent import Agent
@@ -92,6 +94,7 @@ class Session:
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
+        self._bus.on(ToolCallPrepareEvent, self._on_tool_prepare)
 
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
         # 管理器缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
@@ -165,6 +168,11 @@ class Session:
         """流式增量事件 → 推给当前 transport（无 transport 则丢弃）。"""
         if self._transport is not None:
             await self._transport.notify(Delta(delta=evt.delta))
+
+    async def _on_tool_prepare(self, evt: ToolCallPrepareEvent) -> None:
+        """模型开始生成工具参数 → 先告诉客户端，工具尚未执行。"""
+        if self._transport is not None:
+            await self._transport.notify(ToolPrepare(tool_name=evt.tool_name))
 
     async def _on_message_end(self, evt: MessageEndEvent) -> None:
         """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。

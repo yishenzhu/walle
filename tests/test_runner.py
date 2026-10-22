@@ -1,12 +1,24 @@
 """Runner Agent 循环测试（mock LLM，不依赖真实 API）。"""
 
+from types import SimpleNamespace
+
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
-from ..core import Agent, HookVerdict, Runner, RunOptions, RunResult, SessionContext, ToolExecutor
+from ..core import (
+    Agent,
+    EventBus,
+    HookVerdict,
+    Runner,
+    RunOptions,
+    RunResult,
+    SessionContext,
+    ToolExecutor,
+)
 from ..core.agent import ToolFilter
 from ..infra import Tool
 from ..messages import InMemoryMessages, build_ephemeral_history
+from ..spec import ToolCallPrepareEvent
 from .conftest import (
     FakeChannel,
     FakeCompletion,
@@ -56,6 +68,40 @@ def env(channel, provider):
     )
 
 
+class FakeToolStream:
+    """最小流式响应：先事件，再给最终 completion。"""
+
+    def __init__(self, events, completion):
+        self.events = events
+        self.completion = completion
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def __aiter__(self):
+        async def iterate():
+            for event in self.events:
+                yield event
+
+        return iterate()
+
+    async def get_final_completion(self):
+        return self.completion
+
+
+class FakeStreamProvider(FakeProvider):
+    def __init__(self, events, completion):
+        super().__init__()
+        self._events = events
+        self._completion = completion
+
+    def stream(self, **kwargs):
+        return FakeToolStream(self._events, self._completion)
+
+
 def make_echo_tool(result="echoed"):
     async def fn(args):
         return result
@@ -66,6 +112,39 @@ def make_echo_tool(result="echoed"):
         parameters={"type": "object", "properties": {}},
         fn=fn,
     )
+
+
+class TestStreamingToolPrepare:
+    async def test_tool_prepare_emitted_once_per_call(self, allow_executor):
+        events = [
+            SimpleNamespace(
+                type="tool_calls.function.arguments.delta", index=0, name="bash"
+            ),
+            SimpleNamespace(
+                type="tool_calls.function.arguments.delta", index=0, name="bash"
+            ),
+        ]
+        provider = FakeStreamProvider(events, FakeCompletion(FakeMessage(content="done")))
+        bus = EventBus()
+        prepared: list[str] = []
+        bus.on(ToolCallPrepareEvent, lambda evt: prepared.append(evt.tool_name))
+        env = SessionContext(
+            provider=provider,
+            history=InMemoryMessages(),
+            bus=bus,
+            history_factory=build_ephemeral_history,
+        )
+        runner = Runner(executor=allow_executor)
+
+        result = await runner.run(
+            Agent(instruction="draw"),
+            "hi",
+            env=env,
+            options=RunOptions(stream=True),
+        )
+
+        assert prepared == ["bash"]
+        assert result.output == "done"
 
 
 class TestRunnerSimple:

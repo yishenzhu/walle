@@ -76,6 +76,13 @@ class DeltaEnd(Notification):
     detail: str | None = None
 
 
+class ToolPrepare(Notification):
+    """模型正在生成工具调用参数（工具尚未开始执行）。"""
+
+    type: Literal["tool_prepare"] = "tool_prepare"
+    tool_name: str
+
+
 class ToolStart(Notification):
     """工具开始执行。"""
 
@@ -103,7 +110,7 @@ class Error(Notification):
 
 
 NotificationUnion = Annotated[
-    Delta | DeltaEnd | ToolStart | ToolResult | Error,
+    Delta | DeltaEnd | ToolPrepare | ToolStart | ToolResult | Error,
     Field(discriminator="type"),
 ]
 
