@@ -290,7 +290,7 @@ main() {
         else
             log_info "agent 已在运行，直接连接"
         fi
-        start_cli_client "${client_args[@]:-}"
+        start_cli_client "${client_args[@]}"
         exit 0
     fi
 
