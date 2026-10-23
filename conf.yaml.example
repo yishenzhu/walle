@@ -32,6 +32,10 @@ tool:
       - [allow, read]                 # 读文件自动放行（技能按需加载）
       - [allow, history]              # 历史检索只读，自动放行
       - [allow, new_window]           # 模型主动开新窗口（仅改模型视野，不删原文）
+      - [allow, mcp_rag_list_knowledge]   # RAG 检索只读
+      - [allow, mcp_rag_search_knowledge]
+      - [allow, mcp_rag_search_memory]
+      - [ask, mcp_rag_add_memory]         # 写入用户记忆需确认
     default: ask
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）

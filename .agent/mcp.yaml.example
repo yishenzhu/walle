@@ -22,3 +22,9 @@ tavily:
   headers:
     Authorization: Bearer YOUR_TAVILY_API_KEY
   enabled: false
+
+# 本地 RAG 服务（~/rag），默认 streamable HTTP 端点为 /mcp
+rag:
+  url: http://127.0.0.1:9000/mcp
+  timeout: 20
+  enabled: false
