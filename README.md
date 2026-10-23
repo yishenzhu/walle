@@ -21,7 +21,7 @@
 | 🔒 **OS 级沙箱** | 可选 bwrap 沙箱扩展：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
-| 🖥️ **Web 工作区** | 对话 + 画布双栏；Markdown 渲染、工具审批、可拖拽分栏与全屏画布；画布 HTML 在 sandbox iframe 中运行 |
+| 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
@@ -143,7 +143,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（348 项，无需 API Key）
+pytest -q                      # 单元测试（355 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -198,13 +198,15 @@ Web 工作区（可选，需先安装 `fastapi` / `uvicorn`）：
 PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http://127.0.0.1:8080
 ```
 
+- **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
+- **服务重启恢复**：attach 失败时 Web 用同一 `chat_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
 - **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
 - **画布内容**：按会话存放在 `data/canvas/<chat_id>/<canvas_id>.html`，通过 `/canvas/<chat_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
 - 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
-会话是**持久实体**（跨连接存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
+会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。Web 端还支持按工作目录浏览历史会话并从文件恢复。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
 
 ### 📊 可观测性面板
 

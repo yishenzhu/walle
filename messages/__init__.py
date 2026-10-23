@@ -1,6 +1,11 @@
 from ..spec import Messages
 from .factory import build_ephemeral_history, build_history
-from .file import FileMessages, FileProjectionStore
+from .file import (
+    FileMessages,
+    FileProjectionStore,
+    list_sessions,
+    list_workspaces,
+)
 from .in_memory import InMemoryMessages
 from .projected import ProjectedMessages
 from .projection_store import SQLiteProjectionStore
@@ -14,6 +19,8 @@ __all__ = [
     "ProjectedMessages",
     "SQLiteProjectionStore",
     "FileProjectionStore",
+    "list_sessions",
+    "list_workspaces",
     "build_history",
     "build_ephemeral_history",
 ]

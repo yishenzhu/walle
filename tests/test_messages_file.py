@@ -1,5 +1,6 @@
 """FileMessages / FileProjectionStore 测试（集中存储、按工作目录分组）。"""
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from ..messages import (
     FileProjectionStore,
     ProjectedMessages,
     build_history,
+    list_sessions,
+    list_workspaces,
 )
 from ..messages.file import (
     MESSAGES_FILE,
@@ -26,7 +29,9 @@ from ..spec import UserMessage
 
 @pytest.fixture
 def project(tmp_path):
-    return tmp_path / "project"
+    path = tmp_path / "project"
+    path.mkdir()
+    return path
 
 
 @pytest.fixture
@@ -169,6 +174,45 @@ class TestFileProjectionStore:
         result = await second.get()
         assert [m.content for m in result] == ["u2"]
         await second.close()
+
+
+class TestSessionListing:
+    async def test_lists_workspaces_and_sessions(self, tmp_path, project):
+        root = tmp_path / "sessions"
+        other = tmp_path / "other"
+        other.mkdir()
+        first = workspace_dir(project, root)
+        second = workspace_dir(other, root)
+
+        s1 = FileMessages(first / session_dir_name("s1"), "s1", cwd=project)
+        await s1.add([UserMessage(content="Learn Fourier transforms")])
+        await asyncio.sleep(0.01)
+        s2 = FileMessages(first / session_dir_name("s2"), "s2", cwd=project)
+        await s2.add([UserMessage(content="Linear algebra")])
+        s3 = FileMessages(second / session_dir_name("s3"), "s3", cwd=other)
+        await s3.add([UserMessage(content="Other workspace")])
+        await asyncio.gather(s1.close(), s2.close(), s3.close())
+
+        workspaces = list_workspaces(root)
+        assert {item["path"] for item in workspaces} == {
+            str(canonical_cwd(project)),
+            str(canonical_cwd(other)),
+        }
+        counts = {item["path"]: item["session_count"] for item in workspaces}
+        assert counts[str(canonical_cwd(project))] == 2
+        assert counts[str(canonical_cwd(other))] == 1
+
+        items = list_sessions(project, root)
+        assert [item["session_id"] for item in items] == ["s2", "s1"]
+        assert [item["title"] for item in items] == [
+            "Linear algebra",
+            "Learn Fourier transforms",
+        ]
+        assert all(item["cwd"] == str(canonical_cwd(project)) for item in items)
+
+    async def test_missing_directory_has_no_sessions(self, tmp_path, project):
+        assert list_sessions(tmp_path / "missing", tmp_path / "sessions") == []
+        assert list_workspaces(tmp_path / "sessions") == []
 
 
 class TestBuildHistory:

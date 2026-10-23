@@ -31,6 +31,56 @@ async def index() -> HTMLResponse:
     )
 
 
+async def query_agent(frame: dict, timeout: float = 5.0) -> dict:
+    """向 agent 服务端发一个只读浏览帧并取回结果。"""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(HOST, PORT, limit=MAX_FRAME), timeout
+        )
+    except (OSError, TimeoutError) as exc:
+        raise HTTPException(status_code=503, detail="agent 未启动") from exc
+    link = JSONLineConn(reader, writer)
+    try:
+        await link.send(frame)
+        reply = await asyncio.wait_for(link.recv(), timeout)
+    except (OSError, ConnectionError, TimeoutError) as exc:
+        raise HTTPException(status_code=503, detail="agent 未响应") from exc
+    finally:
+        link.close()
+        await link.wait_closed()
+    if reply is None:
+        raise HTTPException(status_code=503, detail="agent 未响应")
+    if reply.get("type") == "error":
+        raise HTTPException(
+            status_code=400,
+            detail=reply.get("message") or reply.get("code") or "agent error",
+        )
+    return reply
+
+
+@app.get("/api/workspaces")
+async def api_workspaces() -> dict:
+    reply = await query_agent({"type": "list_workspaces"})
+    return {
+        "current": reply.get("current") or str(Path.cwd()),
+        "workspaces": reply.get("workspaces") or [],
+    }
+
+
+@app.get("/api/sessions")
+async def api_sessions(cwd: str = "") -> dict:
+    if not cwd:
+        raise HTTPException(status_code=400, detail="cwd 不能为空")
+    try:
+        target = Path(cwd).expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"目录不存在: {cwd}") from exc
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"不是目录: {cwd}")
+    reply = await query_agent({"type": "list_sessions", "cwd": str(target)})
+    return {"cwd": str(target), "sessions": reply.get("sessions") or []}
+
+
 @app.get("/canvas/{chat_id}/{canvas_id}")
 async def canvas_page(chat_id: str, canvas_id: str) -> HTMLResponse:
     if not SAFE_ID.fullmatch(canvas_id):
@@ -50,30 +100,86 @@ async def canvas_page(chat_id: str, canvas_id: str) -> HTMLResponse:
 
 
 @app.websocket("/ws/chat")
-async def chat(ws: WebSocket) -> None:
+async def chat(
+    ws: WebSocket,
+    cwd: str | None = None,
+    session: str | None = None,
+    attach: bool = False,
+) -> None:
     await ws.accept()
-    chat_id = f"web-{uuid.uuid4().hex[:12]}"
+    if session is not None and not SAFE_ID.fullmatch(session):
+        await ws.send_json({"type": "error", "message": "会话 id 非法"})
+        await ws.close()
+        return
+    if attach and session is None:
+        await ws.send_json({"type": "error", "message": "恢复会话需要 session 参数"})
+        await ws.close()
+        return
     try:
-        reader, writer = await asyncio.open_connection(HOST, PORT, limit=MAX_FRAME)
-    except OSError as exc:
-        await ws.send_json({"type": "error", "message": f"agent 未启动：{exc}"})
+        working_dir = Path(cwd).expanduser().resolve(strict=True) if cwd else Path.cwd()
+    except OSError:
+        await ws.send_json(
+            {"type": "error", "message": f"工作目录不存在: {cwd or Path.cwd()}"}
+        )
+        await ws.close()
+        return
+    if not working_dir.is_dir():
+        await ws.send_json({"type": "error", "message": f"不是目录: {working_dir}"})
         await ws.close()
         return
 
-    link = JSONLineConn(reader, writer)
+    chat_id = session or f"web-{uuid.uuid4().hex[:12]}"
+
+    async def connect_agent(payload: dict) -> tuple[JSONLineConn, dict | None]:
+        reader, writer = await asyncio.open_connection(HOST, PORT, limit=MAX_FRAME)
+        conn = JSONLineConn(reader, writer)
+        try:
+            await conn.send(payload)
+            reply = await conn.recv()
+        except Exception:
+            conn.close()
+            await conn.wait_closed()
+            raise
+        return conn, reply
+
+    link = None
     try:
-        await link.send(
-            {
-                "type": "hello",
-                "chat_id": chat_id,
-                "attach": False,
-                "cwd": str(Path.cwd()),
-                # Web 是人在环审批：不设交互超时，避免用户暂时离开就过期；
-                # 浏览器断开会让挂起请求立即失败，页面也有停止按钮兜底。
-                "call_timeout": None,
-            }
-        )
-        welcome = await link.recv()
+        hello = {
+            "type": "hello",
+            "chat_id": chat_id,
+            "attach": attach,
+            "cwd": str(working_dir),
+            # Web 是人在环审批：不设交互超时，避免用户暂时离开就过期；
+            # 浏览器断开会让挂起请求立即失败，页面也有停止按钮兜底。
+            "call_timeout": None,
+        }
+        try:
+            link, welcome = await connect_agent(hello)
+        except OSError as exc:
+            await ws.send_json(
+                {"type": "error", "message": f"agent 未启动：{exc}"}
+            )
+            return
+
+        # 进程重启后内存里没有该会话，但磁盘上可能仍有：换一条新连接
+        # 用 attach=false 新建，同 chat_id 会从文件存储读回历史。
+        if (
+            welcome is not None
+            and attach
+            and welcome.get("type") == "error"
+            and welcome.get("code") == "session_not_found"
+        ):
+            link.close()
+            await link.wait_closed()
+            hello = {**hello, "attach": False}
+            try:
+                link, welcome = await connect_agent(hello)
+            except OSError as exc:
+                await ws.send_json(
+                    {"type": "error", "message": f"agent 未启动：{exc}"}
+                )
+                return
+
         if welcome is None:
             await ws.send_json({"type": "error", "message": "agent 未响应"})
             return
@@ -132,8 +238,9 @@ async def chat(ws: WebSocket) -> None:
                 if not isinstance(exc, (WebSocketDisconnect, OSError)):
                     logger.warning("web chat ended: %s", exc)
     finally:
-        link.close()
-        await link.wait_closed()
+        if link is not None:
+            link.close()
+            await link.wait_closed()
         try:
             await ws.close()
         except RuntimeError:

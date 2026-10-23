@@ -5,6 +5,7 @@ import importlib
 import queue
 import threading
 import time
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
@@ -16,9 +17,11 @@ web = importlib.import_module("walle.channel.web.app")
 class FakeAgent:
     """最小 JSON-line agent 服务端：welcome → 审批 call / 终态 notify。"""
 
-    def __init__(self) -> None:
+    def __init__(self, attach_error: bool = False) -> None:
         self.frames: queue.Queue[dict] = queue.Queue()
         self.hello: dict | None = None
+        self.hello_frames: list[dict] = []
+        self.attach_error = attach_error
         self.port = 0
         self._ready = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -61,6 +64,18 @@ class FakeAgent:
             if hello is None:
                 return
             self.hello = hello
+            self.hello_frames.append(hello)
+            if self.attach_error and hello.get("attach"):
+                # 与真实 CLIServer 一致：attach 失败后回 error 并关闭连接，
+                # 客户端需要新开一条连接再 create。
+                await conn.send(
+                    {
+                        "type": "error",
+                        "code": "session_not_found",
+                        "message": "missing",
+                    }
+                )
+                return
             await conn.send({"type": "welcome", "chat_id": hello.get("chat_id")})
             while (msg := await conn.recv()) is not None:
                 self.frames.put(msg)
@@ -119,6 +134,11 @@ def test_index_serves_chat_page():
     assert 'id="canvas-splitter"' in response.text
     assert "打开画布" in response.text
     assert "画布准备好了" in response.text
+    assert 'id="workspace-button"' in response.text
+    assert 'id="workspace-modal"' in response.text
+    assert 'id="session-list"' in response.text
+    assert "/api/workspaces" in response.text
+    assert "/api/sessions" in response.text
     assert "开始对话" in response.text
     assert "sin(x) 函数" in response.text
     assert "生成参数" in response.text
@@ -167,6 +187,83 @@ def test_canvas_route_serves_session_file(monkeypatch, tmp_path):
     assert client.get("/canvas/web-abc123/bad.id").status_code == 404
 
 
+
+
+def test_api_workspaces_and_sessions(monkeypatch, tmp_path):
+    async def fake_workspaces(frame):
+        assert frame == {"type": "list_workspaces"}
+        return {
+            "type": "workspaces",
+            "current": str(tmp_path),
+            "workspaces": [{"id": "w1", "path": str(tmp_path), "name": "work"}],
+        }
+
+    monkeypatch.setattr(web, "query_agent", fake_workspaces)
+    client = TestClient(web.app)
+    data = client.get("/api/workspaces").json()
+    assert data["current"] == str(tmp_path)
+    assert data["workspaces"][0]["name"] == "work"
+
+    async def fake_sessions(frame):
+        assert frame["type"] == "list_sessions"
+        assert frame["cwd"] == str(tmp_path.resolve())
+        return {
+            "type": "sessions",
+            "cwd": frame["cwd"],
+            "sessions": [{"session_id": "s1", "title": "lesson"}],
+        }
+
+    monkeypatch.setattr(web, "query_agent", fake_sessions)
+    data = client.get("/api/sessions", params={"cwd": str(tmp_path)}).json()
+    assert data["cwd"] == str(tmp_path.resolve())
+    assert data["sessions"] == [{"session_id": "s1", "title": "lesson"}]
+
+
+def test_api_sessions_rejects_invalid_cwd(tmp_path):
+    client = TestClient(web.app)
+    assert client.get("/api/sessions").status_code == 400
+    missing = tmp_path / "missing"
+    response = client.get("/api/sessions", params={"cwd": str(missing)})
+    assert response.status_code == 400
+
+
+def test_web_ws_passes_workspace_and_session(monkeypatch, tmp_path):
+    agent = FakeAgent()
+    port = agent.start()
+    monkeypatch.setattr(web, "PORT", port)
+    try:
+        url = (
+            f"/ws/chat?cwd={quote(str(tmp_path))}"
+            "&session=web-existing&attach=1"
+        )
+        with TestClient(web.app).websocket_connect(url) as ws:
+            assert ws.receive_json()["type"] == "welcome"
+            assert agent.hello is not None
+            assert agent.hello["chat_id"] == "web-existing"
+            assert agent.hello["cwd"] == str(tmp_path.resolve())
+            assert agent.hello["attach"] is True
+            assert agent.hello["call_timeout"] is None
+    finally:
+        agent.stop()
+
+
+def test_web_ws_falls_back_to_create_when_session_missing(monkeypatch, tmp_path):
+    agent = FakeAgent(attach_error=True)
+    port = agent.start()
+    monkeypatch.setattr(web, "PORT", port)
+    try:
+        url = (
+            f"/ws/chat?cwd={quote(str(tmp_path))}"
+            "&session=web-missing&attach=1"
+        )
+        with TestClient(web.app).websocket_connect(url) as ws:
+            assert ws.receive_json()["type"] == "welcome"
+            assert [item["attach"] for item in agent.hello_frames] == [True, False]
+            assert all(
+                item["chat_id"] == "web-missing" for item in agent.hello_frames
+            )
+    finally:
+        agent.stop()
 
 
 def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):

@@ -81,6 +81,59 @@ def workspace_dir(cwd: str | Path | None, root: str | Path | None = None) -> Pat
     return directory
 
 
+def session_metas(directory: Path) -> list[dict[str, Any]]:
+    """读取一个 workspace 目录下所有会话的 meta（跳过损坏/非会话目录）。"""
+    result: list[dict[str, Any]] = []
+    if not directory.is_dir():
+        return result
+    for entry in directory.iterdir():
+        if not entry.is_dir():
+            continue
+        meta = read_json(entry / META_FILE)
+        if meta is None:
+            continue
+        meta.setdefault("session_id", entry.name)
+        result.append(meta)
+    return result
+
+
+def list_workspaces(root: str | Path | None = None) -> list[dict[str, Any]]:
+    """列出已登记的工作目录，按最近会话/登记时间倒序。"""
+    base = sessions_root(root)
+    result: list[dict[str, Any]] = []
+    for entry in base.iterdir():
+        if not entry.is_dir():
+            continue
+        info = read_json(entry / WORKSPACE_FILE)
+        if info is None:
+            continue
+        metas = session_metas(entry)
+        latest = max(
+            (meta.get("updated_at") or 0 for meta in metas),
+            default=0,
+        )
+        info["id"] = info.get("id") or entry.name
+        info["session_count"] = len(metas)
+        info["updated_at"] = max(info.get("updated_at") or 0, latest)
+        result.append(info)
+    result.sort(key=lambda item: item.get("updated_at") or 0, reverse=True)
+    return result
+
+
+def list_sessions(cwd: str | Path, root: str | Path | None = None) -> list[dict[str, Any]]:
+    """列出某个工作目录下的会话，按最近更新倒序。"""
+    target = canonical_cwd(cwd)
+    if not target.is_dir():
+        return []
+    directory = sessions_root(root) / workspace_id(target)
+    result = session_metas(directory)
+    for meta in result:
+        meta.setdefault("cwd", str(target))
+        meta.setdefault("title", meta.get("session_id"))
+    result.sort(key=lambda item: item.get("updated_at") or 0, reverse=True)
+    return result
+
+
 def session_dir_name(session_id: str) -> str:
     """把任意会话 id 映射成安全、稳定的目录名。"""
     if SAFE_SESSION_ID.fullmatch(session_id):
@@ -231,6 +284,11 @@ class FileMessages:
         write_json_atomic(self._meta_path, self._meta)
 
     def _add_sync(self, items: Sequence[Message]) -> None:
+        if not self._meta.get("title"):
+            for item in items:
+                if item.role == "user" and (item.content or "").strip():
+                    self._meta["title"] = (item.content or "").strip().splitlines()[0][:80]
+                    break
         append_messages(self._messages_path, items)
         self._touch_meta_sync()
 

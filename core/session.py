@@ -15,6 +15,8 @@ detach 切换）、jobs（后台作业表）、extension_runner（工具/技能�
 messages（状态跨连接存活，供重连恢复）；真正销毁走 close()。
 """
 
+from __future__ import annotations
+
 import asyncio
 import time
 
@@ -28,7 +30,12 @@ from ..infra import (
     MessageEndEvent,
     OpenAIProvider,
 )
-from ..messages import build_ephemeral_history, build_history
+from ..messages import (
+    build_ephemeral_history,
+    build_history,
+    list_sessions,
+    list_workspaces,
+)
 from ..spec import (
     LLM,
     Channel,
@@ -385,6 +392,18 @@ class SessionManager:
             }
             for sid, s in self._sessions.items()
         ]
+
+    def list_workspaces(self) -> list[dict]:
+        """已登记的工作目录（file 后端）；其他后端暂不提供历史目录。"""
+        if self._storage != "file":
+            return []
+        return list_workspaces(self._path)
+
+    def list_sessions(self, cwd: str) -> list[dict]:
+        """某个工作目录下的历史会话（file 后端），按最近更新倒序。"""
+        if self._storage != "file" or not cwd:
+            return []
+        return list_sessions(cwd, self._path)
 
     async def close(self) -> None:
         """销毁全部会话（服务端停机）。"""

@@ -89,6 +89,55 @@
       background: #121821; color: var(--muted); border: 1px solid var(--border);
     }
     .hint:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+    .chat-empty[hidden] { display: none; }
+
+    /* ── 工作区 / 会话选择 ───────────────────────── */
+    #workspace-button { align-self: center; padding: 4px 10px; font-size: 12px; }
+    .modal {
+      position: fixed; inset: 0; z-index: 60; padding: 16px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(4, 8, 14, .66);
+    }
+    .modal[hidden] { display: none; }
+    .modal-card {
+      width: min(680px, 100%); max-height: min(82vh, 720px); overflow: auto;
+      padding: 16px; background: var(--panel);
+      border: 1px solid var(--border-strong); border-radius: 14px;
+    }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .modal-kicker { font-size: 11px; color: var(--muted); letter-spacing: .4px; }
+    .modal-path {
+      margin-top: 3px; font-family: var(--mono); font-size: 12px;
+      color: #9cc7ff; word-break: break-all;
+    }
+    .workspace-form { display: flex; gap: 8px; margin: 12px 0; }
+    .workspace-form input {
+      flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); background: #0b0f14;
+      color: var(--text); font-family: var(--mono); font-size: 12px;
+    }
+    .workspace-recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .workspace-recent button { padding: 5px 9px; font-size: 12px; }
+    .workspace-recent button.active { border-color: var(--accent); color: #cfe3ff; }
+    .session-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 6px 0 8px;
+    }
+    .session-head strong { font-size: 13px; }
+    .session-list { display: flex; flex-direction: column; gap: 6px; }
+    .session-item {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      padding: 10px 12px; text-align: left; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 9px; background: #121821;
+    }
+    .session-item:hover { border-color: var(--border-strong); background: var(--panel2); }
+    .session-item.active { border-color: var(--accent); }
+    .session-item .session-title {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 13px; color: var(--text);
+    }
+    .session-item .session-time { color: var(--faint); font-size: 11px; white-space: nowrap; }
+    .session-empty { padding: 8px 2px; color: var(--muted); font-size: 12px; }
 
     /* ── Markdown（仅助手消息）────────────────────── */
     .bubble.md { white-space: normal; }
@@ -411,6 +460,7 @@
       <div class="brand">
         <h1>Walle</h1><small>web channel</small>
         <button id="canvas-latest" class="ghost">画布</button>
+        <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
@@ -464,6 +514,28 @@
       referrerpolicy="no-referrer"></iframe>
   </aside>
   </div>
+  <div id="workspace-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="工作区与会话">
+      <div class="modal-head">
+        <div>
+          <div class="modal-kicker">工作目录</div>
+          <div id="workspace-path" class="modal-path">—</div>
+        </div>
+        <button id="workspace-close" class="ghost">关闭</button>
+      </div>
+      <form id="workspace-form" class="workspace-form">
+        <input id="workspace-input" type="text" placeholder="/path/to/workspace"
+          autocomplete="off" spellcheck="false">
+        <button class="primary" type="submit">打开</button>
+      </form>
+      <div id="workspace-recent" class="workspace-recent"></div>
+      <div class="session-head">
+        <strong>会话</strong>
+        <button id="session-new" class="primary" type="button">新建会话</button>
+      </div>
+      <div id="session-list" class="session-list"></div>
+    </div>
+  </div>
   <script src="/static/marked.min.js"></script>
   <script src="/static/katex/katex.min.js"></script>
   <script src="/static/katex/marked-katex.min.js"></script>
@@ -501,6 +573,16 @@
     const canvasFull = document.getElementById("canvas-full");
     const canvasClose = document.getElementById("canvas-close");
     const canvasLatest = document.getElementById("canvas-latest");
+    const workspaceButton = document.getElementById("workspace-button");
+    const workspaceModal = document.getElementById("workspace-modal");
+    const workspaceClose = document.getElementById("workspace-close");
+    const workspacePath = document.getElementById("workspace-path");
+    const workspaceForm = document.getElementById("workspace-form");
+    const workspaceInput = document.getElementById("workspace-input");
+    const workspaceRecent = document.getElementById("workspace-recent");
+    const sessionNew = document.getElementById("session-new");
+    const sessionList = document.getElementById("session-list");
+    const workspaceState = { cwd: "", active: "", defaultCwd: "" };
     // canvas_id → { id, chatId, title, version, card, name }
     const canvases = new Map();
     let shownCanvas = null;
@@ -525,7 +607,7 @@
     }
 
     function add(role, text) {
-      if (chatEmpty && chatEmpty.isConnected) chatEmpty.remove();
+      if (chatEmpty) chatEmpty.hidden = true;
       const row = el("div", "msg " + role);
       const who = el("div", "who", role === "user" ? "你" : "AI");
       const bubble = el("div", "bubble" + (role === "assistant" ? " md" : ""), text || "");
@@ -538,6 +620,191 @@
     function note(text, error = false) {
       log.append(el("div", "note" + (error ? " error" : ""), text));
       scroll();
+    }
+
+    function baseName(path) {
+      const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : "";
+    }
+
+    function timeText(value) {
+      if (!value) return "";
+      const date = new Date(Number(value) * 1000);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+    }
+
+    function setWorkspaceLabel(path) {
+      workspaceButton.textContent = path ? `工作区 · ${baseName(path)}` : "工作区";
+      workspaceButton.title = path || "选择工作目录与会话";
+    }
+
+    function resetChat() {
+      approvals.clear();
+      tools.clear();
+      canvases.clear();
+      prepareRow = null;
+      shownCanvas = null;
+      latestCanvas = null;
+      current = null;
+      busy = false;
+      lastRender = 0;
+      if (!canvasPanel.hidden) closeCanvas();
+      log.replaceChildren(chatEmpty);
+      chatEmpty.hidden = false;
+      refreshPending();
+      updateComposer();
+    }
+
+    function renderHistory(items) {
+      for (const item of items || []) {
+        if (item.role !== "user" && item.role !== "assistant") continue;
+        const view = add(item.role, item.content || "");
+        if (item.role === "assistant") {
+          const html = renderMarkdown(item.content || "");
+          if (html !== null) view.bubble.innerHTML = html;
+        }
+      }
+      scroll();
+    }
+
+    async function api(path) {
+      const response = await fetch(path, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function newSessionId() {
+      const raw = window.crypto && crypto.randomUUID
+        ? crypto.randomUUID().replaceAll("-", "")
+        : Math.random().toString(16).slice(2);
+      return `web-${raw.slice(0, 12)}`;
+    }
+
+    function closeWorkspaceModal() {
+      workspaceModal.hidden = true;
+    }
+
+    function renderWorkspaceRecent() {
+      workspaceRecent.replaceChildren();
+      const known = new Set();
+      const addButton = (path, label, active) => {
+        const button = el("button", "ghost", label);
+        button.title = path;
+        if (active) button.classList.add("active");
+        button.onclick = () => selectWorkspace(path);
+        workspaceRecent.append(button);
+      };
+      for (const item of workspaceState.workspaces || []) {
+        if (!item.path || known.has(item.path)) continue;
+        known.add(item.path);
+        addButton(
+          item.path,
+          item.name || baseName(item.path),
+          item.path === workspaceState.cwd
+        );
+      }
+      if (workspaceState.defaultCwd && !known.has(workspaceState.defaultCwd)) {
+        addButton(
+          workspaceState.defaultCwd,
+          "当前目录",
+          workspaceState.defaultCwd === workspaceState.cwd
+        );
+      }
+      if (!workspaceRecent.children.length) {
+        workspaceRecent.append(el("span", "session-empty", "暂无最近目录"));
+      }
+    }
+
+    function renderSessions() {
+      sessionList.replaceChildren();
+      const items = workspaceState.sessions || [];
+      if (!items.length) {
+        sessionList.append(el("div", "session-empty", "这个目录还没有会话"));
+        return;
+      }
+      for (const item of items) {
+        const button = el("button", "session-item");
+        button.type = "button";
+        if (item.session_id === workspaceState.active) {
+          button.classList.add("active");
+        }
+        const title = el(
+          "span",
+          "session-title",
+          item.title || item.session_id || "未命名会话"
+        );
+        const time = el("span", "session-time", timeText(item.updated_at));
+        button.append(title, time);
+        button.onclick = () => openSession(item.session_id);
+        sessionList.append(button);
+      }
+    }
+
+    async function loadSessions(path) {
+      sessionList.replaceChildren(el("div", "session-empty", "加载中…"));
+      try {
+        const data = await api(`/api/sessions?cwd=${encodeURIComponent(path)}`);
+        workspaceState.cwd = data.cwd;
+        workspaceState.sessions = data.sessions || [];
+        workspacePath.textContent = data.cwd;
+        workspaceInput.value = data.cwd;
+        setWorkspaceLabel(data.cwd);
+        localStorage.setItem("walle.cwd", data.cwd);
+        renderSessions();
+        renderWorkspaceRecent();
+        return data;
+      } catch (err) {
+        sessionList.replaceChildren(
+          el("div", "session-empty", err.message || "加载失败")
+        );
+        return null;
+      }
+    }
+
+    async function selectWorkspace(path) {
+      if (!path) return;
+      const data = await loadSessions(path);
+      if (!data) return;
+      workspaceState.active = "";
+      renderSessions();
+    }
+
+    async function openWorkspaceModal() {
+      workspaceModal.hidden = false;
+      workspacePath.textContent = workspaceState.cwd || "—";
+      workspaceInput.value = workspaceState.cwd || "";
+      try {
+        const data = await api("/api/workspaces");
+        workspaceState.defaultCwd = data.current || "";
+        workspaceState.workspaces = data.workspaces || [];
+        if (!workspaceState.cwd) workspaceState.cwd = workspaceState.defaultCwd;
+        setWorkspaceLabel(workspaceState.cwd);
+        renderWorkspaceRecent();
+        if (workspaceState.cwd) await loadSessions(workspaceState.cwd);
+      } catch (err) {
+        renderWorkspaceRecent();
+        sessionList.replaceChildren(
+          el("div", "session-empty", err.message || "无法读取工作区")
+        );
+      }
+    }
+
+    function openSession(sessionId) {
+      if (!workspaceState.cwd || !sessionId) return;
+      workspaceState.active = sessionId;
+      closeWorkspaceModal();
+      connect(workspaceState.cwd, sessionId, true);
+    }
+
+    function startNewSession() {
+      const cwd = workspaceState.cwd || workspaceState.defaultCwd;
+      if (!cwd) return;
+      workspaceState.active = "";
+      closeWorkspaceModal();
+      connect(cwd, newSessionId(), false);
     }
 
     function pendingApprovals() {
@@ -1050,6 +1317,7 @@
       }
       if (msg.type === "welcome") {
         setStatus("已连接", "on");
+        renderHistory(msg.history);
         updateComposer();
         return;
       }
@@ -1093,20 +1361,46 @@
       }
     }
 
-    function connect() {
+    function connect(cwd, sessionId, attach) {
+      if (ws) {
+        const old = ws;
+        ws = null;
+        old.onclose = null;
+        old.onerror = null;
+        try { old.close(); } catch (err) { console.error(err); }
+      }
+      resetChat();
+      workspaceState.cwd = cwd || "";
+      workspaceState.active = sessionId || "";
+      if (cwd) {
+        setWorkspaceLabel(cwd);
+        localStorage.setItem("walle.cwd", cwd);
+      }
+      if (sessionId) localStorage.setItem("walle.session", sessionId);
+      const params = new URLSearchParams();
+      if (cwd) params.set("cwd", cwd);
+      if (sessionId) params.set("session", sessionId);
+      if (attach) params.set("attach", "1");
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/ws/chat`);
-      ws.onopen = () => { setStatus("已连接", "on"); updateComposer(); };
-      ws.onmessage = (event) => {
+      const query = params.toString();
+      const socket = new WebSocket(
+        `${proto}://${location.host}/ws/chat${query ? `?${query}` : ""}`
+      );
+      ws = socket;
+      socket.onopen = () => { setStatus("已连接", "on"); updateComposer(); };
+      socket.onmessage = (event) => {
         try { handle(JSON.parse(event.data)); } catch (err) { console.error(err); }
       };
-      ws.onclose = () => {
+      socket.onclose = () => {
+        if (ws !== socket) return;
         setStatus("已断开", "off");
         busy = false;
         closePending("连接已断开");
         updateComposer();
       };
-      ws.onerror = () => setStatus("连接错误", "off");
+      socket.onerror = () => {
+        if (ws === socket) setStatus("连接错误", "off");
+      };
     }
 
     function submit() {
@@ -1130,6 +1424,17 @@
 
     send.addEventListener("click", submit);
     stop.addEventListener("click", cancel);
+    workspaceButton.addEventListener("click", openWorkspaceModal);
+    workspaceClose.addEventListener("click", closeWorkspaceModal);
+    workspaceModal.addEventListener("click", (event) => {
+      if (event.target === workspaceModal) closeWorkspaceModal();
+    });
+    workspaceForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const path = workspaceInput.value.trim();
+      if (path) await selectWorkspace(path);
+    });
+    sessionNew.addEventListener("click", startNewSession);
     approvalJump.addEventListener("click", () => {
       const first = pendingApprovals()[0];
       if (first) first.card.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -1147,7 +1452,12 @@
       setCanvasFull(!canvasPanel.classList.contains("full"));
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || canvasPanel.hidden) return;
+      if (event.key !== "Escape") return;
+      if (!workspaceModal.hidden) {
+        closeWorkspaceModal();
+        return;
+      }
+      if (canvasPanel.hidden) return;
       if (canvasPanel.classList.contains("full")) setCanvasFull(false);
       else closeCanvas();
     });
@@ -1208,7 +1518,22 @@
       localStorage.removeItem("walle.canvasWidth");
     });
 
-    connect();
+    async function init() {
+      let cwd = localStorage.getItem("walle.cwd") || "";
+      const savedSession = localStorage.getItem("walle.session") || "";
+      try {
+        const data = await api("/api/workspaces");
+        workspaceState.defaultCwd = data.current || "";
+        workspaceState.workspaces = data.workspaces || [];
+        cwd = cwd || workspaceState.defaultCwd;
+      } catch (err) {
+        console.error(err);
+      }
+      if (savedSession) connect(cwd, savedSession, true);
+      else connect(cwd, newSessionId(), false);
+    }
+
+    init();
     updateComposer();
     refreshPending();
   </script>

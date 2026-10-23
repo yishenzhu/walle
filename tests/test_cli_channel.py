@@ -204,13 +204,13 @@ async def test_channel_approver_passthrough_model_reply():
 class ServerHarness:
     """测试用 CLIServer 服务端：起真实端口，自带 manager（注入构造参数）。"""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, storage: str = "memory", path: str | None = None):
         self.manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),
-            storage="memory",
-            path=db_path,
+            storage=storage,
+            path=path or db_path,
         )
         self.server = CLIServer(sessions=self.manager)
 
@@ -361,6 +361,73 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         assert sessions["b"]["attached"] is True
         w3.close()
         await w3.wait_closed()
+    finally:
+        await server.stop()
+        await manager.close()
+
+
+async def test_cli_lists_workspaces_and_history_sessions(tmp_path):
+    """浏览帧：工作目录和目录下的历史会话来自文件存储。"""
+    sessions = tmp_path / "sessions"
+    project = tmp_path / "project"
+    project.mkdir()
+    server = ServerHarness(
+        str(tmp_path / "s.db"), storage="file", path=str(sessions)
+    )
+    manager = server.manager
+    port = await server.start()
+    try:
+        r1, w1 = await _connect(port, {"type": "list_workspaces"})
+        empty = await _read_line(r1)
+        assert empty["type"] == "workspaces"
+        assert empty["current"]
+        assert empty["workspaces"] == []
+        w1.close()
+        await w1.wait_closed()
+
+        r2, w2 = await _connect(
+            port,
+            {"type": "hello", "chat_id": "file-session", "cwd": str(project)},
+        )
+        welcome = await _read_line(r2)
+        assert welcome["type"] == "welcome"
+        assert welcome["history"] == []
+        session = manager.get("file-session")
+        assert session is not None
+        await session._history.add([UserMessage(content="hello workspace")])
+
+        r3, w3 = await _connect(
+            port, {"type": "list_sessions", "cwd": str(project)}
+        )
+        listed = await _read_line(r3)
+        assert listed["type"] == "sessions"
+        assert [item["session_id"] for item in listed["sessions"]] == [
+            "file-session"
+        ]
+        assert listed["sessions"][0]["title"] == "hello workspace"
+        w3.close()
+        await w3.wait_closed()
+
+        r4, w4 = await _connect(port, {"type": "list_workspaces"})
+        workspaces = await _read_line(r4)
+        assert workspaces["type"] == "workspaces"
+        assert [item["path"] for item in workspaces["workspaces"]] == [
+            str(project.resolve())
+        ]
+        w4.close()
+        await w4.wait_closed()
+
+        r5, w5 = await _connect(
+            port,
+            {"type": "list_sessions", "cwd": str(project / "missing")},
+        )
+        invalid = await _read_line(r5)
+        assert invalid["type"] == "error"
+        assert invalid["code"] == "invalid_cwd"
+        w5.close()
+        await w5.wait_closed()
+        w2.close()
+        await w2.wait_closed()
     finally:
         await server.stop()
         await manager.close()

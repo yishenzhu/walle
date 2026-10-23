@@ -8,8 +8,10 @@
 
 import asyncio
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from ...spec import (
@@ -245,10 +247,38 @@ class CLIServer:
             if msg is None:
                 return
 
-            # list 帧：返回会话元数据（id/状态/存活，不含消息内容）后关闭
+            # 浏览帧：返回元数据后关闭，不进入会话循环
             if msg.get("type") == "list":
                 await link.send(
                     {"type": "list", "sessions": self._sessions.list()}
+                )
+                return
+            if msg.get("type") == "list_workspaces":
+                await link.send(
+                    {
+                        "type": "workspaces",
+                        "current": os.getcwd(),
+                        "workspaces": self._sessions.list_workspaces(),
+                    }
+                )
+                return
+            if msg.get("type") == "list_sessions":
+                cwd = msg.get("cwd") or ""
+                if not cwd or not Path(cwd).expanduser().is_dir():
+                    await link.send(
+                        {
+                            "type": "error",
+                            "code": "invalid_cwd",
+                            "message": f"工作目录不存在: {cwd}",
+                        }
+                    )
+                    return
+                await link.send(
+                    {
+                        "type": "sessions",
+                        "cwd": cwd,
+                        "sessions": self._sessions.list_sessions(cwd),
+                    }
                 )
                 return
 
@@ -327,7 +357,15 @@ class CLIServer:
             else:
                 # 新会话：sessions.create（按需激活指定扩展）
                 session = self._sessions.create(conn, extension_names)
-                await conn.send({"type": "welcome", "chat_id": chat_id})
+                # 新建也可能命中磁盘上同 id 的会话（如 Web 重启后恢复），
+                # 带上快照让客户端直接接续。
+                await conn.send(
+                    {
+                        "type": "welcome",
+                        "chat_id": chat_id,
+                        "history": await self._history_snapshot(session),
+                    }
+                )
                 logger.info(
                     f"cli client connected: {chat_id} agent={conn.agent or 'default'}"
                 )
