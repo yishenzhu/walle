@@ -318,6 +318,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert 'id="qa-log"' in page.text
     assert 'id="export-link"' in page.text
     assert 'id="plan-meta"' in page.text
+    assert 'id="continue-learning"' in page.text
+    assert 'id="complete-lesson"' in page.text
     assert "回到对话继续生成" in page.text
     assert "scheduleChatReconnect" in page.text
     assert "重连中" in page.text
@@ -332,8 +334,30 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert manifest["title"] == "测试课程"
     assert manifest["lessons"][0]["id"] == lesson["id"]
     assert manifest["lessons"][0]["written"] is True
+    assert manifest["lessons"][0]["completed"] is False
     assert manifest["written_count"] == 1
+    assert manifest["progress"]["completed_count"] == 0
     assert manifest["qa_session_id"].startswith("qa-")
+
+    updated = client.post(
+        f"/api/courses/{course['id']}/progress",
+        json={"lesson_id": lesson["id"], "completed": True},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["progress"]["completed"] == [lesson["id"]]
+
+    manifest = client.get(f"/api/courses/{course['id']}").json()
+    assert manifest["lessons"][0]["completed"] is True
+    listed = client.get("/api/courses").json()["courses"]
+    assert listed[0]["completed_count"] == 1
+    assert listed[0]["last_lesson"] == lesson["id"]
+    assert listed[0]["resume_lesson"] == lesson["id"]
+
+    invalid = client.post(
+        f"/api/courses/{course['id']}/progress",
+        json={"lesson_id": "missing", "completed": True},
+    )
+    assert invalid.status_code == 404
 
     content = client.get(
         f"/api/courses/{course['id']}/lessons/{lesson['id']}"

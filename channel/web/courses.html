@@ -89,12 +89,18 @@
       }
       for (const course of courses) {
         const card = el("a", "course-card");
-        card.href = `/courses/${encodeURIComponent(course.id)}`;
+        const target = course.resume_lesson || course.last_lesson;
+        const last = target ? `?lesson=${encodeURIComponent(target)}` : "";
+        card.href = `/courses/${encodeURIComponent(course.id)}${last}`;
         const title = el("h2", "", course.title || course.id);
         const goal = el("p", "", course.goal || "暂无课程简介");
         const meta = el("div", "course-meta");
         meta.append(
-          el("span", "", `${course.lesson_count || 0} 课`),
+          el(
+            "span",
+            "",
+            `${course.completed_count || 0}/${course.lesson_count || 0} 已完成`
+          ),
           el("span", "", timeText(course.updated_at))
         );
         card.append(title, goal, meta);

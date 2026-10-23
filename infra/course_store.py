@@ -24,6 +24,7 @@ DEFAULT_COURSES_PATH = "data/courses"
 COURSE_FILE = "course.json"
 LESSONS_DIR = "lessons"
 CANVAS_DIR = "canvas"
+PROGRESS_FILE = "progress.json"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
 
@@ -137,6 +138,85 @@ def save_course(course: dict[str, Any], root: str | Path | None = None) -> None:
     write_json_atomic(directory / COURSE_FILE, course)
 
 
+def progress_path(course_id: str, root: str | Path | None = None) -> Path:
+    return course_dir(course_id, root) / PROGRESS_FILE
+
+
+def load_progress(
+    course_id: str, root: str | Path | None = None
+) -> dict[str, Any]:
+    """读取学习进度；缺失/损坏时返回空进度。"""
+    try:
+        data = read_json(progress_path(course_id, root)) or {}
+    except ValueError:
+        data = {}
+    completed = [item for item in data.get("completed") or [] if isinstance(item, str)]
+    last = data.get("last_lesson")
+    return {
+        "completed": completed,
+        "last_lesson": last if isinstance(last, str) else None,
+        "updated_at": data.get("updated_at") or 0,
+    }
+
+
+def save_progress(
+    course_id: str,
+    progress: dict[str, Any],
+    root: str | Path | None = None,
+) -> None:
+    write_json_atomic(progress_path(course_id, root), progress)
+
+
+def course_progress(
+    course_id: str, root: str | Path | None = None
+) -> dict[str, Any]:
+    """课程进度摘要：只统计当前仍存在的课节，保持课程顺序。"""
+    course = load_course(course_id, root)
+    if course is None:
+        raise ValueError(f"course not found: {course_id}")
+    lessons = course.get("lessons") or []
+    valid = [item.get("id") for item in lessons if item.get("id")]
+    raw = load_progress(course_id, root)
+    done = set(raw["completed"])
+    completed = [lesson_id for lesson_id in valid if lesson_id in done]
+    last = raw["last_lesson"] if raw["last_lesson"] in valid else None
+    return {
+        "completed": completed,
+        "completed_count": len(completed),
+        "total": len(valid),
+        "last_lesson": last,
+        "updated_at": raw["updated_at"],
+    }
+
+
+def update_progress(
+    course_id: str,
+    lesson_id: str,
+    completed: bool | None = None,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """更新完成状态与上次课节；completed=None 只更新 last_lesson。"""
+    course = load_course(course_id, root)
+    if course is None:
+        raise ValueError(f"course not found: {course_id}")
+    lessons = course.get("lessons") or []
+    valid = [item.get("id") for item in lessons if item.get("id")]
+    if lesson_id not in valid:
+        raise ValueError(f"lesson not found: {lesson_id}")
+
+    progress = load_progress(course_id, root)
+    done = set(progress["completed"])
+    if completed is True:
+        done.add(lesson_id)
+    elif completed is False:
+        done.discard(lesson_id)
+    progress["completed"] = [item for item in valid if item in done]
+    progress["last_lesson"] = lesson_id
+    progress["updated_at"] = time.time()
+    save_progress(course_id, progress, root)
+    return progress
+
+
 def list_courses(root: str | Path | None = None) -> list[dict[str, Any]]:
     base = courses_root(root)
     result: list[dict[str, Any]] = []
@@ -147,12 +227,28 @@ def list_courses(root: str | Path | None = None) -> list[dict[str, Any]]:
         if course is None:
             continue
         lessons = course.get("lessons") or []
+        identifier = course.get("id") or entry.name
+        progress = load_progress(identifier, root)
+        valid = {item.get("id") for item in lessons if item.get("id")}
+        completed = {item for item in progress["completed"] if item in valid}
+        last_lesson = (
+            progress["last_lesson"] if progress["last_lesson"] in valid else None
+        )
+        resume = last_lesson if last_lesson and last_lesson not in completed else None
+        if resume is None:
+            resume = next(
+                (item.get("id") for item in lessons if item.get("id") not in completed),
+                last_lesson,
+            )
         result.append(
             {
-                "id": course.get("id") or entry.name,
+                "id": identifier,
                 "title": course.get("title") or entry.name,
                 "goal": course.get("goal") or "",
                 "lesson_count": len(lessons),
+                "completed_count": len(completed),
+                "last_lesson": last_lesson,
+                "resume_lesson": resume,
                 "created_at": course.get("created_at") or 0,
                 "updated_at": course.get("updated_at") or 0,
             }

@@ -8,12 +8,15 @@ import pytest
 from ..infra.course_store import (
     CANVAS_MARKER,
     COURSE_FILE,
+    course_progress,
     create_course,
     lesson_id_for,
     list_courses,
     load_course,
+    load_progress,
     qa_session_id,
     read_lesson,
+    update_progress,
     write_lesson,
 )
 
@@ -107,6 +110,36 @@ def test_canvas_marker_is_recorded(root):
     )
     assert entry["canvas_ids"] == ["a", "b", "a"]
     assert CANVAS_MARKER.findall("{{canvas:x}}") == ["x"]
+
+
+def test_progress_roundtrip(root):
+    course = create_course("进度课程", lessons=["第一课", "第二课"], root=root)
+    first = lesson_id_for("第一课")
+    second = lesson_id_for("第二课")
+
+    update_progress(course["id"], first, True, root=root)
+    progress = load_progress(course["id"], root)
+    assert progress["completed"] == [first]
+    assert progress["last_lesson"] == first
+
+    update_progress(course["id"], second, True, root=root)
+    summary = course_progress(course["id"], root)
+    assert summary["completed"] == [first, second]
+    assert summary["completed_count"] == 2
+    assert summary["last_lesson"] == second
+
+    update_progress(course["id"], first, False, root=root)
+    summary = course_progress(course["id"], root)
+    assert summary["completed"] == [second]
+    assert summary["completed_count"] == 1
+
+    listed = list_courses(root)[0]
+    assert listed["completed_count"] == 1
+    assert listed["last_lesson"] == first
+    assert listed["resume_lesson"] == first
+
+    with pytest.raises(ValueError):
+        update_progress(course["id"], "missing", True, root=root)
 
 
 def test_qa_session_id_is_stable_and_course_specific():

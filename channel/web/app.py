@@ -11,13 +11,16 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from ...infra.course_store import (
     canvas_file,
+    course_progress,
     list_courses,
     load_course,
     qa_session_id,
     read_lesson,
+    update_progress,
 )
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 from .course_export import build_course_zip
@@ -32,6 +35,11 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
 COURSES_ROOT = Path(__file__).resolve().parents[2] / "data" / "courses"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class ProgressUpdate(BaseModel):
+    lesson_id: str
+    completed: bool | None = None
 
 
 @app.get("/")
@@ -112,17 +120,43 @@ async def api_course(course_id: str) -> dict:
     course = load_course(course_id, COURSES_ROOT)
     if course is None:
         raise HTTPException(status_code=404)
+    progress = course_progress(course_id, COURSES_ROOT)
+    completed = set(progress["completed"])
     lessons = []
     for item in course.get("lessons") or []:
         loaded = read_lesson(course_id, item["id"], COURSES_ROOT)
         written = bool(loaded and (loaded.get("markdown") or "").strip())
-        lessons.append({**item, "written": written})
+        lessons.append(
+            {
+                **item,
+                "written": written,
+                "completed": item["id"] in completed,
+            }
+        )
     return {
         **course,
         "lessons": lessons,
         "written_count": sum(1 for item in lessons if item["written"]),
+        "progress": progress,
         "qa_session_id": qa_session_id(course_id),
     }
+
+
+@app.post("/api/courses/{course_id}/progress")
+async def api_update_progress(course_id: str, payload: ProgressUpdate) -> dict:
+    if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(payload.lesson_id):
+        raise HTTPException(status_code=404)
+    try:
+        update_progress(
+            course_id,
+            payload.lesson_id,
+            completed=payload.completed,
+            root=COURSES_ROOT,
+        )
+        progress = course_progress(course_id, COURSES_ROOT)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"progress": progress}
 
 
 @app.get("/api/courses/{course_id}/lessons/{lesson_id}")

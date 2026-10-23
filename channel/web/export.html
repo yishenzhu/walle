@@ -168,13 +168,9 @@
       });
     }
 
-    function stripLeadingTitle(markdown, title) {
-      const text = markdown || "";
-      const match = text.match(/^\s*#\s+([^\n]+)\n+/);
-      if (match && match[1].trim() === (title || "").trim()) {
-        return text.slice(match[0].length);
-      }
-      return text;
+    function stripLeadingTitle(markdown) {
+      // 阅读页顶部已经显示课节标题，去掉正文开头的 H1 避免重复。
+      return (markdown || "").replace(/^\s*#\s+[^\n]+\n+/, "");
     }
 
     function embedCanvases() {
@@ -224,9 +220,7 @@
         el("h2", "", lesson.title || lesson.id),
         el("span", "", `第 ${lesson.order || "?"} 课`)
       );
-      content.innerHTML = renderMarkdown(
-        stripLeadingTitle(lesson.markdown, lesson.title)
-      );
+      content.innerHTML = renderMarkdown(stripLeadingTitle(lesson.markdown));
       for (const link of content.querySelectorAll("a")) {
         link.target = "_blank";
         link.rel = "noopener noreferrer";

@@ -59,7 +59,17 @@
       background: var(--accent-soft); border-color: #24507f; color: #dbeaff;
     }
     .lesson-link.missing .lesson-index { color: var(--warn); }
+    .lesson-link.completed .lesson-index { color: var(--ok); }
     .lesson-missing { flex: 0 0 auto; color: var(--warn); font-size: 10px; }
+    .lesson-check { flex: 0 0 auto; color: var(--ok); font-size: 11px; }
+    .continue-learning {
+      width: 100%; margin: 0 0 14px; padding: 8px 10px; text-align: left;
+      border: 1px solid #24507f; border-radius: 8px; background: var(--accent-soft);
+      color: #dbeaff; font-size: 12px; cursor: pointer;
+    }
+    .continue-learning:disabled { color: var(--faint); border-color: var(--border); background: var(--panel2); cursor: default; }
+    #complete-lesson { color: var(--ok); }
+    #complete-lesson:disabled { color: var(--faint); }
     .empty a.continue-link {
       display: block; width: max-content; margin: 14px auto 0; padding: 7px 12px;
       border-radius: 8px; background: var(--accent); color: #fff;
@@ -205,6 +215,7 @@
   <div class="layout">
     <aside class="sidebar">
       <div id="course-goal" class="course-goal"></div>
+      <button id="continue-learning" class="continue-learning" type="button">开始学习</button>
       <div id="plan-meta" class="nav-head">学习计划</div>
       <nav id="lesson-nav" class="lesson-nav"></nav>
     </aside>
@@ -213,6 +224,7 @@
       <article id="content" class="md"></article>
       <div class="lesson-actions">
         <button id="prev" type="button">上一课</button>
+        <button id="complete-lesson" type="button">标记完成</button>
         <button id="next" type="button">下一课</button>
       </div>
     </main>
@@ -246,11 +258,13 @@
     const courseTitle = document.getElementById("course-title");
     const courseGoal = document.getElementById("course-goal");
     const planMeta = document.getElementById("plan-meta");
+    const continueLearning = document.getElementById("continue-learning");
     const lessonNav = document.getElementById("lesson-nav");
     const readerHead = document.getElementById("reader-head");
     const content = document.getElementById("content");
     const prev = document.getElementById("prev");
     const next = document.getElementById("next");
+    const completeLessonButton = document.getElementById("complete-lesson");
     const qaLog = document.getElementById("qa-log");
     const qaEmpty = document.getElementById("qa-empty");
     const qaInput = document.getElementById("qa-input");
@@ -261,6 +275,7 @@
     const exportLink = document.getElementById("export-link");
     const courseId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     const state = { course: null, lessonId: null };
+    let progressSeq = 0;
     let chatWs = null;
     let chatBusy = false;
     let chatCurrent = null;
@@ -297,13 +312,9 @@
       });
     }
 
-    function stripLeadingTitle(markdown, title) {
-      const text = markdown || "";
-      const match = text.match(/^\s*#\s+([^\n]+)\n+/);
-      if (match && match[1].trim() === (title || "").trim()) {
-        return text.slice(match[0].length);
-      }
-      return text;
+    function stripLeadingTitle(markdown) {
+      // 阅读页顶部已经显示课节标题，去掉正文开头的 H1 避免重复。
+      return (markdown || "").replace(/^\s*#\s+[^\n]+\n+/, "");
     }
 
     function qaScroll() {
@@ -389,6 +400,97 @@
         (item) => item.id === state.lessonId
       );
       qaLesson.textContent = lesson ? `当前：${lesson.title}` : "当前课节";
+    }
+
+    function currentLesson() {
+      return (
+        (state.course?.lessons || []).find(
+          (item) => item.id === state.lessonId
+        ) || null
+      );
+    }
+
+    function continueTarget() {
+      const lessons = state.course?.lessons || [];
+      if (!lessons.length) return null;
+      const lastId = state.course?.progress?.last_lesson;
+      const last = lessons.find((item) => item.id === lastId);
+      if (last && !last.completed) return last;
+      return lessons.find((item) => !item.completed) || lessons[lessons.length - 1];
+    }
+
+    function updateCompleteButton() {
+      const lesson = currentLesson();
+      if (!lesson) {
+        completeLessonButton.hidden = true;
+        return;
+      }
+      completeLessonButton.hidden = false;
+      if (lesson.written === false) {
+        completeLessonButton.disabled = true;
+        completeLessonButton.textContent = "暂无正文";
+        return;
+      }
+      completeLessonButton.disabled = false;
+      completeLessonButton.textContent = lesson.completed ? "标记未完成" : "标记完成";
+    }
+
+    function updateProgressUI() {
+      const lessons = state.course?.lessons || [];
+      const total = lessons.length;
+      const completed = lessons.filter((item) => item.completed).length;
+      planMeta.textContent = total
+        ? `学习计划 · 已完成 ${completed}/${total} · 已生成 ${state.course.written_count || 0}/${total}`
+        : "学习计划";
+      const target = continueTarget();
+      continueLearning.disabled = !target;
+      continueLearning.textContent = target
+        ? `继续学习：${target.title}`
+        : "开始学习";
+      updateCompleteButton();
+    }
+
+    function applyProgress(progress) {
+      state.course.progress = progress;
+      const done = new Set(progress.completed || []);
+      for (const lesson of state.course.lessons || []) {
+        lesson.completed = done.has(lesson.id);
+      }
+      renderNav();
+      updateActions();
+      updateProgressUI();
+    }
+
+    async function saveProgress(lessonId, completed) {
+      const seq = ++progressSeq;
+      const response = await fetch(
+        `/api/courses/${encodeURIComponent(courseId)}/progress`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lesson_id: lessonId, completed }),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || `HTTP ${response.status}`);
+      }
+      if (seq === progressSeq) applyProgress(data.progress);
+    }
+
+    function markLastLesson(lessonId) {
+      const seq = ++progressSeq;
+      fetch(`/api/courses/${encodeURIComponent(courseId)}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lesson_id: lessonId }),
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (seq !== progressSeq) return;
+          if (data && data.progress) applyProgress(data.progress);
+        })
+        .catch((err) => console.error(err));
     }
 
     function scheduleChatReconnect() {
@@ -534,12 +636,15 @@
         const button = el("button", "lesson-link");
         button.type = "button";
         if (lesson.id === state.lessonId) button.classList.add("active");
+        if (lesson.completed) button.classList.add("completed");
         if (lesson.written === false) button.classList.add("missing");
         button.append(
           el("span", "lesson-index", String(lesson.order || index + 1).padStart(2, "0")),
           el("span", "", lesson.title || lesson.id)
         );
-        if (lesson.written === false) {
+        if (lesson.completed) {
+          button.append(el("span", "lesson-check", "✓"));
+        } else if (lesson.written === false) {
           button.append(el("span", "lesson-missing", "待生成"));
         }
         button.onclick = () => selectLesson(lesson.id);
@@ -605,6 +710,8 @@
       connectChat();
       renderNav();
       updateActions();
+      updateCompleteButton();
+      markLastLesson(lessonId);
       readerHead.replaceChildren();
       content.replaceChildren(el("div", "empty", "加载课节…"));
       try {
@@ -620,9 +727,7 @@
           showMissingLesson(lesson);
           return;
         }
-        content.innerHTML = renderMarkdown(
-          stripLeadingTitle(lesson.markdown, lesson.title)
-        );
+        content.innerHTML = renderMarkdown(stripLeadingTitle(lesson.markdown));
         for (const link of content.querySelectorAll("a")) {
           link.target = "_blank";
           link.rel = "noopener noreferrer";
@@ -671,12 +776,9 @@
         document.title = `${course.title || course.id} · Walle`;
         courseGoal.textContent = course.goal || "";
         exportLink.href = `/courses/${encodeURIComponent(courseId)}/export`;
-        const total = (course.lessons || []).length;
-        planMeta.textContent = total
-          ? `学习计划 · ${course.written_count || 0}/${total} 已生成`
-          : "学习计划";
         updateQaLesson();
         renderNav();
+        updateProgressUI();
         startLesson();
       } catch (err) {
         courseTitle.textContent = "课程不存在";
@@ -693,6 +795,22 @@
       const lessons = state.course.lessons || [];
       const index = lessons.findIndex((item) => item.id === state.lessonId);
       if (index >= 0 && index < lessons.length - 1) selectLesson(lessons[index + 1].id);
+    });
+    continueLearning.addEventListener("click", () => {
+      const target = continueTarget();
+      if (target) selectLesson(target.id);
+    });
+    completeLessonButton.addEventListener("click", async () => {
+      const lesson = currentLesson();
+      if (!lesson || lesson.written === false) return;
+      completeLessonButton.disabled = true;
+      try {
+        await saveProgress(lesson.id, !lesson.completed);
+      } catch (err) {
+        console.error(err);
+        completeLessonButton.textContent = "保存失败";
+        setTimeout(updateCompleteButton, 1200);
+      }
     });
     qaSend.addEventListener("click", sendQa);
     qaStop.addEventListener("click", stopQa);

@@ -144,7 +144,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（384 项，无需 API Key）
+pytest -q                      # 单元测试（385 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -460,6 +460,7 @@ async def weather(city: str) -> str:
 ```
 data/courses/<course_id>/
 ├── course.json            # 标题、目标、课节索引（顺序/canvas_ids）
+├── progress.json          # 学习进度（已完成课节 / 上次课节）
 ├── lessons/<lesson>.md    # 课节正文，可混排 Markdown、LaTeX、{{canvas:id}}
 └── canvas/<canvas>.html   # 课程内交互演示
 ```
@@ -472,7 +473,9 @@ data/courses/<course_id>/
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
 - Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
 - 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留；
-- 阅读页显示“已生成 N/M”并标记 `待生成` 课节；空课节提供“回到对话继续生成”，会 attach 原生成会话，并预填“按章节顺序，当前课正文和画布完成后再进入下一课”的续写提示；
+- 阅读页显示“已完成 N/M · 已生成 N/M”，可标记完成/未完成并记住上次课节；“继续学习”跳到上次未完成课节；
+- 空课节提供“回到对话继续生成”，会 attach 原生成会话，并预填“按章节顺序，当前课正文和画布完成后再进入下一课”的续写提示；
+- `/courses` 列表显示每门课的完成进度，点击直接回到该课的继续学习位置；
 - `/courses/<id>/export` 导出 zip 静态站点：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课程源文件，解压后可直接用浏览器打开；依赖 CDN 的画布仍需联网。
 
 ### 配置多智能体 Handoff
