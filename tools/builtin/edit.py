@@ -5,7 +5,8 @@
 """
 
 import codecs
-from pathlib import Path
+
+from .paths import resolve_tool_path
 
 MAX_BYTES = 256 * 1024  # 同 read：256KB 上限
 
@@ -55,7 +56,7 @@ async def edit(path: str, old_text: str, new_text: str = "") -> str:
     Read the file first via `read`; old_text must match exactly once.
     Whitespace/indentation differences are tolerated as a fallback.
     Args:
-        path: Absolute or project-relative path (same as `read`).
+        path: Absolute or session-relative path (same as `read`).
         old_text: Text to replace.
         new_text: Replacement (empty deletes).
     """
@@ -63,7 +64,7 @@ async def edit(path: str, old_text: str, new_text: str = "") -> str:
         return "Error: path is required"
     if old_text == "":
         return "Error: old_text must not be empty (read the file first for exact content)"
-    p = Path(path).expanduser()
+    p = resolve_tool_path(path)
     if not p.exists() or not p.is_file():
         return f"Error: file not found: {path}"
     if p.stat().st_size > MAX_BYTES:

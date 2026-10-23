@@ -5,7 +5,8 @@
 """
 
 import codecs
-from pathlib import Path
+
+from .paths import resolve_tool_path
 
 MAX_BYTES = 256 * 1024  # 同 read：256KB 上限
 
@@ -15,12 +16,12 @@ async def write(path: str, content: str = "") -> str:
 
     Use `edit` for partial changes; this replaces the whole file.
     Args:
-        path: Absolute or project-relative path (same as `read`).
+        path: Absolute or session-relative path (same as `read`).
         content: Full file content (empty writes an empty file).
     """
     if not path:
         return "Error: path is required"
-    p = Path(path).expanduser()
+    p = resolve_tool_path(path)
     if p.exists() and not p.is_file():
         return f"Error: not a file: {path}"
     if len(content.encode("utf-8")) > MAX_BYTES:

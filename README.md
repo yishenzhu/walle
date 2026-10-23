@@ -143,7 +143,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（355 项，无需 API Key）
+pytest -q                      # 单元测试（360 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -184,7 +184,7 @@ PYTHONPATH=.. python -m walle.channel.cli                    # 新建会话（�
 PYTHONPATH=.. python -m walle.channel.cli --attach <id>      # 恢复已有会话
 PYTHONPATH=.. python -m walle.channel.cli --list             # 浏览会话（仅元数据）
 PYTHONPATH=.. python -m walle.channel.cli --extensions a,b   # 新会话只激活指定扩展
-PYTHONPATH=.. python -m walle.channel.cli --dir /path/proj   # 会话工作目录（bash 与沙箱可写区基准）
+PYTHONPATH=.. python -m walle.channel.cli --dir /path/proj   # 会话工作目录（bash / 沙箱 / 文件工具基准）
 PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.openai.com/v1 --model gpt-4o  # 本会话模型配置
 ```
 
@@ -207,6 +207,8 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 - 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
 会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。Web 端还支持按工作目录浏览历史会话并从文件恢复。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
+
+`read` / `write` / `edit` 的相对路径按会话工作目录解析，绝对路径原样使用；与 bash 和沙箱的可写基准一致。
 
 ### 📊 可观测性面板
 
