@@ -571,6 +571,10 @@
     let ws = null;
     let busy = false;
     let current = null;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let suppressReconnect = false;
+    let connectionTarget = null;
     // tool_call_id → { card, pill, hint, actions, allow, deny, decision }
     const approvals = new Map();
     const tools = new Map();
@@ -1409,13 +1413,19 @@
         return;
       }
       if (msg.type === "welcome") {
+        reconnectAttempts = 0;
+        suppressReconnect = false;
         setStatus("已连接", "on");
         renderHistory(msg.history);
         updateComposer();
         return;
       }
       if (msg.type === "error") {
-        note(msg.message || "连接错误", true);
+        const text = msg.message || "连接错误";
+        if (/不存在|非法|不是目录|需要 session/.test(text) && !/agent 未启动|agent 未响应/.test(text)) {
+          suppressReconnect = true;
+        }
+        note(text, true);
         busy = false;
         closePending("error");
         updateComposer();
@@ -1454,7 +1464,29 @@
       }
     }
 
-    function connect(cwd, sessionId, attach) {
+    function scheduleReconnect() {
+      if (suppressReconnect || reconnectTimer || !connectionTarget) return;
+      const delay = Math.min(1000 * (2 ** reconnectAttempts), 8000);
+      reconnectAttempts += 1;
+      setStatus("重连中…", "off");
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!connectionTarget) return;
+        connect(connectionTarget.cwd, connectionTarget.sessionId, true, true);
+      }, delay);
+    }
+
+    function connect(cwd, sessionId, attach, isReconnect = false) {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (!isReconnect) {
+        reconnectAttempts = 0;
+        suppressReconnect = false;
+      }
+      const targetSession = sessionId || newSessionId();
+      connectionTarget = { cwd: cwd || "", sessionId: targetSession };
       if (ws) {
         const old = ws;
         ws = null;
@@ -1464,15 +1496,15 @@
       }
       resetChat();
       workspaceState.cwd = cwd || "";
-      workspaceState.active = sessionId || "";
+      workspaceState.active = targetSession;
       if (cwd) {
         setWorkspaceLabel(cwd);
         localStorage.setItem("walle.cwd", cwd);
       }
-      if (sessionId) localStorage.setItem("walle.session", sessionId);
+      localStorage.setItem("walle.session", targetSession);
       const params = new URLSearchParams();
       if (cwd) params.set("cwd", cwd);
-      if (sessionId) params.set("session", sessionId);
+      params.set("session", targetSession);
       if (attach) params.set("attach", "1");
       if (agentMode) params.set("agent", agentMode);
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -1491,6 +1523,7 @@
         busy = false;
         closePending("连接已断开");
         updateComposer();
+        scheduleReconnect();
       };
       socket.onerror = () => {
         if (ws === socket) setStatus("连接错误", "off");

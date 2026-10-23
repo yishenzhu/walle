@@ -266,6 +266,9 @@
     let chatCurrent = null;
     let chatLastRender = 0;
     let chatToolNote = null;
+    let chatTimer = null;
+    let chatAttempts = 0;
+    let chatSuppress = false;
 
     if (window.marked && window.markedKatex) {
       window.marked.use(
@@ -388,7 +391,26 @@
       qaLesson.textContent = lesson ? `当前：${lesson.title}` : "当前课节";
     }
 
-    function connectChat() {
+    function scheduleChatReconnect() {
+      if (chatSuppress || chatTimer || !state.course) return;
+      const delay = Math.min(1000 * (2 ** chatAttempts), 8000);
+      chatAttempts += 1;
+      setQaStatus("重连中…", "off");
+      chatTimer = setTimeout(() => {
+        chatTimer = null;
+        if (state.course) connectChat(true);
+      }, delay);
+    }
+
+    function connectChat(isReconnect = false) {
+      if (chatTimer) {
+        clearTimeout(chatTimer);
+        chatTimer = null;
+      }
+      if (!isReconnect) {
+        chatAttempts = 0;
+        chatSuppress = false;
+      }
       if (!state.course || !state.course.qa_session_id) {
         setQaStatus("不可用", "off");
         return;
@@ -417,12 +439,18 @@
         try { msg = JSON.parse(event.data); } catch (err) { console.error(err); return; }
         const data = msg.data || {};
         if (msg.type === "welcome") {
+          chatAttempts = 0;
+          chatSuppress = false;
           setQaStatus("已连接", "on");
           qaHistory(msg.history);
           updateQaComposer();
         } else if (msg.type === "error") {
+          const text = msg.message || "连接错误";
+          if (/不存在|非法|不是目录|需要 session/.test(text) && !/agent 未启动|agent 未响应/.test(text)) {
+            chatSuppress = true;
+          }
           setQaStatus("不可用", "off");
-          qaNote(msg.message || "连接错误");
+          qaNote(text);
           chatBusy = false;
           updateQaComposer();
         } else if (msg.type === "notify" && data.type === "delta") {
@@ -457,6 +485,7 @@
         setQaStatus("已断开", "off");
         chatBusy = false;
         updateQaComposer();
+        scheduleChatReconnect();
       };
       socket.onerror = () => {
         if (chatWs === socket) setQaStatus("连接错误", "off");

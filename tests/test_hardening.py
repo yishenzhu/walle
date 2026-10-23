@@ -155,6 +155,73 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
         await manager.close()
 
 
+async def test_attach_learning_run_continues(tmp_path):
+    """学习模式重连：无挂起交互时接管连接但不取消生成 run。"""
+    manager = SessionManager(
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+        ),
+        storage="memory",
+        path=str(tmp_path / "s.db"),
+    )
+    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+
+    async def connect(hello):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write((json.dumps(hello) + "\n").encode())
+        await writer.drain()
+        return reader, writer
+
+    async def read_frame(reader):
+        return json.loads(await asyncio.wait_for(reader.readline(), 2))
+
+    r1, w1 = await connect(
+        {"type": "hello", "chat_id": "learning-resume", "agent": "learning"}
+    )
+    r2 = w2 = None
+    try:
+        await read_frame(r1)  # welcome
+        session = manager.get("learning-resume")
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def slow_run(*_args, **_kwargs):
+            started.set()
+            await asyncio.sleep(0.2)
+            finished.set()
+
+        session._agent_runner.run = slow_run  # type: ignore[method-assign]
+        w1.write((json.dumps({"type": "input", "content": "生成课程"}) + "\n").encode())
+        await w1.drain()
+        await asyncio.wait_for(started.wait(), 1)
+
+        r2, w2 = await connect(
+            {
+                "type": "hello",
+                "chat_id": "learning-resume",
+                "attach": True,
+                "agent": "learning",
+            }
+        )
+        assert (await read_frame(r2))["type"] == "welcome"
+
+        await asyncio.wait_for(finished.wait(), 2)
+        for _ in range(50):
+            if session.state == "idle":
+                break
+            await asyncio.sleep(0.02)
+        assert session.state == "idle"
+    finally:
+        for writer in (w1, w2):
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        await server.stop()
+        await manager.close()
+
+
 async def test_input_failure_reports_code():
     async def handle(reader, writer):
         conn = CLIConnection("busy", reader, writer)

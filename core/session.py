@@ -197,6 +197,10 @@ class Session:
         return self._state
 
     @property
+    def agent_name(self) -> str | None:
+        return self._agent.name
+
+    @property
     def transport(self) -> Channel | None:
         return self._transport
 

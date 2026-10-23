@@ -62,6 +62,16 @@ class CLIConnection:
         self._pending: dict[str, asyncio.Future] = {}
         self._call_timeout = call_timeout
         self._closed = False
+        self._handover = False  # 接管时保留 worker，让 run 继续
+
+    @property
+    def pending_count(self) -> int:
+        """尚未答复的服务请求数（审批 / ask_user 等）。"""
+        return sum(1 for fut in self._pending.values() if not fut.done())
+
+    def handover(self) -> None:
+        """接管标记：连接关闭时不取消正在执行的 input worker。"""
+        self._handover = True
 
     # ── 传输 ──────────────────────────────────────────
     async def send(self, msg: dict) -> None:
@@ -158,11 +168,12 @@ class CLIConnection:
                 elif t == "cancel" and on_cancel is not None:
                     await on_cancel()
         finally:
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass  # 连接断开：中断仍在处理的 input
+            if not self._handover:
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass  # 连接断开：中断仍在处理的 input
 
     async def _consume(
         self,
@@ -346,9 +357,17 @@ class CLIServer:
                 )
                 old = session.transport
                 session.attach(conn)
-                # 接管：旧 run 取消，终态发给新连接；旧连接随后断开
+                # 接管：旧连接断开。学习模式的生成 run 若无挂起交互，
+                # 允许继续跑（新连接接收后续事件），避免切页中断课程。
                 if isinstance(old, CLIConnection) and old is not conn:
-                    await session.cancel(reason="session reattached")
+                    resumable = (
+                        session.agent_name == "learning"
+                        and old.pending_count == 0
+                    )
+                    if not resumable:
+                        await session.cancel(reason="session reattached")
+                    else:
+                        old.handover()
                     await old.notify(
                         Error(
                             message="session attached elsewhere",
@@ -356,6 +375,8 @@ class CLIServer:
                         )
                     )
                     old.close()
+                    if resumable:
+                        logger.info(f"learning run continues after reattach: {chat_id}")
                 # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
                 if conn.agent:
                     session.set_agent(conn.agent)

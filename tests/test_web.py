@@ -144,6 +144,8 @@ def test_index_serves_chat_page():
     assert 'params.set("agent", agentMode)' in response.text
     assert "querySession" in response.text
     assert "queryPrompt" in response.text
+    assert "scheduleReconnect" in response.text
+    assert "重连中" in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
     assert 'href="/courses"' in response.text
@@ -317,6 +319,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert 'id="export-link"' in page.text
     assert 'id="plan-meta"' in page.text
     assert "回到对话继续生成" in page.text
+    assert "scheduleChatReconnect" in page.text
+    assert "重连中" in page.text
     assert 'params.set("agent", "tutor")' in page.text
     assert "/api/courses" in page.text
 
