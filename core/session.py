@@ -30,6 +30,7 @@ from ..infra import (
     MessageEndEvent,
     OpenAIProvider,
 )
+from ..infra.course_store import load_course, read_lesson
 from ..messages import (
     build_ephemeral_history,
     build_history,
@@ -81,8 +82,12 @@ class Session:
         cwd: str | None = None,
         created_at: float | None = None,
         agent: str | None = None,
+        course_id: str | None = None,
+        lesson_id: str | None = None,
     ) -> None:
         self.id = session_id
+        self._course_id = course_id
+        self._lesson_id = lesson_id
         # 创建时间内聚在 Session（管理器/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
@@ -136,7 +141,44 @@ class Session:
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
             history_factory=build_ephemeral_history,  # 子 agent 隔离历史
+            course_id=self._course_id,
+            lesson_id=self._lesson_id,
+            course_context=self._course_context(),
         )
+
+    def set_course_context(self, course_id: str | None, lesson_id: str | None) -> None:
+        """更新课程答疑上下文（课程页切换课节时调用）。"""
+        self._course_id = course_id
+        self._lesson_id = lesson_id
+
+    def _course_context(self) -> str | None:
+        if not self._course_id:
+            return None
+        course = load_course(self._course_id)
+        if course is None:
+            return f"Course context: {self._course_id} (course not found)"
+        lines = [f"Course: {course.get('title') or self._course_id}"]
+        if course.get("goal"):
+            lines.append(f"Goal: {course['goal']}")
+        lessons = course.get("lessons") or []
+        lines.append("Lessons:")
+        for item in lessons:
+            marker = " (current)" if item.get("id") == self._lesson_id else ""
+            lines.append(
+                f"- {item.get('order') or '?'}. {item.get('title')} "
+                f"[{item.get('id')}]{marker}"
+            )
+        if self._lesson_id:
+            lesson = read_lesson(self._course_id, self._lesson_id)
+            if lesson is not None:
+                lines.append(
+                    f"Current lesson: {lesson.get('title')} "
+                    f"[{self._lesson_id}]; use read_course to read it."
+                )
+        lines.append(
+            "Answer as the course tutor. Use read_course for lesson details."
+        )
+        return "\n".join(lines)
 
     def _build_agent(self, name: str | None = None) -> Agent:
         """按名加载 agent 并缓存（工具不经 agent——运行时由扩展 runner 提供）。"""
@@ -355,6 +397,8 @@ class SessionManager:
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
             agent=conn.agent,  # 客户端指定 agent（None = default）
+            course_id=getattr(conn, "course_id", None),
+            lesson_id=getattr(conn, "lesson_id", None),
         )
         session.attach(conn)
         self.register(session)

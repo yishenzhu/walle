@@ -4,7 +4,7 @@ import pytest
 
 from ..infra import course_store, tool_context
 from ..tools.builtin.canvas import canvas
-from ..tools.builtin.course import create_course, write_lesson
+from ..tools.builtin.course import create_course, read_course, write_lesson
 from .conftest import make_session
 
 
@@ -78,3 +78,32 @@ async def test_write_lesson_unknown_course(courses, context):
     result = await write_lesson("missing", "课", "content")
     assert isinstance(result, str)
     assert "not found" in result
+
+
+async def test_read_course_uses_session_context(courses, tmp_path):
+    created = await create_course("课程", goal="目标", lessons=["第一课"])
+    lesson = await write_lesson(created.course_id, "第一课", "# 正文\n细节")
+    assert not isinstance(lesson, str)
+
+    token = tool_context.set(
+        make_session(
+            cwd=str(tmp_path / "workspace"),
+            course_id=created.course_id,
+            lesson_id=lesson.lesson_id,
+        )
+    )
+    try:
+        content = await read_course()
+        assert "# 正文" in content
+        assert "细节" in content
+        outline = await read_course(outline=True)
+        assert "第一课" in outline
+        assert "(current)" in outline
+    finally:
+        tool_context.reset(token)
+
+
+async def test_read_course_without_context(courses, context):
+    result = await read_course()
+    assert isinstance(result, str)
+    assert "没有课程上下文" in result

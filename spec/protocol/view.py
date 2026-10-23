@@ -27,3 +27,5 @@ class SessionView(Protocol):
     history: Messages
     extension_runner: ToolTable | None
     bus: EventBus | None
+    course_id: str | None
+    lesson_id: str | None

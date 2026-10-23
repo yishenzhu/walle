@@ -22,7 +22,7 @@
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
 | 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
-| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；`/courses` 阅读页支持 `{{canvas:id}}` 混排 |
+| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；阅读页内置持久答疑与 tutor 模式 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
@@ -144,7 +144,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（373 项，无需 API Key）
+pytest -q                      # 单元测试（378 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -200,7 +200,7 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 ```
 
 - **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
-- **课程阅读页**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，可上一课/下一课并记住上次课节。
+- **课程阅读页**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，右侧常驻课程答疑；可上一课/下一课并记住上次课节。
 - **服务重启恢复**：attach 失败时 Web 用同一 `chat_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
@@ -259,6 +259,7 @@ tool:
       - [allow, canvas]               # 画布 HTML 在 sandbox iframe 内渲染，自动放行
       - [allow, create_course]        # 课程包写入 data/courses
       - [allow, write_lesson]         # 课节 md 写入 data/courses
+      - [allow, read_course]          # 课程答疑只读
       - [allow, read]                 # 读文件自动放行（技能按需加载全文）
     default: ask                      # 默认需人工审批
 
@@ -347,6 +348,7 @@ tools:
 - **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配。Agent 不持有工具源——运行时每轮从会话扩展 runner 取工具表并经 `tools` 过滤
 - **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
+- **课程导师**：`.agent/agents/tutor.md`，只读答疑（仅允许 `read_course`），课程页自动使用
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
@@ -463,7 +465,9 @@ data/courses/<course_id>/
 - `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
 - `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
 - `canvas(..., course_id=...)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
-- Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节。
+- `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
+- Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
+- 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留。
 
 ### 配置多智能体 Handoff
 

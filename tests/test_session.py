@@ -117,6 +117,53 @@ class TestSessionStorage:
         await s2.close()
 
 
+class TestCourseContext:
+    async def test_course_and_lesson_context_is_injected(self, tmp_path, monkeypatch):
+        from ..infra import course_store
+
+        root = tmp_path / "courses"
+        monkeypatch.setattr(
+            course_store, "courses_root", lambda path=None: root
+        )
+        course = course_store.create_course(
+            "测试课程", goal="目标", lessons=["第一课"], root=root
+        )
+        lesson = course_store.write_lesson(
+            course["id"], "第一课", "# 正文", root=root
+        )
+
+        s = Session(
+            session_id="qa-1",
+            history=build_history("memory", str(tmp_path / "s.db"), "qa-1"),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            course_id=course["id"],
+            lesson_id=lesson["id"],
+        )
+        try:
+            ctx = s.context
+            assert ctx.course_id == course["id"]
+            assert ctx.lesson_id == lesson["id"]
+            assert "测试课程" in ctx.course_context
+            assert "第一课" in ctx.course_context
+            assert "(current)" in ctx.course_context
+
+            s.set_course_context(course["id"], None)
+            assert "(current)" not in s.context.course_context
+        finally:
+            await s.close()
+
+
+def test_tutor_agent_is_read_only():
+    from ..core import Agent
+
+    agent = Agent.load("tutor")
+    assert agent.tool_filter.allows("read_course")
+    assert not agent.tool_filter.allows("bash")
+    assert not agent.tool_filter.allows("write_lesson")
+
+
 class TestSessionLifecycle:
     async def test_attach_detach(self, tmp_path):
         """attach 绑定 transport；detach 解除但不销毁 messages。"""

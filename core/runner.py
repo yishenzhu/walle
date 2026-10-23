@@ -77,6 +77,9 @@ class SessionContext:
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
     bus: EventBusProtocol | None = None  # 会话事件总线（None 时 run 内现造，仅测试用）
     history_factory: Callable[[], Messages] | None = None  # 子 agent 隔离历史来源（装配注入）
+    course_id: str | None = None  # 课程答疑上下文
+    lesson_id: str | None = None  # 当前课节
+    course_context: str | None = None  # 注入 system prompt 的课程摘要
 
 
 @dataclass
@@ -321,6 +324,8 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
+        if ctx.course_context:
+            messages += [SystemMessage(content=ctx.course_context)]
         if ctx.extension_runner is not None:
             skill_prompt = agent.skill_prompt(ctx.extension_runner.skills)
             if skill_prompt:

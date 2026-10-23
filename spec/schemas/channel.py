@@ -40,6 +40,8 @@ class SessionSpec(BaseModel):
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
     model: ModelConfig | None  # 模型接入配置（None = 用默认）
     agent: str | None = None  # agent 名（None = default）；创建会话时按名加载
+    course_id: str | None = None  # 课程答疑上下文（None = 普通会话）
+    lesson_id: str | None = None  # 当前课节（随课程页切换更新）
 
 
 class UserInput(BaseModel):

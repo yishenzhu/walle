@@ -16,6 +16,7 @@ from ...infra.course_store import (
     canvas_file,
     list_courses,
     load_course,
+    qa_session_id,
     read_lesson,
 )
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
@@ -110,7 +111,7 @@ async def api_course(course_id: str) -> dict:
     course = load_course(course_id, COURSES_ROOT)
     if course is None:
         raise HTTPException(status_code=404)
-    return course
+    return {**course, "qa_session_id": qa_session_id(course_id)}
 
 
 @app.get("/api/courses/{course_id}/lessons/{lesson_id}")
@@ -173,10 +174,25 @@ async def chat(
     cwd: str | None = None,
     session: str | None = None,
     attach: bool = False,
+    course: str | None = None,
+    lesson: str | None = None,
+    agent: str | None = None,
 ) -> None:
     await ws.accept()
     if session is not None and not SAFE_ID.fullmatch(session):
         await ws.send_json({"type": "error", "message": "会话 id 非法"})
+        await ws.close()
+        return
+    if course is not None and not SAFE_ID.fullmatch(course):
+        await ws.send_json({"type": "error", "message": "课程 id 非法"})
+        await ws.close()
+        return
+    if lesson is not None and not SAFE_ID.fullmatch(lesson):
+        await ws.send_json({"type": "error", "message": "课节 id 非法"})
+        await ws.close()
+        return
+    if agent is not None and not SAFE_ID.fullmatch(agent):
+        await ws.send_json({"type": "error", "message": "agent 名非法"})
         await ws.close()
         return
     if attach and session is None:
@@ -217,6 +233,9 @@ async def chat(
             "chat_id": chat_id,
             "attach": attach,
             "cwd": str(working_dir),
+            "course_id": course,
+            "lesson_id": lesson,
+            "agent": agent,
             # Web 是人在环审批：不设交互超时，避免用户暂时离开就过期；
             # 浏览器断开会让挂起请求立即失败，页面也有停止按钮兜底。
             "call_timeout": None,

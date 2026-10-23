@@ -12,6 +12,7 @@ from ..infra.course_store import (
     lesson_id_for,
     list_courses,
     load_course,
+    qa_session_id,
     read_lesson,
     write_lesson,
 )
@@ -106,6 +107,12 @@ def test_canvas_marker_is_recorded(root):
     )
     assert entry["canvas_ids"] == ["a", "b", "a"]
     assert CANVAS_MARKER.findall("{{canvas:x}}") == ["x"]
+
+
+def test_qa_session_id_is_stable_and_course_specific():
+    assert qa_session_id("course-a") == qa_session_id("course-a")
+    assert qa_session_id("course-a") != qa_session_id("course-b")
+    assert qa_session_id("course-a").startswith("qa-")
 
 
 def test_course_json_is_readable(root):

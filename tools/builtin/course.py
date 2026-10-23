@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ...infra import tool_context
 from ...infra.course_store import create_course as create_course_entry
-from ...infra.course_store import save_course
+from ...infra.course_store import load_course, read_lesson, save_course
 from ...infra.course_store import write_lesson as write_lesson_entry
 
 
@@ -96,3 +96,46 @@ async def write_lesson(
         order=entry.get("order") or 0,
         version=time.time_ns(),
     )
+
+
+async def read_course(
+    course_id: str | None = None,
+    lesson_id: str | None = None,
+    outline: bool = False,
+) -> str:
+    """Read the current course outline or one lesson's full Markdown.
+
+    In a course Q&A session, course_id/lesson_id default to the current page.
+    Without `outline`, the current lesson is returned; set outline=True to list
+    the course structure. Use this before answering material-specific questions.
+    """
+    ctx = tool_context.get()
+    cid = course_id or (ctx.course_id if ctx is not None else None)
+    lid = None if outline else lesson_id or (ctx.lesson_id if ctx is not None else None)
+    if not cid:
+        return "Error: 当前会话没有课程上下文，请提供 course_id"
+    course = load_course(cid)
+    if course is None:
+        return f"Error: course 不存在: {cid}"
+
+    if lid:
+        lesson = read_lesson(cid, lid)
+        if lesson is None:
+            return f"Error: lesson 不存在: {lid}"
+        return (
+            f"# {course.get('title')} / {lesson.get('title')}\n\n"
+            f"{lesson.get('markdown') or ''}"
+        )
+
+    lines = [f"# {course.get('title')}"]
+    if course.get("goal"):
+        lines.append(course["goal"])
+    lines.append("Lessons:")
+    current = ctx.lesson_id if ctx is not None else None
+    for item in course.get("lessons") or []:
+        marker = " (current)" if item.get("id") == current else ""
+        lines.append(
+            f"- {item.get('order') or '?'}. {item.get('title')} "
+            f"[{item.get('id')}]{marker}"
+        )
+    return "\n".join(lines)

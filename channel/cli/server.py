@@ -47,6 +47,8 @@ class CLIConnection:
         cwd: str | None = None,
         model: ModelConfig | None = None,
         agent: str | None = None,
+        course_id: str | None = None,
+        lesson_id: str | None = None,
         call_timeout: float | None = CALL_TIMEOUT,
         link: JSONLineConn | None = None,
     ) -> None:
@@ -54,6 +56,8 @@ class CLIConnection:
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
         self.model = model  # 客户端模型配置（会话级 provider；None = 进程默认）
         self.agent = agent  # 客户端指定 agent 名（None = default）
+        self.course_id = course_id  # 课程答疑上下文
+        self.lesson_id = lesson_id  # 当前课节
         self._link = link or JSONLineConn(reader, writer)
         self._pending: dict[str, asyncio.Future] = {}
         self._call_timeout = call_timeout
@@ -314,6 +318,8 @@ class CLIServer:
                 cwd=cwd,
                 model=model,
                 agent=msg.get("agent") or None,
+                course_id=msg.get("course_id") or None,
+                lesson_id=msg.get("lesson_id") or None,
                 call_timeout=call_timeout,
                 link=link,
             )
@@ -353,6 +359,9 @@ class CLIServer:
                 # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
                 if conn.agent:
                     session.set_agent(conn.agent)
+                # 课程页切换课节后重连：更新当前课节上下文
+                if conn.course_id is not None:
+                    session.set_course_context(conn.course_id, conn.lesson_id)
                 logger.info(f"cli client reattached: {chat_id}")
             else:
                 # 新会话：sessions.create（按需激活指定扩展）

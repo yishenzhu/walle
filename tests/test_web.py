@@ -239,6 +239,7 @@ def test_web_ws_passes_workspace_and_session(monkeypatch, tmp_path):
         url = (
             f"/ws/chat?cwd={quote(str(tmp_path))}"
             "&session=web-existing&attach=1"
+            "&course=course-a&lesson=lesson-a&agent=tutor"
         )
         with TestClient(web.app).websocket_connect(url) as ws:
             assert ws.receive_json()["type"] == "welcome"
@@ -246,6 +247,9 @@ def test_web_ws_passes_workspace_and_session(monkeypatch, tmp_path):
             assert agent.hello["chat_id"] == "web-existing"
             assert agent.hello["cwd"] == str(tmp_path.resolve())
             assert agent.hello["attach"] is True
+            assert agent.hello["course_id"] == "course-a"
+            assert agent.hello["lesson_id"] == "lesson-a"
+            assert agent.hello["agent"] == "tutor"
             assert agent.hello["call_timeout"] is None
     finally:
         agent.stop()
@@ -303,6 +307,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     page = client.get(f"/courses/{course['id']}")
     assert page.status_code == 200
     assert 'id="lesson-nav"' in page.text
+    assert 'id="qa-log"' in page.text
+    assert 'params.set("agent", "tutor")' in page.text
     assert "/api/courses" in page.text
 
     courses = client.get("/api/courses").json()["courses"]
@@ -312,6 +318,7 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     manifest = client.get(f"/api/courses/{course['id']}").json()
     assert manifest["title"] == "测试课程"
     assert manifest["lessons"][0]["id"] == lesson["id"]
+    assert manifest["qa_session_id"].startswith("qa-")
 
     content = client.get(
         f"/api/courses/{course['id']}/lessons/{lesson['id']}"
