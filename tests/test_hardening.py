@@ -102,7 +102,7 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
         ),
         storage="memory",
-        db_path=str(tmp_path / "s.db"),
+        path=str(tmp_path / "s.db"),
     )
     server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
     await server.start()

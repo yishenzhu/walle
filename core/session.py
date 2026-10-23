@@ -302,14 +302,14 @@ class SessionManager:
         tool_config: ToolConfig | None = None,
         extensions: list[Extension] | None = None,
         provider: LLM | None = None,
-        storage: str = "sqlite",
-        db_path: str = "data/session.db",
+        storage: str = "file",
+        path: str | None = None,
     ) -> None:
         self._tool_config = tool_config
         self._extensions = extensions or []  # 进程级扩展声明池
         self._provider = provider
         self._storage = storage
-        self._db_path = db_path
+        self._path = path
         self._sessions: dict[str, Session] = {}
 
     def create(
@@ -337,7 +337,12 @@ class SessionManager:
         )
         session = Session(
             session_id=conn.chat_id,
-            history=build_history(self._storage, self._db_path, conn.chat_id),
+            history=build_history(
+                self._storage,
+                self._path,
+                conn.chat_id,
+                cwd=conn.cwd,
+            ),
             tool_config=self._tool_config,
             extensions=extensions,
             provider=provider,

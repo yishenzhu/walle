@@ -55,7 +55,7 @@ async def main() -> None:
         extensions=loaded,
         provider=provider,
         storage=conf.session.storage,
-        db_path=conf.session.db_path,
+        path=conf.session.path,
     )
     server = CLIServer(sessions=sessions)
     await server.start()

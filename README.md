@@ -23,7 +23,7 @@
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
 | 🖥️ **Web 工作区** | 对话 + 画布双栏；Markdown 渲染、工具审批、可拖拽分栏与全屏画布；画布 HTML 在 sandbox iframe 中运行 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
-| 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、切点 SQLite 持久化 |
+| 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
 ---
 
@@ -113,7 +113,7 @@ sequenceDiagram
 | 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
 | 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
 | 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ CLI 多会话服务端 + Web 工作区桥接，实现 Channel 协议 |
-| 消息存储 | `messages/` | InMemory/SQLite/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
+| 消息存储 | `messages/` | File/SQLite/InMemory/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
 | 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
 | 可观测性 | `observability/` | Docker Compose 编排的监控栈 |
@@ -143,7 +143,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（318 项，无需 API Key）
+pytest -q                      # 单元测试（348 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -255,8 +255,8 @@ tool:
     default: ask                      # 默认需人工审批
 
 session:
-  storage: "sqlite"                   # sqlite | memory
-  db_path: "data/session.db"          # sqlite 存储路径（相对项目根）
+  storage: "file"                     # file | sqlite | memory
+  path: "data/sessions"               # file=会话根；sqlite=db 文件；memory 忽略
 
 extension:
   dir: ".agent/extensions"            # 用户扩展目录
@@ -292,6 +292,21 @@ extension:
 | `.agent/mcp.yaml` | MCP Server 配置 | 手动编辑 |
 
 以上均在下次启动自动恢复。
+
+### `data/sessions/` — 会话文件
+
+默认 `session.storage: file`：会话正文集中存放在 `data/sessions/<workspace_id>/`，**不写进用户工作目录**，避免污染仓库或随仓库分发。
+
+```
+data/sessions/<workspace_id>/
+├── workspace.json           # canonical 工作目录路径、名称、更新时间
+└── <session_id>/
+    ├── meta.json            # 会话身份、cwd、时间戳
+    ├── messages.jsonl       # 逐条追加的原始消息
+    └── projection.json      # new_window 切点（可选）
+```
+
+工作目录只作为分组键（canonical path 的稳定摘要）。删除目录不会自动删除会话；需要“删除工作目录及其会话”时显式清理。`sqlite` 仍可选，用于需要数据库查询/迁移的场景。
 
 ### Agent 定义（frontmatter）
 
@@ -403,7 +418,7 @@ async def weather(city: str) -> str:
 
 ### 🪟 上下文窗口管理（模型主动换窗口，对齐 note.md + history 思路）
 
-工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在 SQLite 全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩扩展、无 token 阈值自动折叠。
+工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在会话 JSONL 中全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩扩展、无 token 阈值自动折叠。
 
 | 能力 | 说明 |
 |---|---|
@@ -511,8 +526,9 @@ walle/
 │       ├── history.py         #     会话历史（history / new_window）
 │       └── extension.py       #     builtin 扩展声明
 ├── messages/                  # 消息存储
+│   ├── file.py                #   工作目录分组的 JSONL 持久化（默认）
 │   ├── in_memory.py           #   内存实现
-│   ├── sqlite.py              #   SQLite 持久化
+│   ├── sqlite.py              #   SQLite 持久化（可选）
 │   ├── projected.py           #   投影视图（切点截断模型视野）
 │   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
@@ -564,7 +580,7 @@ walle/
 | 数据模型 | Pydantic v2 |
 | 工具协议 | MCP (Model Context Protocol) |
 | 可观测性 | OpenTelemetry + Grafana + Tempo + Mimir |
-| 持久化 | SQLite |
+| 持久化 | 文件（JSONL，默认）+ SQLite（可选） |
 | Web | FastAPI + WebSocket + 原生 JS（marked + KaTeX + DOMPurify） |
 | 配置 | YAML + Pydantic |
 | 异步 | asyncio |

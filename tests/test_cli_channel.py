@@ -209,7 +209,8 @@ class ServerHarness:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
             ),
-            db_path=db_path,
+            storage="memory",
+            path=db_path,
         )
         self.server = CLIServer(sessions=self.manager)
 

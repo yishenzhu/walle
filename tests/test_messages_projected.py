@@ -2,13 +2,20 @@
 
 import pytest
 
-from ..messages import InMemoryMessages, ProjectedMessages, SQLiteMessages
+from ..messages import (
+    FileMessages,
+    InMemoryMessages,
+    ProjectedMessages,
+    SQLiteMessages,
+)
 from ..spec import Projection, Usage, UserMessage
 
 
 def make_storage(kind, tmp_path=None):
     if kind == "memory":
         return InMemoryMessages()
+    if kind == "file":
+        return FileMessages(tmp_path / "file-session", "test")
     return SQLiteMessages(db_path=str(tmp_path / "test.db"), session_id="test")
 
 
@@ -21,7 +28,7 @@ def sample_messages():
     ]
 
 
-@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+@pytest.mark.parametrize("kind", ["memory", "sqlite", "file"])
 class TestProjectedMessages:
     async def test_get_without_projection_returns_all(self, kind, tmp_path):
         proj = ProjectedMessages(make_storage(kind, tmp_path))

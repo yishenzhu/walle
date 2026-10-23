@@ -1,11 +1,14 @@
 """Session 存储持久化 + attach/detach 生命周期测试。"""
 
+from pathlib import Path
+
 import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Session, SessionManager
 from ..infra import AgentStartEvent, MessageDeltaEvent, MessageEndEvent
 from ..messages import (
+    FileMessages,
     InMemoryMessages,
     ProjectedMessages,
     SQLiteMessages,
@@ -15,11 +18,24 @@ from ..spec import ModelConfig, UserMessage
 from .conftest import FakeChannel, FakeProvider
 
 
-def make_session(session_id: str, db_path: str, transport=None, storage="sqlite"):
+def make_session(
+    session_id: str,
+    db_path: str,
+    transport=None,
+    storage="file",
+    cwd=None,
+):
     """构造一个 Session（agent 由内部按名加载 .agent/agents/default.md）。"""
+    base = Path(db_path).parent
+    path = base / "sessions" if storage == "file" else db_path
     return Session(
         session_id=session_id,
-        history=build_history(storage, db_path, session_id),
+        history=build_history(
+            storage,
+            path,
+            session_id,
+            cwd=cwd or base / "workspace",
+        ),
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
@@ -33,7 +49,8 @@ def make_manager(db_path: str) -> SessionManager:
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
         ),
-        db_path=db_path,
+        storage="memory",
+        path=db_path,
     )
 
 
@@ -46,12 +63,19 @@ def provider():
 
 
 class TestSessionStorage:
-    async def test_default_storage_is_sqlite(self, tmp_path):
-        """默认存储后端是 SQLite（跨连接持久化）。"""
+    async def test_default_storage_is_file(self, tmp_path):
+        """默认存储后端是工作目录文件（集中存储、跨连接持久化）。"""
         s = make_session("s1", str(tmp_path / "s.db"))
         assert isinstance(s._history, ProjectedMessages)
-        assert isinstance(s._history.underlying, SQLiteMessages)
+        assert isinstance(s._history.underlying, FileMessages)
         assert not isinstance(s._history.underlying, InMemoryMessages)
+        await s.close()
+
+    async def test_sqlite_storage_when_configured(self, tmp_path):
+        """显式配置 sqlite 时仍使用数据库存储。"""
+        s = make_session("s1", str(tmp_path / "s.db"), storage="sqlite")
+        assert isinstance(s._history, ProjectedMessages)
+        assert isinstance(s._history.underlying, SQLiteMessages)
         await s.close()
 
     async def test_memory_storage_when_configured(self, tmp_path):
@@ -125,6 +149,30 @@ class TestSessionLifecycle:
 
 
 class TestSessionManager:
+    async def test_create_uses_central_file_storage(self, tmp_path):
+        """默认 file 后端：会话落在 path，而不是工作目录。"""
+        sessions = tmp_path / "sessions"
+        project = tmp_path / "project"
+        manager = SessionManager(
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
+            ),
+            path=str(sessions),
+        )
+
+        class Conn:
+            chat_id = "file-1"
+            cwd = str(project)
+            model = None
+            agent = None
+
+        s = manager.create(Conn())
+        assert isinstance(s._history.underlying, FileMessages)
+        path = Path(s._history.underlying.path)
+        assert path.is_relative_to(sessions)
+        assert not path.is_relative_to(project)
+        await manager.close()
+
     async def test_register_get_remove(self, tmp_path):
         manager = make_manager(str(tmp_path / "s.db"))
         s = make_session("session-1", str(tmp_path / "s.db"))
@@ -255,7 +303,7 @@ class TestSessionModelConfig:
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
             storage="memory",
-            db_path=str(tmp_path / "s.db"),
+            path=str(tmp_path / "s.db"),
         )
 
     async def test_conn_model_creates_session_provider(self, tmp_path):
@@ -375,7 +423,7 @@ class TestSessionStreamForward:
             ),
             extensions=pool,
             storage="memory",
-            db_path=str(tmp_path / "s.db"),
+            path=str(tmp_path / "s.db"),
         )
         return manager
 
@@ -441,7 +489,7 @@ class TestSessionStreamForward:
             ),
             extensions=mcp_extension,
             storage="memory",
-            db_path=str(tmp_path / "s.db"),
+            path=str(tmp_path / "s.db"),
         )
 
         class Conn:

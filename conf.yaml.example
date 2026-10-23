@@ -33,8 +33,9 @@ tool:
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
 session:
-  storage: "sqlite"              # sqlite | memory
-  db_path: "data/session.db"     # sqlite 存储路径（相对项目根）
+  storage: "file"                # file | sqlite | memory
+  path: "data/sessions"          # file=会话根；sqlite=db 文件；memory 忽略
+
 
 # 扩展：默认加载 .agent/extensions/ 下全部扩展；enabled 非空 = 白名单，disabled 优先
 extension:
