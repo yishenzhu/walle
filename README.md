@@ -162,20 +162,22 @@ cp .env.example .env             # LLM API Key
 ### 启动
 
 ```bash
-./scripts/run.sh                 # 启动 agent + 可观测性（默认）
-./scripts/run.sh --no-obs        # 仅启动 agent
-./scripts/run.sh --cli           # 服务端 + CLI 客户端（一键对话）
-./scripts/run.sh --web           # 服务端 + Web 通道（一键开启）
-./scripts/run.sh --status        # 服务端 / Web 状态 + 会话列表
-./scripts/run.sh --attach <id>   # 恢复（attach）已有会话
-./scripts/run.sh --stop          # 停止全部服务（agent / Web / 可观测性）
-./scripts/run.sh --stop-agent    # 仅停止 agent 服务端
-./scripts/run.sh --stop-web      # 仅停止 Web 服务
-./scripts/run.sh --stop-obs      # 仅停止可观测性
-#   停止项可组合，例如：./scripts/run.sh --stop-web --stop-obs
-./scripts/run.sh --obs-only      # 仅启动可观测性容器
-./scripts/run.sh --test          # 运行测试
+./scripts/run.sh up                    # 后台启动 agent + Web + 可观测性
+./scripts/run.sh down                  # 停止全部服务
+./scripts/run.sh status                # 服务状态 + 会话列表
+./scripts/run.sh logs agent -f         # 跟踪日志（web / obs 同理）
+./scripts/run.sh restart web           # 重启单个服务（all / agent / web / obs）
+./scripts/run.sh agent --no-obs        # 前台仅启动 agent
+./scripts/run.sh cli --agent learning  # 确保 agent 运行后开 CLI 客户端
+./scripts/run.sh web --port 8081       # 前台启动 Web，参数原样透传
+./scripts/run.sh attach <id>           # 恢复（attach）已有会话
+./scripts/run.sh obs up                # 仅启动可观测性容器
+./scripts/run.sh test -k course        # pytest 参数透传
+./scripts/run.sh doctor                # Python / 配置 / Docker / 端口自检
+./scripts/run.sh help                  # 完整命令列表
 ```
+
+旧版 `--no-obs` / `--cli` / `--web` / `--stop*` / `--test` / `--attach` 参数仍兼容。
 
 启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
 `PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。客户端参数：
@@ -194,8 +196,8 @@ PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.
 Web 工作区（可选，需先安装 `fastapi` / `uvicorn`）：
 
 ```bash
-./scripts/run.sh --web              # 服务端未运行时自动后台启动 + Web 通道（前台）
-./scripts/run.sh --web --port 8081  # --web 之后的参数原样转给 Web 服务
+./scripts/run.sh web              # 服务端未运行时自动后台启动 + Web 通道（前台）
+./scripts/run.sh web --port 8081  # web 之后的参数原样转给 Web 服务
 PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http://127.0.0.1:8080
 ```
 
@@ -227,7 +229,7 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 
 > 使用 `--no-obs` 启动 agent 时，若 `telemetry.enabled` 仍为 `true`，OTLP 导出会持续报
 > `DEADLINE_EXCEEDED`。不需要观测时把 `telemetry.enabled` 设为 `false`，或单独运行
-> `./scripts/run.sh --obs-only` 启动 collector。
+> `./scripts/run.sh obs up` 启动 collector。
 
 ---
 
@@ -613,7 +615,8 @@ walle/
 │   ├── note.md                #   工作笔记（模型 read/edit 维护，运行时生成）
 │   └── mcp.yaml               #   MCP Server 配置（手动编辑）
 └── scripts/
-    └── run.sh                 # 一键启动脚本
+    ├── run.sh                 # 控制台入口（子命令 + 旧参数兼容）
+    └── lib/                   # common / services / commands 三个职责模块
 ```
 
 ---
