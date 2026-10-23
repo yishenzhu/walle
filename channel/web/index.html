@@ -1616,8 +1616,16 @@
     });
 
     async function init() {
-      let cwd = localStorage.getItem("walle.cwd") || "";
+      const params = new URLSearchParams(location.search);
+      const querySession = params.get("session") || "";
+      const queryCwd = params.get("cwd") || "";
+      const queryAgent = params.get("agent") || "";
+      const queryPrompt = params.get("prompt") || "";
+      let cwd = queryCwd || localStorage.getItem("walle.cwd") || "";
       const savedSession = localStorage.getItem("walle.session") || "";
+      if (queryAgent === "learning" || queryAgent === "default") {
+        agentMode = queryAgent === "learning" ? "learning" : "";
+      }
       applyAgentMode(agentMode, false);
       try {
         const data = await api("/api/workspaces");
@@ -1627,8 +1635,17 @@
       } catch (err) {
         console.error(err);
       }
-      if (savedSession) connect(cwd, savedSession, true);
+      const targetSession = querySession || savedSession;
+      if (targetSession) connect(cwd, targetSession, true);
       else connect(cwd, newSessionId(), false);
+      if (queryPrompt) {
+        input.value = queryPrompt;
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      }
+      if (params.toString()) {
+        try { history.replaceState(null, "", location.pathname); } catch (err) { console.error(err); }
+      }
     }
 
     init();

@@ -112,7 +112,17 @@ async def api_course(course_id: str) -> dict:
     course = load_course(course_id, COURSES_ROOT)
     if course is None:
         raise HTTPException(status_code=404)
-    return {**course, "qa_session_id": qa_session_id(course_id)}
+    lessons = []
+    for item in course.get("lessons") or []:
+        loaded = read_lesson(course_id, item["id"], COURSES_ROOT)
+        written = bool(loaded and (loaded.get("markdown") or "").strip())
+        lessons.append({**item, "written": written})
+    return {
+        **course,
+        "lessons": lessons,
+        "written_count": sum(1 for item in lessons if item["written"]),
+        "qa_session_id": qa_session_id(course_id),
+    }
 
 
 @app.get("/api/courses/{course_id}/lessons/{lesson_id}")

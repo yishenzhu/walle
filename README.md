@@ -144,7 +144,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（382 项，无需 API Key）
+pytest -q                      # 单元测试（383 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -350,7 +350,7 @@ tools:
 - **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **课程导师**：`.agent/agents/tutor.md`，只读答疑（仅允许 `read_course`），课程页自动使用
-- **学习规划**：`.agent/agents/learning.md`，用 `create_course` / `write_lesson` / `canvas` 生成课程包，Web「学习模式」使用
+- **学习规划**：`.agent/agents/learning.md`，按章节顺序生成课程包（当前课正文和画布完成后再进入下一课），Web「学习模式」使用
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
@@ -470,6 +470,7 @@ data/courses/<course_id>/
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
 - Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
 - 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留；
+- 阅读页显示“已生成 N/M”并标记 `待生成` 课节；空课节提供“回到对话继续生成”，会 attach 原生成会话，并预填“按章节顺序，当前课正文和画布完成后再进入下一课”的续写提示；
 - `/courses/<id>/export` 导出 zip 静态站点：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课程源文件，解压后可直接用浏览器打开；依赖 CDN 的画布仍需联网。
 
 ### 配置多智能体 Handoff

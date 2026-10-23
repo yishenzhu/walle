@@ -58,6 +58,13 @@
     .lesson-link.active {
       background: var(--accent-soft); border-color: #24507f; color: #dbeaff;
     }
+    .lesson-link.missing .lesson-index { color: var(--warn); }
+    .lesson-missing { flex: 0 0 auto; color: var(--warn); font-size: 10px; }
+    .empty a.continue-link {
+      display: block; width: max-content; margin: 14px auto 0; padding: 7px 12px;
+      border-radius: 8px; background: var(--accent); color: #fff;
+      text-decoration: none; font-size: 12px;
+    }
     .lesson-index {
       flex: 0 0 auto; width: 20px; color: var(--faint);
       font-family: var(--mono); font-size: 11px; text-align: right;
@@ -198,7 +205,7 @@
   <div class="layout">
     <aside class="sidebar">
       <div id="course-goal" class="course-goal"></div>
-      <div class="nav-head">学习计划</div>
+      <div id="plan-meta" class="nav-head">学习计划</div>
       <nav id="lesson-nav" class="lesson-nav"></nav>
     </aside>
     <main class="reader">
@@ -238,6 +245,7 @@
   <script>
     const courseTitle = document.getElementById("course-title");
     const courseGoal = document.getElementById("course-goal");
+    const planMeta = document.getElementById("plan-meta");
     const lessonNav = document.getElementById("lesson-nav");
     const readerHead = document.getElementById("reader-head");
     const content = document.getElementById("content");
@@ -497,13 +505,50 @@
         const button = el("button", "lesson-link");
         button.type = "button";
         if (lesson.id === state.lessonId) button.classList.add("active");
+        if (lesson.written === false) button.classList.add("missing");
         button.append(
           el("span", "lesson-index", String(lesson.order || index + 1).padStart(2, "0")),
           el("span", "", lesson.title || lesson.id)
         );
+        if (lesson.written === false) {
+          button.append(el("span", "lesson-missing", "待生成"));
+        }
         button.onclick = () => selectLesson(lesson.id);
         lessonNav.append(button);
       });
+    }
+
+    function continueUrl(lesson) {
+      const params = new URLSearchParams();
+      if (state.course.session_id) params.set("session", state.course.session_id);
+      params.set("agent", "learning");
+      const prompt = lesson
+        ? `继续完成课程《${state.course.title}》（course_id=${state.course.id}）：` +
+          `从第 ${lesson.order || "?"} 课「${lesson.title}」开始，按章节顺序完成每一课；` +
+          "当前课的正文和画布都完成后再进入下一课。"
+        : `继续完成课程《${state.course.title}》（course_id=${state.course.id}）：` +
+          "按章节顺序完成每一课；当前课的正文和画布都完成后再进入下一课。";
+      params.set("prompt", prompt);
+      return `/?${params.toString()}`;
+    }
+
+    function showMissingLesson(lesson) {
+      content.replaceChildren();
+      const empty = el("div", "empty");
+      empty.append(el("strong", "", "这一课还没有正文"));
+      empty.append(
+        document.createTextNode(
+          "课程生成可能在写入课节前中断。回到原对话继续，Walle 会按章节顺序补写，完成一课再进入下一课。"
+        )
+      );
+      if (state.course.session_id) {
+        const link = el("a", "continue-link", "回到对话继续生成");
+        link.href = continueUrl(lesson);
+        empty.append(link);
+      } else {
+        empty.append(el("div", "empty", "请在主对话中重新生成这一课。"));
+      }
+      content.append(empty);
     }
 
     function updateActions() {
@@ -542,6 +587,10 @@
           el("h2", "", lesson.title || lesson.id),
           el("span", "", `第 ${lesson.order || "?"} 课`)
         );
+        if (!(lesson.markdown || "").trim()) {
+          showMissingLesson(lesson);
+          return;
+        }
         content.innerHTML = renderMarkdown(
           stripLeadingTitle(lesson.markdown, lesson.title)
         );
@@ -565,6 +614,11 @@
           el("strong", "", "课程还没有课节"),
           document.createTextNode("回到对话，让 Walle 继续写入课程内容。")
         );
+        if (state.course.session_id) {
+          const link = el("a", "continue-link", "回到对话继续生成");
+          link.href = continueUrl(null);
+          empty.append(link);
+        }
         content.append(empty);
         updateQaLesson();
         connectChat();
@@ -588,6 +642,10 @@
         document.title = `${course.title || course.id} · Walle`;
         courseGoal.textContent = course.goal || "";
         exportLink.href = `/courses/${encodeURIComponent(courseId)}/export`;
+        const total = (course.lessons || []).length;
+        planMeta.textContent = total
+          ? `学习计划 · ${course.written_count || 0}/${total} 已生成`
+          : "学习计划";
         updateQaLesson();
         renderNav();
         startLesson();

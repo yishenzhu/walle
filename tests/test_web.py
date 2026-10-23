@@ -142,6 +142,8 @@ def test_index_serves_chat_page():
     assert 'id="session-list"' in response.text
     assert 'id="agent-mode"' in response.text
     assert 'params.set("agent", agentMode)' in response.text
+    assert "querySession" in response.text
+    assert "queryPrompt" in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
     assert 'href="/courses"' in response.text
@@ -313,6 +315,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert 'id="lesson-nav"' in page.text
     assert 'id="qa-log"' in page.text
     assert 'id="export-link"' in page.text
+    assert 'id="plan-meta"' in page.text
+    assert "回到对话继续生成" in page.text
     assert 'params.set("agent", "tutor")' in page.text
     assert "/api/courses" in page.text
 
@@ -323,6 +327,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     manifest = client.get(f"/api/courses/{course['id']}").json()
     assert manifest["title"] == "测试课程"
     assert manifest["lessons"][0]["id"] == lesson["id"]
+    assert manifest["lessons"][0]["written"] is True
+    assert manifest["written_count"] == 1
     assert manifest["qa_session_id"].startswith("qa-")
 
     content = client.get(
@@ -345,6 +351,21 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
 
     assert client.get("/courses/missing").status_code == 404
     assert client.get(f"/courses/{course['id']}/canvas/missing").status_code == 404
+
+
+def test_course_api_marks_unwritten_lessons(monkeypatch, tmp_path):
+    root = tmp_path / "courses"
+    course = create_course(
+        "半成品课程",
+        lessons=["已写", "未写"],
+        root=root,
+    )
+    write_lesson(course["id"], "已写", "# 有内容", root=root)
+    monkeypatch.setattr(web, "COURSES_ROOT", root)
+
+    data = TestClient(web.app).get(f"/api/courses/{course['id']}").json()
+    assert [item["written"] for item in data["lessons"]] == [True, False]
+    assert data["written_count"] == 1
 
 
 def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):
