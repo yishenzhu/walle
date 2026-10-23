@@ -190,6 +190,7 @@
       <small>Walle 学习空间</small>
     </div>
     <div class="head-links">
+      <a id="export-link" href="#">导出课程</a>
       <a href="/courses">全部课程</a>
       <a href="/">对话</a>
     </div>
@@ -249,6 +250,7 @@
     const qaStop = document.getElementById("qa-stop");
     const qaStatus = document.getElementById("qa-status");
     const qaLesson = document.getElementById("qa-lesson");
+    const exportLink = document.getElementById("export-link");
     const courseId = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
     const state = { course: null, lessonId: null };
     let chatWs = null;
@@ -585,6 +587,7 @@
         courseTitle.textContent = course.title || course.id;
         document.title = `${course.title || course.id} · Walle`;
         courseGoal.textContent = course.goal || "";
+        exportLink.href = `/courses/${encodeURIComponent(courseId)}/export`;
         updateQaLesson();
         renderNav();
         startLesson();

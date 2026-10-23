@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>课程 · Walle</title>
+  <link rel="stylesheet" href="static/katex/katex.min.css">
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --panel2: #1c2330;
+      --border: #2c3644; --border-strong: #3d4b5f;
+      --text: #e6edf3; --muted: #8b98a8; --faint: #66717f;
+      --accent: #2f81f7; --accent-soft: #173a63;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background: radial-gradient(1100px 500px at 15% -10%, #17233a 0%, transparent 60%), var(--bg);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px 20px; background: #121821; border-bottom: 1px solid var(--border);
+    }
+    h1 { margin: 0; font-size: 17px; line-height: 1.35; }
+    header small { display: block; margin-top: 2px; color: var(--faint); font-size: 11px; }
+    .badge {
+      padding: 4px 9px; border: 1px solid var(--border-strong); border-radius: 999px;
+      color: var(--muted); font-size: 11px; white-space: nowrap;
+    }
+    .layout { display: flex; gap: 14px; max-width: 1380px; margin: 0 auto; padding: 14px 20px 36px; align-items: stretch; }
+    .sidebar {
+      flex: 0 0 280px; align-self: flex-start; position: sticky; top: 14px;
+      max-height: calc(100vh - 28px); overflow-y: auto; padding: 14px;
+      background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px;
+    }
+    .goal { margin-bottom: 14px; color: var(--muted); font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+    .nav-head { margin: 4px 0 8px; color: var(--faint); font-size: 11px; letter-spacing: .4px; }
+    .lesson-nav { display: flex; flex-direction: column; gap: 5px; }
+    .lesson-link {
+      display: flex; gap: 8px; width: 100%; padding: 8px 9px; text-align: left;
+      border: 1px solid transparent; border-radius: 8px; background: transparent;
+      color: var(--muted); font-size: 12px; line-height: 1.5; cursor: pointer;
+    }
+    .lesson-link:hover { background: var(--panel2); color: var(--text); }
+    .lesson-link.active { background: var(--accent-soft); border-color: #24507f; color: #dbeaff; }
+    .lesson-index { flex: 0 0 auto; width: 20px; color: var(--faint); font-family: var(--mono); font-size: 11px; text-align: right; }
+    .reader {
+      flex: 1 1 auto; min-width: 0; min-height: calc(100vh - 76px);
+      display: flex; flex-direction: column; padding: 20px 24px;
+      background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px;
+    }
+    .reader-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+    .reader-head h2 { margin: 0; font-size: 21px; line-height: 1.4; }
+    .reader-head span { color: var(--faint); font-size: 11px; }
+    #content { flex: 1 0 auto; }
+    .md { font-size: 14px; line-height: 1.8; word-break: break-word; }
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; line-height: 1.35; }
+    .md h1 { font-size: 1.5em; }
+    .md h2 { font-size: 1.3em; }
+    .md h3 { font-size: 1.12em; }
+    .md p { margin: 9px 0; }
+    .md ul, .md ol { margin: 8px 0; padding-left: 24px; }
+    .md li { margin: 3px 0; }
+    .md code {
+      font-family: var(--mono); font-size: .9em; padding: 1px 5px;
+      border-radius: 5px; background: #0b0f14; border: 1px solid var(--border);
+    }
+    .md pre { margin: 10px 0; padding: 11px 13px; border-radius: 8px; overflow-x: auto; background: #0b0f14; border: 1px solid var(--border); }
+    .md pre code { padding: 0; border: 0; background: none; font-size: 12px; line-height: 1.6; }
+    .md blockquote { margin: 10px 0; padding: 2px 12px; color: var(--muted); border-left: 3px solid var(--border-strong); }
+    .md table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+    .md th, .md td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; }
+    .md th { background: var(--panel2); }
+    .md a { color: #79b8ff; }
+    .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+    .canvas-embed {
+      display: block; width: 100%; height: 460px; margin: 14px 0;
+      border: 1px solid var(--border-strong); border-radius: 10px; background: #fff;
+    }
+    .lesson-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 24px; }
+    .lesson-actions button {
+      padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--panel2); color: var(--text); font-size: 12px; cursor: pointer;
+    }
+    .lesson-actions button:disabled { color: var(--faint); cursor: default; }
+    .empty { padding: 36px 12px; text-align: center; color: var(--muted); line-height: 1.8; }
+    .empty strong { display: block; color: var(--text); margin-bottom: 6px; }
+    footer { max-width: 1380px; margin: 0 auto; padding: 0 20px 24px; color: var(--faint); font-size: 11px; }
+    @media (max-width: 860px) {
+      .layout { flex-direction: column; padding: 12px; }
+      .sidebar { position: static; flex: none; width: 100%; max-height: 300px; }
+      .reader { width: 100%; min-height: auto; padding: 16px; }
+      header, footer { padding-left: 14px; padding-right: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="course-title">课程</h1>
+      <small>Walle 离线课程包</small>
+    </div>
+    <span class="badge">静态导出</span>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <div id="course-goal" class="goal"></div>
+      <div class="nav-head">学习计划</div>
+      <nav id="lesson-nav" class="lesson-nav"></nav>
+    </aside>
+    <main class="reader">
+      <div id="reader-head" class="reader-head"></div>
+      <article id="content" class="md"></article>
+      <div class="lesson-actions">
+        <button id="prev" type="button">上一课</button>
+        <button id="next" type="button">下一课</button>
+      </div>
+    </main>
+  </div>
+  <footer>由 Walle 导出。课程 md、画布源码与静态资源都在本目录中；依赖 CDN 的画布需要联网。</footer>
+  <script src="static/marked.min.js"></script>
+  <script src="static/katex/katex.min.js"></script>
+  <script src="static/katex/marked-katex.min.js"></script>
+  <script src="static/purify.min.js"></script>
+  <script src="data.js"></script>
+  <script>
+    const data = window.COURSE_DATA || { course: {}, lessons: {}, canvases: {} };
+    const course = data.course || {};
+    const lessons = course.lessons || [];
+    const courseTitle = document.getElementById("course-title");
+    const courseGoal = document.getElementById("course-goal");
+    const lessonNav = document.getElementById("lesson-nav");
+    const readerHead = document.getElementById("reader-head");
+    const content = document.getElementById("content");
+    const prev = document.getElementById("prev");
+    const next = document.getElementById("next");
+    const state = { lessonId: null };
+
+    if (window.marked && window.markedKatex) {
+      window.marked.use(
+        window.markedKatex({ throwOnError: false, nonStandard: true, trust: false })
+      );
+    }
+
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function storeGet(key) {
+      try { return localStorage.getItem(key); } catch (err) { return null; }
+    }
+
+    function storeSet(key, value) {
+      try { localStorage.setItem(key, value); } catch (err) { /* file:// 可能禁用 */ }
+    }
+
+    function renderMarkdown(text) {
+      const html = window.marked.parse(text || "", { gfm: true, breaks: true });
+      return window.DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true, mathMl: true },
+      });
+    }
+
+    function stripLeadingTitle(markdown, title) {
+      const text = markdown || "";
+      const match = text.match(/^\s*#\s+([^\n]+)\n+/);
+      if (match && match[1].trim() === (title || "").trim()) {
+        return text.slice(match[0].length);
+      }
+      return text;
+    }
+
+    function embedCanvases() {
+      for (const p of [...content.querySelectorAll("p")]) {
+        const match = (p.textContent || "").trim().match(/^\{\{canvas:([A-Za-z0-9_-]+)\}\}$/);
+        if (!match) continue;
+        const frame = document.createElement("iframe");
+        frame.className = "canvas-embed";
+        frame.title = "交互演示";
+        frame.loading = "lazy";
+        frame.referrerPolicy = "no-referrer";
+        frame.sandbox = "allow-scripts allow-forms allow-popups allow-modals allow-downloads";
+        frame.srcdoc = data.canvases[match[1]] || "<!doctype html><html><body>演示未包含</body></html>";
+        p.replaceWith(frame);
+      }
+    }
+
+    function renderNav() {
+      lessonNav.replaceChildren();
+      lessons.forEach((lesson, index) => {
+        const button = el("button", "lesson-link");
+        button.type = "button";
+        if (lesson.id === state.lessonId) button.classList.add("active");
+        button.append(
+          el("span", "lesson-index", String(lesson.order || index + 1).padStart(2, "0")),
+          el("span", "", lesson.title || lesson.id)
+        );
+        button.onclick = () => selectLesson(lesson.id);
+        lessonNav.append(button);
+      });
+    }
+
+    function updateActions() {
+      const index = lessons.findIndex((item) => item.id === state.lessonId);
+      prev.disabled = index <= 0;
+      next.disabled = index < 0 || index >= lessons.length - 1;
+    }
+
+    function selectLesson(lessonId) {
+      const lesson = data.lessons[lessonId];
+      if (!lesson) return;
+      state.lessonId = lessonId;
+      storeSet(`walle.course.${course.id}.lesson`, lessonId);
+      renderNav();
+      updateActions();
+      readerHead.replaceChildren(
+        el("h2", "", lesson.title || lesson.id),
+        el("span", "", `第 ${lesson.order || "?"} 课`)
+      );
+      content.innerHTML = renderMarkdown(
+        stripLeadingTitle(lesson.markdown, lesson.title)
+      );
+      for (const link of content.querySelectorAll("a")) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      embedCanvases();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function start() {
+      courseTitle.textContent = course.title || course.id || "课程";
+      document.title = `${course.title || course.id || "课程"} · Walle`;
+      courseGoal.textContent = course.goal || "";
+      renderNav();
+      if (!lessons.length) {
+        const empty = el("div", "empty");
+        empty.append(el("strong", "", "课程还没有课节"), document.createTextNode("请在原始课程中补充内容后重新导出。"));
+        content.append(empty);
+        return;
+      }
+      const saved = storeGet(`walle.course.${course.id}.lesson`);
+      const known = lessons.some((item) => item.id === saved) ? saved : lessons[0].id;
+      selectLesson(known);
+    }
+
+    prev.addEventListener("click", () => {
+      const index = lessons.findIndex((item) => item.id === state.lessonId);
+      if (index > 0) selectLesson(lessons[index - 1].id);
+    });
+    next.addEventListener("click", () => {
+      const index = lessons.findIndex((item) => item.id === state.lessonId);
+      if (index >= 0 && index < lessons.length - 1) selectLesson(lessons[index + 1].id);
+    });
+
+    start();
+  </script>
+</body>
+</html>

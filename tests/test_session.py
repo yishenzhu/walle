@@ -164,6 +164,16 @@ def test_tutor_agent_is_read_only():
     assert not agent.tool_filter.allows("write_lesson")
 
 
+def test_learning_agent_can_build_courses():
+    from ..core import Agent
+
+    agent = Agent.load("learning")
+    assert agent.tool_filter.allows("create_course")
+    assert agent.tool_filter.allows("write_lesson")
+    assert agent.tool_filter.allows("canvas")
+    assert not agent.tool_filter.allows("bash")
+
+
 class TestSessionLifecycle:
     async def test_attach_detach(self, tmp_path):
         """attach 绑定 transport；detach 解除但不销毁 messages。"""

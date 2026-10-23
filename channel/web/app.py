@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ...infra.course_store import (
@@ -20,6 +20,7 @@ from ...infra.course_store import (
     read_lesson,
 )
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
+from .course_export import build_course_zip
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Walle Web")
@@ -131,6 +132,24 @@ async def course_page(course_id: str) -> HTMLResponse:
     return HTMLResponse(
         COURSE_PAGE.read_text(encoding="utf-8"),
         headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/courses/{course_id}/export")
+async def export_course(course_id: str) -> Response:
+    if not SAFE_ID.fullmatch(course_id):
+        raise HTTPException(status_code=404)
+    try:
+        payload = build_course_zip(course_id, COURSES_ROOT, STATIC)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{course_id}.zip"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

@@ -1,0 +1,94 @@
+"""课程包导出：生成可离线打开的静态站点 zip。
+
+zip 内包含：
+    index.html        # 阅读器（读 data.js，不依赖 fetch，file:// 可打开）
+    data.js           # 课程清单、课节 Markdown、画布 HTML
+    static/           # marked / KaTeX / DOMPurify 与字体
+    course.json       # 脱敏后的课程索引
+    lessons/*.md      # 原始课节源文件
+    canvas/*.html     # 原始画布源文件
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from ...infra.course_store import (
+    CANVAS_DIR,
+    COURSE_FILE,
+    LESSONS_DIR,
+    course_dir,
+    load_course,
+    read_lesson,
+)
+
+PRIVATE_FIELDS = ("workspace", "session_id")
+
+
+def course_bundle(
+    course_id: str,
+    courses_root: str | Path,
+) -> dict[str, Any]:
+    course = load_course(course_id, courses_root)
+    if course is None:
+        raise ValueError(f"course not found: {course_id}")
+
+    exported = {k: v for k, v in course.items() if k not in PRIVATE_FIELDS}
+    lessons: dict[str, Any] = {}
+    for item in exported.get("lessons") or []:
+        loaded = read_lesson(course_id, item["id"], courses_root)
+        if loaded is not None:
+            lessons[item["id"]] = loaded
+
+    canvases: dict[str, str] = {}
+    directory = course_dir(course_id, courses_root) / CANVAS_DIR
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.html")):
+            canvases[path.stem] = path.read_text(encoding="utf-8")
+
+    return {"course": exported, "lessons": lessons, "canvases": canvases}
+
+
+def build_course_zip(
+    course_id: str,
+    courses_root: str | Path,
+    static_dir: str | Path,
+    template_dir: str | Path | None = None,
+) -> bytes:
+    bundle = course_bundle(course_id, courses_root)
+    static = Path(static_dir)
+    template = Path(template_dir or Path(__file__).parent) / "export.html"
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("index.html", template.read_text(encoding="utf-8"))
+        archive.writestr(
+            "data.js",
+            "window.COURSE_DATA = "
+            + json.dumps(bundle, ensure_ascii=False)
+            + ";\n",
+        )
+        archive.writestr(
+            COURSE_FILE,
+            json.dumps(bundle["course"], ensure_ascii=False, indent=2) + "\n",
+        )
+        for lesson_id, lesson in bundle["lessons"].items():
+            archive.writestr(
+                f"{LESSONS_DIR}/{lesson_id}.md",
+                lesson.get("markdown") or "",
+            )
+        for canvas_id, html in bundle["canvases"].items():
+            archive.writestr(f"{CANVAS_DIR}/{canvas_id}.html", html)
+
+        for name in ("marked.min.js", "purify.min.js"):
+            archive.write(static / name, f"static/{name}")
+        katex = static / "katex"
+        for path in sorted(katex.rglob("*")):
+            if path.is_file():
+                archive.write(path, f"static/katex/{path.relative_to(katex)}")
+
+    return buffer.getvalue()

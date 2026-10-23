@@ -144,7 +144,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（378 项，无需 API Key）
+pytest -q                      # 单元测试（382 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -201,6 +201,7 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 
 - **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
 - **课程阅读页**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，右侧常驻课程答疑；可上一课/下一课并记住上次课节。
+- **学习模式**：顶栏「学习模式」开启后，新会话由 `learning` agent 生成课程包；空状态提示与快捷问题同步切换。
 - **服务重启恢复**：attach 失败时 Web 用同一 `chat_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
@@ -349,6 +350,7 @@ tools:
 - **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **课程导师**：`.agent/agents/tutor.md`，只读答疑（仅允许 `read_course`），课程页自动使用
+- **学习规划**：`.agent/agents/learning.md`，用 `create_course` / `write_lesson` / `canvas` 生成课程包，Web「学习模式」使用
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
@@ -467,7 +469,8 @@ data/courses/<course_id>/
 - `canvas(..., course_id=...)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
 - Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
-- 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留。
+- 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留；
+- `/courses/<id>/export` 导出 zip 静态站点：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课程源文件，解压后可直接用浏览器打开；依赖 CDN 的画布仍需联网。
 
 ### 配置多智能体 Handoff
 
@@ -538,7 +541,9 @@ walle/
 │       ├── app.py             #     FastAPI 应用与桥接（对话/画布/课程路由）
 │       ├── index.html         #     对话 + 画布页面
 │       ├── courses.html       #     课程列表
-│       ├── course.html        #     课程阅读页（md + 画布混排）
+│       ├── course.html        #     课程阅读页（md + 画布 + 答疑）
+│       ├── course_export.py   #     课程包 zip 导出
+│       ├── export.html        #     离线课程阅读器模板
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明

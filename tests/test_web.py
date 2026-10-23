@@ -2,9 +2,11 @@
 
 import asyncio
 import importlib
+import io
 import queue
 import threading
 import time
+import zipfile
 from urllib.parse import quote
 
 from fastapi.testclient import TestClient
@@ -138,6 +140,8 @@ def test_index_serves_chat_page():
     assert 'id="workspace-button"' in response.text
     assert 'id="workspace-modal"' in response.text
     assert 'id="session-list"' in response.text
+    assert 'id="agent-mode"' in response.text
+    assert 'params.set("agent", agentMode)' in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
     assert 'href="/courses"' in response.text
@@ -308,6 +312,7 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert page.status_code == 200
     assert 'id="lesson-nav"' in page.text
     assert 'id="qa-log"' in page.text
+    assert 'id="export-link"' in page.text
     assert 'params.set("agent", "tutor")' in page.text
     assert "/api/courses" in page.text
 
@@ -329,6 +334,14 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert rendered.status_code == 200
     assert rendered.text == "<html><body>demo</body></html>"
     assert rendered.headers["cache-control"] == "no-store"
+
+    exported = client.get(f"/courses/{course['id']}/export")
+    assert exported.status_code == 200
+    assert exported.headers["content-type"] == "application/zip"
+    assert "attachment" in exported.headers["content-disposition"]
+    archive = zipfile.ZipFile(io.BytesIO(exported.content))
+    assert "index.html" in archive.namelist()
+    assert "data.js" in archive.namelist()
 
     assert client.get("/courses/missing").status_code == 404
     assert client.get(f"/courses/{course['id']}/canvas/missing").status_code == 404

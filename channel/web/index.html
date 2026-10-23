@@ -92,7 +92,10 @@
     .chat-empty[hidden] { display: none; }
 
     /* ── 工作区 / 会话选择 ───────────────────────── */
-    #workspace-button { align-self: center; padding: 4px 10px; font-size: 12px; }
+    #workspace-button, #agent-mode { align-self: center; padding: 4px 10px; font-size: 12px; }
+    #agent-mode.on {
+      border-color: var(--accent); background: var(--accent-soft); color: #cfe3ff;
+    }
     a.ghost {
       align-self: center; display: inline-flex; align-items: center;
       padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border);
@@ -469,6 +472,7 @@
         <h1>Walle</h1><small>web channel</small>
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
+        <button id="agent-mode" class="ghost" title="切换通用 / 学习模式">学习模式</button>
         <a class="ghost" href="/courses" target="_blank" rel="noopener">学习</a>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
@@ -583,6 +587,7 @@
     const canvasClose = document.getElementById("canvas-close");
     const canvasLatest = document.getElementById("canvas-latest");
     const workspaceButton = document.getElementById("workspace-button");
+    const agentModeButton = document.getElementById("agent-mode");
     const workspaceModal = document.getElementById("workspace-modal");
     const workspaceClose = document.getElementById("workspace-close");
     const workspacePath = document.getElementById("workspace-path");
@@ -592,6 +597,16 @@
     const sessionNew = document.getElementById("session-new");
     const sessionList = document.getElementById("session-list");
     const workspaceState = { cwd: "", active: "", defaultCwd: "" };
+    let agentMode = localStorage.getItem("walle.agent") === "learning" ? "learning" : "";
+    const emptyStrong = chatEmpty.querySelector("strong");
+    const emptyCopy = chatEmpty.querySelector("p");
+    const emptyHints = [...chatEmpty.querySelectorAll(".hint")];
+    const generalHints = emptyHints.map((node) => [node.textContent, node.dataset.prompt]);
+    const learningHints = [
+      ["学傅里叶变换", "我想学傅里叶变换，请制定学习计划并准备学习资料"],
+      ["4 周计划", "帮我制定一个 4 周的学习计划"],
+      ["从零学线代", "从零开始学线性代数"],
+    ];
     // canvas_id → { id, chatId, title, version, card, name }
     const canvases = new Map();
     let shownCanvas = null;
@@ -645,6 +660,33 @@
     function setWorkspaceLabel(path) {
       workspaceButton.textContent = path ? `工作区 · ${baseName(path)}` : "工作区";
       workspaceButton.title = path || "选择工作目录与会话";
+    }
+
+    function applyAgentMode(mode, reconnect = false) {
+      agentMode = mode === "learning" ? "learning" : "";
+      localStorage.setItem("walle.agent", agentMode || "default");
+      const on = agentMode === "learning";
+      agentModeButton.classList.toggle("on", on);
+      agentModeButton.textContent = on ? "学习模式 · 开" : "学习模式";
+      agentModeButton.title = on
+        ? "已开启学习模式：新会话由学习导师生成课程"
+        : "切换通用 / 学习模式";
+      input.placeholder = on
+        ? "想学什么？我来制定学习计划和资料…"
+        : "问点什么… Enter 发送，Shift+Enter 换行";
+      if (emptyStrong) emptyStrong.textContent = on ? "开始学习" : "开始对话";
+      if (emptyCopy) {
+        emptyCopy.textContent = on
+          ? "告诉我想学什么，学习导师会制定计划、写课节，并配交互画布。"
+          : "直接提问，或让 Walle 在右侧画布中画图、推公式、做动效。";
+      }
+      const hints = on ? learningHints : generalHints;
+      emptyHints.forEach((node, index) => {
+        if (!hints[index]) return;
+        node.textContent = hints[index][0];
+        node.dataset.prompt = hints[index][1];
+      });
+      if (reconnect) connect(workspaceState.cwd, newSessionId(), false);
     }
 
     function resetChat() {
@@ -1432,6 +1474,7 @@
       if (cwd) params.set("cwd", cwd);
       if (sessionId) params.set("session", sessionId);
       if (attach) params.set("attach", "1");
+      if (agentMode) params.set("agent", agentMode);
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const query = params.toString();
       const socket = new WebSocket(
@@ -1476,6 +1519,9 @@
     send.addEventListener("click", submit);
     stop.addEventListener("click", cancel);
     workspaceButton.addEventListener("click", openWorkspaceModal);
+    agentModeButton.addEventListener("click", () => {
+      applyAgentMode(agentMode ? "" : "learning", true);
+    });
     workspaceClose.addEventListener("click", closeWorkspaceModal);
     workspaceModal.addEventListener("click", (event) => {
       if (event.target === workspaceModal) closeWorkspaceModal();
@@ -1572,6 +1618,7 @@
     async function init() {
       let cwd = localStorage.getItem("walle.cwd") || "";
       const savedSession = localStorage.getItem("walle.session") || "";
+      applyAgentMode(agentMode, false);
       try {
         const data = await api("/api/workspaces");
         workspaceState.defaultCwd = data.current || "";
