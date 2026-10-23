@@ -22,6 +22,7 @@
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
 | 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
+| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；`/courses` 阅读页支持 `{{canvas:id}}` 混排 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
@@ -143,7 +144,7 @@ pip install -e ".[dev]"
 ### 开发与检查
 
 ```bash
-pytest -q                      # 单元测试（360 项，无需 API Key）
+pytest -q                      # 单元测试（373 项，无需 API Key）
 ruff check .                   # 静态检查
 ruff check --fix .             # 自动修复（import 排序等）
 ```
@@ -199,6 +200,7 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 ```
 
 - **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
+- **课程阅读页**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，可上一课/下一课并记住上次课节。
 - **服务重启恢复**：attach 失败时 Web 用同一 `chat_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
@@ -255,6 +257,8 @@ tool:
       - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
       - [allow, ask_user]             # 提问工具自动放行
       - [allow, canvas]               # 画布 HTML 在 sandbox iframe 内渲染，自动放行
+      - [allow, create_course]        # 课程包写入 data/courses
+      - [allow, write_lesson]         # 课节 md 写入 data/courses
       - [allow, read]                 # 读文件自动放行（技能按需加载全文）
     default: ask                      # 默认需人工审批
 
@@ -434,13 +438,32 @@ async def weather(city: str) -> str:
 
 ### 🖼️ Web 画布工具
 
-`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?`：
+`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?` / `course_id?`：
 
-- HTML 写入 `data/canvas/<chat_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
+- 普通画布写入 `data/canvas/<chat_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
+- 传 `course_id` 时写入 `data/courses/<course_id>/canvas/<canvas_id>.html`，供课程阅读页按 `{{canvas:id}}` 嵌入；
 - 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
 - Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
 - 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
 - `conf.yaml.example` 默认 `[allow, canvas]`，不触发审批；画布 HTML 属于运行时数据，`data/` 已被 `.gitignore` 排除。
+
+### 📚 课程包
+
+课程包是一站式学习资料，目录自包含：
+
+```
+data/courses/<course_id>/
+├── course.json            # 标题、目标、课节索引（顺序/canvas_ids）
+├── lessons/<lesson>.md    # 课节正文，可混排 Markdown、LaTeX、{{canvas:id}}
+└── canvas/<canvas>.html   # 课程内交互演示
+```
+
+内置工具：
+
+- `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
+- `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
+- `canvas(..., course_id=...)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
+- Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节。
 
 ### 配置多智能体 Handoff
 
@@ -508,8 +531,10 @@ walle/
 │   │   ├── client.py          #     交互客户端（CLIClient）
 │   │   └── __main__.py        #     客户端入口（python -m walle.channel.cli）
 │   └── web/                   #   Web 工作区（WebSocket ↔ CLI）
-│       ├── app.py             #     FastAPI 应用与桥接（对话 + 画布路由）
+│       ├── app.py             #     FastAPI 应用与桥接（对话/画布/课程路由）
 │       ├── index.html         #     对话 + 画布页面
+│       ├── courses.html       #     课程列表
+│       ├── course.html        #     课程阅读页（md + 画布混排）
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明
@@ -525,6 +550,8 @@ walle/
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
 │       ├── canvas.py          #     Web 画布（HTML 落盘 + CanvasResult）
+│       ├── course.py          #     课程包（create_course / write_lesson）
+│       ├── paths.py           #     文件工具路径解析（会话 cwd）
 │       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
@@ -540,6 +567,7 @@ walle/
 │   ├── extension.py           #   ExtensionManager / ExtensionRunner / CommandContext
 │   ├── event_bus.py           #   会话事件总线（具体实现）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
+│   ├── course_store.py        #   课程包文件存储（course.json / lessons / canvas）
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化

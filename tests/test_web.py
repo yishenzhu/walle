@@ -10,6 +10,7 @@ from urllib.parse import quote
 from fastapi.testclient import TestClient
 
 from ..channel.transport import JSONLineConn
+from ..infra.course_store import create_course, write_lesson
 
 web = importlib.import_module("walle.channel.web.app")
 
@@ -139,6 +140,9 @@ def test_index_serves_chat_page():
     assert 'id="session-list"' in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
+    assert 'href="/courses"' in response.text
+    assert "function courseCard" in response.text
+    assert "打开学习空间" in response.text
     assert "开始对话" in response.text
     assert "sin(x) 函数" in response.text
     assert "生成参数" in response.text
@@ -264,6 +268,63 @@ def test_web_ws_falls_back_to_create_when_session_missing(monkeypatch, tmp_path)
             )
     finally:
         agent.stop()
+
+
+def make_course_bundle(tmp_path):
+    root = tmp_path / "courses"
+    course = create_course(
+        "测试课程",
+        goal="测试目标",
+        lessons=["第一课"],
+        root=root,
+    )
+    lesson = write_lesson(
+        course["id"],
+        "第一课",
+        "# 第一课\n\n{{canvas:demo}}\n",
+        root=root,
+    )
+    canvas = root / course["id"] / "canvas" / "demo.html"
+    canvas.parent.mkdir(parents=True, exist_ok=True)
+    canvas.write_text("<html><body>demo</body></html>", encoding="utf-8")
+    return root, course, lesson
+
+
+def test_course_pages_and_apis(monkeypatch, tmp_path):
+    root, course, lesson = make_course_bundle(tmp_path)
+    monkeypatch.setattr(web, "COURSES_ROOT", root)
+    client = TestClient(web.app)
+
+    listing = client.get("/courses")
+    assert listing.status_code == 200
+    assert "学习空间" in listing.text
+    assert "/api/courses" in listing.text
+
+    page = client.get(f"/courses/{course['id']}")
+    assert page.status_code == 200
+    assert 'id="lesson-nav"' in page.text
+    assert "/api/courses" in page.text
+
+    courses = client.get("/api/courses").json()["courses"]
+    assert courses[0]["id"] == course["id"]
+    assert courses[0]["lesson_count"] == 1
+
+    manifest = client.get(f"/api/courses/{course['id']}").json()
+    assert manifest["title"] == "测试课程"
+    assert manifest["lessons"][0]["id"] == lesson["id"]
+
+    content = client.get(
+        f"/api/courses/{course['id']}/lessons/{lesson['id']}"
+    ).json()
+    assert content["lesson"]["markdown"].startswith("# 第一课")
+
+    rendered = client.get(f"/courses/{course['id']}/canvas/demo")
+    assert rendered.status_code == 200
+    assert rendered.text == "<html><body>demo</body></html>"
+    assert rendered.headers["cache-control"] == "no-store"
+
+    assert client.get("/courses/missing").status_code == 404
+    assert client.get(f"/courses/{course['id']}/canvas/missing").status_code == 404
 
 
 def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):

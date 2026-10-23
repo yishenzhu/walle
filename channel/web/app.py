@@ -12,14 +12,23 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ...infra.course_store import (
+    canvas_file,
+    list_courses,
+    load_course,
+    read_lesson,
+)
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
+COURSES_PAGE = Path(__file__).with_name("courses.html")
+COURSE_PAGE = Path(__file__).with_name("course.html")
 STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
+COURSES_ROOT = Path(__file__).resolve().parents[2] / "data" / "courses"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -79,6 +88,65 @@ async def api_sessions(cwd: str = "") -> dict:
         raise HTTPException(status_code=400, detail=f"不是目录: {cwd}")
     reply = await query_agent({"type": "list_sessions", "cwd": str(target)})
     return {"cwd": str(target), "sessions": reply.get("sessions") or []}
+
+
+@app.get("/courses")
+async def courses_page() -> HTMLResponse:
+    return HTMLResponse(
+        COURSES_PAGE.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/courses")
+async def api_courses() -> dict:
+    return {"courses": list_courses(COURSES_ROOT)}
+
+
+@app.get("/api/courses/{course_id}")
+async def api_course(course_id: str) -> dict:
+    if not SAFE_ID.fullmatch(course_id):
+        raise HTTPException(status_code=404)
+    course = load_course(course_id, COURSES_ROOT)
+    if course is None:
+        raise HTTPException(status_code=404)
+    return course
+
+
+@app.get("/api/courses/{course_id}/lessons/{lesson_id}")
+async def api_lesson(course_id: str, lesson_id: str) -> dict:
+    if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(lesson_id):
+        raise HTTPException(status_code=404)
+    lesson = read_lesson(course_id, lesson_id, COURSES_ROOT)
+    if lesson is None:
+        raise HTTPException(status_code=404)
+    return {"course_id": course_id, "lesson": lesson}
+
+
+@app.get("/courses/{course_id}")
+async def course_page(course_id: str) -> HTMLResponse:
+    if not SAFE_ID.fullmatch(course_id) or load_course(course_id, COURSES_ROOT) is None:
+        raise HTTPException(status_code=404)
+    return HTMLResponse(
+        COURSE_PAGE.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/courses/{course_id}/canvas/{canvas_id}")
+async def course_canvas(course_id: str, canvas_id: str) -> HTMLResponse:
+    if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(canvas_id):
+        raise HTTPException(status_code=404)
+    path = canvas_file(course_id, canvas_id, COURSES_ROOT)
+    if not path.is_file():
+        raise HTTPException(status_code=404)
+    return HTMLResponse(
+        path.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/canvas/{chat_id}/{canvas_id}")

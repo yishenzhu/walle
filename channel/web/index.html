@@ -93,6 +93,14 @@
 
     /* ── 工作区 / 会话选择 ───────────────────────── */
     #workspace-button { align-self: center; padding: 4px 10px; font-size: 12px; }
+    a.ghost {
+      align-self: center; display: inline-flex; align-items: center;
+      padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border);
+      background: var(--panel2); color: var(--text); font-size: 12px;
+      text-decoration: none;
+    }
+    a.ghost:hover { border-color: var(--border-strong); background: var(--panel3); }
+    a.canvas-card { color: var(--text); text-decoration: none; }
     .modal {
       position: fixed; inset: 0; z-index: 60; padding: 16px;
       display: flex; align-items: center; justify-content: center;
@@ -461,6 +469,7 @@
         <h1>Walle</h1><small>web channel</small>
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
+        <a class="ghost" href="/courses" target="_blank" rel="noopener">学习</a>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
@@ -1165,10 +1174,17 @@
         row.querySelector(".tool-state").textContent = data.error ? "失败" : "完成";
       }
       finishApproval(data);
-      if (!data.error && isCanvasResult(data.result)) {
+      const result = data.result || {};
+      if (!data.error && result.type === "course") {
+        tools.delete(data.tool_call_id);
+        courseCard(result);
+      } else if (!data.error && result.type === "lesson") {
+        tools.delete(data.tool_call_id);
+        lessonCard(result);
+      } else if (!data.error && isCanvasResult(result)) {
         // 保留调用状态条：即使无需审批，也要能看到 canvas 被调用
         tools.delete(data.tool_call_id);
-        const state = canvasCard({ ...data.result, chat_id: data.chat_id });
+        const state = canvasCard({ ...result, chat_id: data.chat_id });
         // 面板已打开时：同画布版本更新直接刷新，新画布也直接切过去
         if (!canvasPanel.hidden) openCanvas(state);
       } else if (data.error && !hasCard) {
@@ -1205,13 +1221,17 @@
     }
 
     function canvasSrc(state) {
-      const chat = encodeURIComponent(state.chatId);
       const id = encodeURIComponent(state.id);
+      if (state.courseId) {
+        return `/courses/${encodeURIComponent(state.courseId)}/canvas/${id}?v=${state.version}`;
+      }
+      const chat = encodeURIComponent(state.chatId);
       return `/canvas/${chat}/${id}?v=${state.version}`;
     }
 
     function canvasCard(data) {
-      const existing = canvases.get(data.canvas_id);
+      const key = `${data.course_id || ""}:${data.canvas_id}`;
+      const existing = canvases.get(key);
       if (existing) {
         if (data.title) existing.title = data.title;
         if (data.version) existing.version = data.version;
@@ -1229,6 +1249,7 @@
       const state = {
         id: data.canvas_id,
         chatId: data.chat_id || "",
+        courseId: data.course_id || "",
         title: data.title || "画布",
         version: data.version || 0,
         card, name, open,
@@ -1238,11 +1259,41 @@
         event.stopPropagation();
         toggleCanvas(state);
       };
-      canvases.set(state.id, state);
+      canvases.set(key, state);
       latestCanvas = state;
       log.append(card);
       scroll();
       return state;
+    }
+
+    function courseCard(data) {
+      const card = el("a", "canvas-card");
+      card.href = `/courses/${encodeURIComponent(data.course_id)}`;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      const title = el("div", "canvas-title");
+      title.append(
+        el("div", "canvas-kicker", "课程"),
+        el("div", "canvas-name", data.title || "学习空间")
+      );
+      card.append(title, el("span", "canvas-open", "打开学习空间"));
+      log.append(card);
+      scroll();
+    }
+
+    function lessonCard(data) {
+      const card = el("a", "canvas-card");
+      card.href = `/courses/${encodeURIComponent(data.course_id)}?lesson=${encodeURIComponent(data.lesson_id)}`;
+      card.target = "_blank";
+      card.rel = "noopener noreferrer";
+      const title = el("div", "canvas-title");
+      title.append(
+        el("div", "canvas-kicker", `第 ${data.order || "?"} 课`),
+        el("div", "canvas-name", data.title || "课节")
+      );
+      card.append(title, el("span", "canvas-open", "打开课节"));
+      log.append(card);
+      scroll();
     }
 
     function toggleCanvas(state) {

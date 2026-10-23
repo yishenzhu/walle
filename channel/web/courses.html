@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>学习空间 · Walle</title>
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --panel2: #1c2330;
+      --border: #2c3644; --border-strong: #3d4b5f;
+      --text: #e6edf3; --muted: #8b98a8; --faint: #66717f;
+      --accent: #2f81f7; --accent-soft: #173a63;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background: radial-gradient(1100px 500px at 15% -10%, #17233a 0%, transparent 60%), var(--bg);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      max-width: 1080px; margin: 0 auto; padding: 18px 20px;
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
+    h1 { margin: 0; font-size: 18px; }
+    .brand small { color: var(--faint); font-size: 11px; }
+    a { color: #79b8ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    main { max-width: 1080px; margin: 0 auto; padding: 8px 20px 40px; }
+    .intro { color: var(--muted); font-size: 13px; margin: 0 0 18px; line-height: 1.7; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .course-card {
+      display: flex; flex-direction: column; gap: 8px; padding: 16px;
+      background: var(--panel); border: 1px solid var(--border-strong);
+      border-radius: 12px; color: var(--text);
+    }
+    .course-card:hover { border-color: var(--accent); text-decoration: none; }
+    .course-card h2 { margin: 0; font-size: 15px; line-height: 1.45; }
+    .course-card p {
+      margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .course-meta { display: flex; gap: 10px; color: var(--faint); font-size: 11px; }
+    .empty {
+      padding: 40px 20px; text-align: center; color: var(--muted);
+      border: 1px dashed var(--border-strong); border-radius: 12px; line-height: 1.8;
+    }
+    .empty strong { display: block; color: var(--text); margin-bottom: 6px; }
+    @media (max-width: 560px) {
+      header, main { padding-left: 14px; padding-right: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><h1>学习空间</h1><small>Walle</small></div>
+    <a href="/">返回对话</a>
+  </header>
+  <main>
+    <p class="intro">每个课程包包含学习计划、Markdown 课节和可交互画布，可从头开始，也可随时回到上次的课节。</p>
+    <div id="courses" class="grid"></div>
+  </main>
+  <script>
+    const container = document.getElementById("courses");
+
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function timeText(value) {
+      if (!value) return "";
+      const date = new Date(Number(value) * 1000);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
+    }
+
+    function render(courses) {
+      container.replaceChildren();
+      if (!courses.length) {
+        const empty = el("div", "empty");
+        empty.append(
+          el("strong", "", "还没有课程"),
+          document.createTextNode("在对话里让 Walle 为你制定学习计划，课程会自动出现在这里。")
+        );
+        container.append(empty);
+        return;
+      }
+      for (const course of courses) {
+        const card = el("a", "course-card");
+        card.href = `/courses/${encodeURIComponent(course.id)}`;
+        const title = el("h2", "", course.title || course.id);
+        const goal = el("p", "", course.goal || "暂无课程简介");
+        const meta = el("div", "course-meta");
+        meta.append(
+          el("span", "", `${course.lesson_count || 0} 课`),
+          el("span", "", timeText(course.updated_at))
+        );
+        card.append(title, goal, meta);
+        container.append(card);
+      }
+    }
+
+    fetch("/api/courses", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => render(data.courses || []))
+      .catch((err) => {
+        const empty = el("div", "empty", `课程加载失败：${err.message}`);
+        container.replaceChildren(empty);
+      });
+  </script>
+</body>
+</html>

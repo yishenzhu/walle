@@ -8,6 +8,7 @@ from ...infra import ExtensionAPI, Tool
 from .ask_user import ask_user
 from .bash import bash
 from .canvas import canvas
+from .course import create_course, write_lesson
 from .defined_tool import define_tool
 from .edit import edit
 from .history import history, new_window
@@ -20,6 +21,8 @@ BUILTIN_TOOLS = (
     bash,
     ask_user,
     canvas,
+    create_course,
+    write_lesson,
     background,
     job_result,
     read,
