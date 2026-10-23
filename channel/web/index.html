@@ -473,7 +473,7 @@
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
         <button id="agent-mode" class="ghost" title="切换通用 / 学习模式">学习模式</button>
-        <a class="ghost" href="/courses" target="_blank" rel="noopener">学习</a>
+        <a class="ghost" href="/courses">学习</a>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
@@ -574,6 +574,8 @@
     let reconnectTimer = null;
     let reconnectAttempts = 0;
     let suppressReconnect = false;
+    let sessionTakenOver = false;
+    let agentSwitchPending = null;
     let connectionTarget = null;
     // tool_call_id → { card, pill, hint, actions, allow, deny, decision }
     const approvals = new Map();
@@ -666,14 +668,14 @@
       workspaceButton.title = path || "选择工作目录与会话";
     }
 
-    function applyAgentMode(mode, reconnect = false) {
+    function applyAgentMode(mode, live = false) {
       agentMode = mode === "learning" ? "learning" : "";
       localStorage.setItem("walle.agent", agentMode || "default");
       const on = agentMode === "learning";
       agentModeButton.classList.toggle("on", on);
       agentModeButton.textContent = on ? "学习模式 · 开" : "学习模式";
       agentModeButton.title = on
-        ? "已开启学习模式：新会话由学习导师生成课程"
+        ? "已开启学习模式：当前会话由学习导师处理"
         : "切换通用 / 学习模式";
       input.placeholder = on
         ? "想学什么？我来制定学习计划和资料…"
@@ -690,7 +692,14 @@
         node.textContent = hints[index][0];
         node.dataset.prompt = hints[index][1];
       });
-      if (reconnect) connect(workspaceState.cwd, newSessionId(), false);
+      // 当前连接可用时直接切 agent，不断开、不重建会话；
+      // 若恰好断线，下一次重连带上待切换的 agent。
+      if (live) {
+        const targetAgent = agentMode || "default";
+        if (!sendFrame({ type: "set_agent", agent: targetAgent })) {
+          agentSwitchPending = targetAgent;
+        }
+      }
     }
 
     function resetChat() {
@@ -1434,6 +1443,17 @@
       if (msg.type !== "notify") return;
 
       const data = msg.data || {};
+      if (data.type === "error" && data.code === "session_taken_over") {
+        // 同一会话在别的标签页/窗口打开：旧连接会被服务端踢下线。
+        // 此时若继续自动重连，会和新连接互相抢会话，形成无限重连。
+        suppressReconnect = true;
+        sessionTakenOver = true;
+        note("会话已在其他页面打开，本页已停止重连", true);
+        busy = false;
+        closePending("session_taken_over");
+        updateComposer();
+        return;
+      }
       if (data.type === "delta") {
         if (!current) {
           current = add("assistant", "");
@@ -1484,6 +1504,7 @@
       if (!isReconnect) {
         reconnectAttempts = 0;
         suppressReconnect = false;
+        sessionTakenOver = false;
       }
       const targetSession = sessionId || newSessionId();
       connectionTarget = { cwd: cwd || "", sessionId: targetSession };
@@ -1506,23 +1527,34 @@
       if (cwd) params.set("cwd", cwd);
       params.set("session", targetSession);
       if (attach) params.set("attach", "1");
-      if (agentMode) params.set("agent", agentMode);
+      // 显式指定 agent 只用于学习模式 / 断线期间待切换的情况；
+      // 普通重连不传，避免覆盖会话原有的自定义 agent。
+      const requestedAgent = agentSwitchPending || agentMode;
+      if (requestedAgent) params.set("agent", requestedAgent);
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const query = params.toString();
       const socket = new WebSocket(
         `${proto}://${location.host}/ws/chat${query ? `?${query}` : ""}`
       );
       ws = socket;
-      socket.onopen = () => { setStatus("已连接", "on"); updateComposer(); };
+      socket.onopen = () => {
+        agentSwitchPending = null;
+        setStatus("已连接", "on");
+        updateComposer();
+      };
       socket.onmessage = (event) => {
         try { handle(JSON.parse(event.data)); } catch (err) { console.error(err); }
       };
       socket.onclose = () => {
         if (ws !== socket) return;
-        setStatus("已断开", "off");
         busy = false;
         closePending("连接已断开");
         updateComposer();
+        if (suppressReconnect) {
+          setStatus(sessionTakenOver ? "已在其他页面打开" : "已断开", "off");
+          return;
+        }
+        setStatus("已断开", "off");
         scheduleReconnect();
       };
       socket.onerror = () => {

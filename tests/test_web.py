@@ -141,14 +141,19 @@ def test_index_serves_chat_page():
     assert 'id="workspace-modal"' in response.text
     assert 'id="session-list"' in response.text
     assert 'id="agent-mode"' in response.text
-    assert 'params.set("agent", agentMode)' in response.text
+    assert "const requestedAgent = agentSwitchPending || agentMode" in response.text
+    assert 'type: "set_agent"' in response.text
+    assert "if (live)" in response.text
     assert "querySession" in response.text
     assert "queryPrompt" in response.text
     assert "scheduleReconnect" in response.text
+    assert "session_taken_over" in response.text
+    assert "本页已停止重连" in response.text
     assert "重连中" in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
     assert 'href="/courses"' in response.text
+    assert 'target="_blank" rel="noopener">学习</a>' not in response.text
     assert "function courseCard" in response.text
     assert "打开学习空间" in response.text
     assert "开始对话" in response.text
@@ -263,6 +268,26 @@ def test_web_ws_passes_workspace_and_session(monkeypatch, tmp_path):
         agent.stop()
 
 
+def test_web_ws_forwards_set_agent(monkeypatch, tmp_path):
+    agent = FakeAgent()
+    port = agent.start()
+    monkeypatch.setattr(web, "PORT", port)
+    try:
+        url = (
+            f"/ws/chat?cwd={quote(str(tmp_path))}"
+            "&session=web-existing&attach=1&agent=learning"
+        )
+        with TestClient(web.app).websocket_connect(url) as ws:
+            assert ws.receive_json()["type"] == "welcome"
+            ws.send_json({"type": "set_agent", "agent": "default"})
+            assert agent.frames.get(timeout=2) == {
+                "type": "set_agent",
+                "agent": "default",
+            }
+    finally:
+        agent.stop()
+
+
 def test_web_ws_falls_back_to_create_when_session_missing(monkeypatch, tmp_path):
     agent = FakeAgent(attach_error=True)
     port = agent.start()
@@ -316,6 +341,8 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert page.status_code == 200
     assert 'id="lesson-nav"' in page.text
     assert 'id="qa-log"' in page.text
+    assert "session_taken_over" in page.text
+    assert "本页答疑已停止重连" in page.text
     assert 'id="export-link"' in page.text
     assert 'id="plan-meta"' in page.text
     assert 'id="continue-learning"' in page.text

@@ -140,8 +140,10 @@ class CLIConnection:
         self,
         on_input: Callable[[str], Awaitable[None]],
         on_cancel: Callable[[], Awaitable[None]] | None = None,
+        on_agent: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
-        """读帧：input → on_input；reply → resolve；cancel → on_cancel。
+        """读帧：input → on_input；reply → resolve；cancel → on_cancel；
+        set_agent → on_agent（会话内切换 agent，不断开连接）。
 
         input 不直接 await on_input，而是入队由独立 worker 串行消费：读循环
         保持活跃，agent 运行期间 reply 帧（审批 / 提问的回复）仍能被读取。
@@ -167,6 +169,17 @@ class CLIConnection:
                     self.resolve(msg.get("id", ""), msg.get("data"))
                 elif t == "cancel" and on_cancel is not None:
                     await on_cancel()
+                elif t == "set_agent" and on_agent is not None:
+                    try:
+                        await on_agent(str(msg.get("agent") or "default"))
+                    except Exception as exc:
+                        logger.warning(f"agent switch failed: {exc}")
+                        await self.notify(
+                            Error(
+                                message=f"切换 agent 失败: {exc}",
+                                code="agent_switch_failed",
+                            )
+                        )
         finally:
             if not self._handover:
                 worker.cancel()
@@ -407,7 +420,10 @@ class CLIServer:
             async def on_cancel() -> None:
                 await session.cancel(reason="user cancelled")
 
-            await conn.run(on_input, on_cancel)
+            async def on_agent(name: str) -> None:
+                session.set_agent(name)
+
+            await conn.run(on_input, on_cancel, on_agent)
         except (OSError, asyncio.IncompleteReadError, ValueError) as exc:
             logger.debug(f"cli conn {chat_id} closed: {exc}")
         finally:

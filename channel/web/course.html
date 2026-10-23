@@ -284,6 +284,7 @@
     let chatTimer = null;
     let chatAttempts = 0;
     let chatSuppress = false;
+    let chatTakenOver = false;
 
     if (window.marked && window.markedKatex) {
       window.marked.use(
@@ -512,6 +513,7 @@
       if (!isReconnect) {
         chatAttempts = 0;
         chatSuppress = false;
+        chatTakenOver = false;
       }
       if (!state.course || !state.course.qa_session_id) {
         setQaStatus("不可用", "off");
@@ -577,16 +579,28 @@
         } else if (msg.type === "notify" && data.type === "tool_result") {
           if (chatToolNote) { chatToolNote.remove(); chatToolNote = null; }
         } else if (msg.type === "notify" && data.type === "error") {
-          qaNote(`错误：${data.message || data.code || "unknown"}`);
+          if (data.code === "session_taken_over") {
+            // 同一答疑会话已在其他页面打开：停止重连，避免两边互相接管。
+            chatSuppress = true;
+            chatTakenOver = true;
+            setQaStatus("已在其他页面打开", "off");
+            qaNote("会话已在其他页面打开，本页答疑已停止重连");
+          } else {
+            qaNote(`错误：${data.message || data.code || "unknown"}`);
+          }
           chatBusy = false;
           updateQaComposer();
         }
       };
       socket.onclose = () => {
         if (chatWs !== socket) return;
-        setQaStatus("已断开", "off");
         chatBusy = false;
         updateQaComposer();
+        if (chatSuppress) {
+          setQaStatus(chatTakenOver ? "已在其他页面打开" : "不可用", "off");
+          return;
+        }
+        setQaStatus("已断开", "off");
         scheduleChatReconnect();
       };
       socket.onerror = () => {

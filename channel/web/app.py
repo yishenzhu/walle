@@ -373,6 +373,11 @@ async def chat(
                     # 服务端读循环支持 cancel（取消当前 run 并回终态），
                     # Web 端补上转发，页面才能中断卡住/过长的执行。
                     await link.send({"type": "cancel"})
+                elif data.get("type") == "set_agent":
+                    # 会话内切换 agent（学习模式开关），复用现有连接，不重建会话。
+                    name = str(data.get("agent") or "default")
+                    if SAFE_ID.fullmatch(name):
+                        await link.send({"type": "set_agent", "agent": name})
 
         tasks = [
             asyncio.create_task(agent_to_ws()),

@@ -207,6 +207,12 @@ async def test_attach_learning_run_continues(tmp_path):
         )
         assert (await read_frame(r2))["type"] == "welcome"
 
+        # 旧连接必须收到明确的接管原因，前端据此停止自动重连，
+        # 否则两个标签页会互相接管、无限重连。
+        old_msg = await read_frame(r1)
+        assert old_msg["type"] == "notify"
+        assert old_msg["data"]["code"] == "session_taken_over"
+
         await asyncio.wait_for(finished.wait(), 2)
         for _ in range(50):
             if session.state == "idle":
@@ -218,6 +224,99 @@ async def test_attach_learning_run_continues(tmp_path):
             if writer is not None:
                 writer.close()
                 await writer.wait_closed()
+        await server.stop()
+        await manager.close()
+
+
+async def test_attach_switches_agent_and_keeps_history(tmp_path):
+    """重连场景：attach 现有会话时按 hello 里的 agent 切配置，历史不丢。"""
+    manager = SessionManager(
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+        ),
+        storage="memory",
+        path=str(tmp_path / "s.db"),
+    )
+    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+
+    async def connect(hello):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write((json.dumps(hello) + "\n").encode())
+        await writer.drain()
+        return reader, writer
+
+    r1, w1 = await connect(
+        {"type": "hello", "chat_id": "switch-agent", "agent": "learning"}
+    )
+    r2 = w2 = None
+    try:
+        msg = json.loads(await asyncio.wait_for(r1.readline(), 2))
+        assert msg["type"] == "welcome"
+        session = manager.get("switch-agent")
+        assert session.agent_name == "learning"
+
+        r2, w2 = await connect(
+            {
+                "type": "hello",
+                "chat_id": "switch-agent",
+                "attach": True,
+                "agent": "default",
+            }
+        )
+        msg = json.loads(await asyncio.wait_for(r2.readline(), 2))
+        assert msg["type"] == "welcome"
+        assert session.agent_name == "default"
+    finally:
+        for writer in (w1, w2):
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        await server.stop()
+        await manager.close()
+
+
+async def test_server_switches_agent_on_same_connection(tmp_path):
+    """学习模式开关走 set_agent 帧：同一连接切换 agent，不触发 reattach。"""
+    manager = SessionManager(
+        tool_config=ToolConfig(
+            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+        ),
+        storage="memory",
+        path=str(tmp_path / "s.db"),
+    )
+    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+
+    async def connect(hello):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write((json.dumps(hello) + "\n").encode())
+        await writer.drain()
+        return reader, writer
+
+    reader, writer = await connect(
+        {"type": "hello", "chat_id": "live-switch", "agent": "learning"}
+    )
+    try:
+        msg = json.loads(await asyncio.wait_for(reader.readline(), 2))
+        assert msg["type"] == "welcome"
+        session = manager.get("live-switch")
+        assert session.agent_name == "learning"
+
+        writer.write(
+            (json.dumps({"type": "set_agent", "agent": "default"}) + "\n").encode()
+        )
+        await writer.drain()
+        for _ in range(100):
+            if session.agent_name == "default":
+                break
+            await asyncio.sleep(0.02)
+        assert session.agent_name == "default"
+    finally:
+        writer.close()
+        await writer.wait_closed()
         await server.stop()
         await manager.close()
 

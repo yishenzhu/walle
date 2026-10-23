@@ -153,6 +153,52 @@ async def test_conn_run_processes_consecutive_inputs():
         await server.wait_closed()
 
 
+async def test_conn_run_switches_agent_without_disconnect():
+    """set_agent 帧：同一条连接内切换 agent，后续 input 仍正常处理。"""
+    switched: list[str] = []
+    inputs: list[str] = []
+    switched_done = asyncio.Event()
+    input_done = asyncio.Event()
+
+    async def handle_client(reader, writer):
+        conn = CLIConnection("switch-conn", reader, writer)
+
+        async def on_input(content):
+            inputs.append(content)
+            input_done.set()
+
+        async def on_agent(name):
+            switched.append(name)
+            switched_done.set()
+
+        try:
+            await conn.run(on_input, None, on_agent)
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(
+            (json.dumps({"type": "set_agent", "agent": "learning"}) + "\n").encode()
+        )
+        await writer.drain()
+        await asyncio.wait_for(switched_done.wait(), timeout=2)
+        assert switched == ["learning"]
+
+        writer.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        await writer.drain()
+        await asyncio.wait_for(input_done.wait(), timeout=2)
+        assert inputs == ["hi"]
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        server.close()
+        await server.wait_closed()
+
+
 class DictReplyChannel:
     """模拟真实通道：call 返回 JSON 反序列化后的 dict。"""
 
