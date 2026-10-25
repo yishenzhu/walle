@@ -1,10 +1,4 @@
-"""插件系统：加载器(PluginManager)产出声明，激活器(PluginRunner)按会话生效。
-
-- PluginManager（进程级一次）：add/discover 收集 factory，load() 产出
-  PluginDeclaration（tools/handlers/commands）。无副作用、不持有 bus/工具表。
-- PluginRunner（每会话一个）：把选中的插件激活到本会话的 bus + 工具表 +
-  命令表；支持 unload/重激活。同一插件可被多个会话独立激活。
-"""
+"""插件系统：加载器(PluginManager)产出声明，激活器(PluginRunner)按会话生效。"""
 
 from __future__ import annotations
 
@@ -58,13 +52,7 @@ class Skill:
 
 @dataclass
 class CommandContext:
-    """命令执行上下文：暴露会话底层能力，用法由命令自己决定。
-
-    channel = 会话 transport：notify(Delta/DeltaEnd...) 推送、call(Inquiry)
-    向用户提问；bus = 会话事件总线（消息输出等事件）。messages/
-    provider 为会话注入的底层状态（命令需要时可取，未注入则 None）。
-    命令按需自取，不预设 UI 语义。
-    """
+    """命令执行上下文：暴露会话底层能力，用法由命令自己决定。"""
 
     channel: Channel | None
     bus: EventBus
@@ -74,11 +62,7 @@ class CommandContext:
 
 @dataclass(frozen=True)
 class Command:
-    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。
-
-    handler(args, ctx)：推送与交互由命令经 ctx（notify/confirm/select/
-    input）自己决定；不调用即静默。
-    """
+    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。"""
 
     name: str
     description: str
@@ -86,11 +70,7 @@ class Command:
 
 
 class PluginAPI:
-    """插件 factory 拿到的注册接口：load 期收集，activate 期落盘。
-
-    所有方法只写 pending PluginDeclaration，杜绝加载期就污染 bus / manager——
-    一个插件失败不会泄漏半套注册。
-    """
+    """插件 factory 拿到的注册接口：load 期收集，activate 期落盘。"""
 
     def __init__(self, plugin: PluginDeclaration) -> None:
         self._plugin = plugin
@@ -120,12 +100,7 @@ PluginFactory = Callable[[PluginAPI], Awaitable[None]]
 
 
 class PluginManager:
-    """进程级插件加载器：add/discover 收集 factory，load() 产出插件声明。
-
-    只负责"把插件代码加载成声明"(PluginDeclaration: tools/handlers/commands)。
-    激活到某会话(挂 bus/工具表/命令)由会话级 PluginRunner 承担——
-    本类不持有 bus / 工具表，无任何副作用。
-    """
+    """进程级插件加载器：add/discover 收集 factory，load() 产出插件声明。"""
 
     def __init__(self) -> None:
         self._factories: list[tuple[str, PluginFactory]] = []
@@ -141,12 +116,7 @@ class PluginManager:
         enabled: list[str] | None = None,
         disabled: list[str] | None = None,
     ) -> None:
-        """扫描插件目录，按启停名单过滤后注册 factory。
-
-        每个子目录 = 一个插件，入口为 <dir>/plugin.py（顶层
-        load_plugin(api) 或 main(api)）。import / 入口缺失等错误
-        留到 load() 阶段暴露为 FAILED（失败隔离），此处只收集。
-        """
+        """扫描插件目录，按启停名单过滤后注册 factory。"""
         enabled = enabled or []
         disabled = disabled or []
         base = Path(resolve_path(str(root)))  # 相对路径按项目根解析
@@ -187,10 +157,7 @@ class PluginManager:
             self._factories.append((name, factory))
 
     async def load(self) -> None:
-        """第一阶段：运行全部 factory，收集到各自的 pending PluginDeclaration。
-
-        factory 抛异常 → 该插件标记 FAILED（不激活），继续加载其余。
-        """
+        """第一阶段：运行全部 factory，收集到各自的 pending PluginDeclaration。"""
         self._plugins.clear()
         for name, factory in self._factories:
             plugin = PluginDeclaration(name=name)
@@ -223,13 +190,7 @@ class PluginManager:
 
 
 class PluginRunner:
-    """会话级插件激活层：每会话绑定一份。
-
-    一个会话一个实例：持有本会话的 bus、工具表、技能表、命令表——插件
-    激活的 tools/skills/handlers/commands 全挂到这里。工具表即会话工具源：
-    Session 每轮从这里取 all_tools 交给 Agent 过滤。激活记录 per-session
-    保存（同一插件可被多个会话激活，不污染 PluginDeclaration）。
-    """
+    """会话级插件激活层：每会话绑定一份。"""
 
     def __init__(self, bus: EventBus) -> None:
         self._bus = bus
@@ -314,11 +275,7 @@ class PluginRunner:
     async def dispatch(
         self, text: str, ctx: CommandContext | None = None
     ) -> bool:
-        """分发本会话斜杠命令：命中返回 True，未命中返回 False（回退 agent）。
-
-        ctx 为命令执行上下文（会话组装：notify 推送 / 提问交互），由
-        调用方注入；命令推送与否经 ctx 自决，测试可传 None 或假 ctx。
-        """
+        """分发本会话斜杠命令：命中返回 True，未命中返回 False（回退 agent）。"""
         if not text.startswith("/"):
             return False
         name, _, args = text[1:].partition(" ")
@@ -372,14 +329,7 @@ class PluginMount:
 
 @dataclass(frozen=True)
 class HookVerdict:
-    """工具执行前钩子（TOOL_EXECUTION_START）的表态。
-
-    返回 None = 无意见放行；返回 HookVerdict 即表态（block 与 arguments
-    至少一个非空，否则 ValueError）：
-    block=reason → 阻止执行，reason 透传给模型；
-    arguments=args → 放行并改写本次调用参数。
-    改写按注册顺序应用（后者覆盖前者）。
-    """
+    """工具执行前钩子（TOOL_EXECUTION_START）的表态。"""
 
     block: str | None = None
     arguments: dict[str, Any] | None = None

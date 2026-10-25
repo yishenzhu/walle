@@ -1,12 +1,4 @@
-"""无头评测执行器：真实 LLM + 真实内置工具，NullChannel（无人工交互）。
-
-与生产路径的差异（有意为之）：
-- channel 为 None：无 notify / 审批（审批开销单独做实验，不混入能力评测）
-- 审批策略 allow-all：与任务域无关的变量全部固定
-- define_tool 持久化隔离到 eval/.agent-tools/，不污染 .agent/tools/
-- 不加载 MCP / Skill：评测只覆盖核心引擎 + 内置工具（MCP 依赖外部服务）
-- temperature 固定 0（可复现）
-"""
+"""无头评测执行器：真实 LLM + 真实内置工具，NullChannel（无人工交互）。"""
 
 from __future__ import annotations
 
@@ -78,11 +70,7 @@ class TaskResult:
 
 
 class TrackedProvider:
-    """包装真实 provider：在 create 上累计 token 用量。
-
-    框架的 InMemoryMessages 不保存 usage（生产由 SQLite 记），评测在
-    provider 层计数，不依赖消息存储。不做猴补——直接转发并计数。
-    """
+    """包装真实 provider：在 create 上累计 token 用量。"""
 
     def __init__(self, provider: OpenAIProvider):
         self._provider = provider
@@ -99,11 +87,7 @@ class TrackedProvider:
 
 
 class RecordingExecutor(ToolExecutor):
-    """记录每次工具调用（名字/参数/结果）与工具级错误数。
-
-    只作观察：不 override execute_tool（签名已演进为 tool_context 注入、
-    无 ctx 位置参数），直接继承基类实现，从返回的 (tc_id, result) 记录。
-    """
+    """记录每次工具调用（名字/参数/结果）与工具级错误数。"""
 
     def __init__(self, config: ToolConfig | None = None):
         super().__init__(config)
@@ -130,11 +114,7 @@ class RecordingExecutor(ToolExecutor):
 
 
 def build_tool_source() -> Callable[[], list[Tool]]:
-    """构造评测工具集：内置工具 + 动态 define_tool（持久化隔离目录）。
-
-    返回工具源 callable——与生产 Agent 的 tools 源同构，
-    define_tool 定义的工具会在下一轮实时出现在 Agent 工具列表中。
-    """
+    """构造评测工具集：内置工具 + 动态 define_tool（持久化隔离目录）。"""
 
     defined = DefinedTool(root=DEFINED_ROOT)
     defined_tools: dict[str, Tool] = {}
@@ -162,14 +142,7 @@ def build_tool_source() -> Callable[[], list[Tool]]:
 
 
 def build_agent(task: TaskSpec) -> tuple[Agent, dict[str, Agent]]:
-    """按任务规格构造 Agent（含 handoff 多智能体）。
-
-    - handoff 任务：按 AgentSpec 程序化构造全部 agent（handoffs 存目标名），
-      返回 (入口 agent, name→Agent 注册表) 供 SessionContext.agents 查表
-    - 普通任务：加载 frontmatter agent（如 default），仅覆写工具 allowlist 与温度
-
-    工具不经 agent——由调用方挂到会话插件 runner（env.plugin_runner）。
-    """
+    """按任务规格构造 Agent（含 handoff 多智能体）。"""
     if task.agents:
         agents: dict[str, Agent] = {}
         for spec in task.agents:

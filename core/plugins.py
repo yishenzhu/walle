@@ -1,9 +1,4 @@
-"""插件运行时适配层：把 Context/Service 能力桥接到现有会话运行时。
-
-Session 仍是每会话激活边界；PluginHost 负责插件 apply(ctx, config) 的
-生命周期，ToolService / PromptService / SkillService 由适配器落到会话工具表与
-执行器，保留现有工具执行链。
-"""
+"""插件运行时适配层：把 Context/Service 能力桥接到现有会话运行时。"""
 
 from __future__ import annotations
 

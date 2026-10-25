@@ -1,8 +1,4 @@
-"""write 工具：整文件写入（新建或覆盖），与 read/edit 同源路径语义。
-
-覆盖已存在文件默认需审批（同 edit）；已有文件的换行风格与 BOM 沿用原文件，
-新文件按 LF 写入。目录不存在时自动创建。
-"""
+"""write 工具：整文件写入（新建或覆盖），与 read/edit 同源路径语义。"""
 
 import codecs
 
@@ -13,12 +9,7 @@ MAX_BYTES = 256 * 1024  # 同 read：256KB 上限
 
 async def write(path: str, content: str = "") -> str:
     """Write full content to a file, creating or overwriting it.
-
-    Use `edit` for partial changes; this replaces the whole file.
-    Args:
-        path: Absolute or session-relative path (same as `read`).
-        content: Full file content (empty writes an empty file).
-    """
+    Existing newline style and BOM are preserved."""
     if not path:
         return "Error: path is required"
     p = resolve_tool_path(path)

@@ -1,11 +1,4 @@
-"""后台作业模型：跨轮存活的异步任务的数据视图与工具返回。
-
-- `Job` / `JobStatus`：作业状态机，由 background 元工具登记（pending），
-  executor 拉起（running），job_result 读取（done / error）。
-- `JobDispatch` / `JobResult`：background / job_result 两个内置工具的返回。
-
-作为值类型跨层流动，故置于 schemas。
-"""
+"""后台作业模型：跨轮存活的异步任务的数据视图与工具返回。"""
 
 import asyncio
 from dataclasses import dataclass
@@ -26,11 +19,7 @@ class JobStatus(StrEnum):
 
 @dataclass
 class Job:
-    """一个后台作业：pending（待启动）/ running / done / error。
-
-    pending 由 background 元工具写入（记录工具名+参数，待 executor 拉起）；
-    running 起 task；done 存 result；error 存错误信息。
-    """
+    """一个后台作业：pending（待启动）/ running / done / error。"""
 
     status: JobStatus = JobStatus.PENDING  # 见 JobStatus
     tool_name: str | None = None  # pending 时：要执行的工具名

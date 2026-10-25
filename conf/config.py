@@ -85,11 +85,7 @@ class ToolConfig(BaseModel):
 
 
 class SessionConfig(BaseModel):
-    """会话持久化配置：历史存储后端与路径。
-
-    path 按后端解释：file = 会话根（缺省 data/sessions）；sqlite = db 文件
-    （缺省 data/session.db）；memory 忽略。
-    """
+    """会话持久化配置：历史存储后端与路径。"""
 
     storage: str = "file"  # file | sqlite | memory
     path: str | None = None

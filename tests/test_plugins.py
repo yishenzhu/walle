@@ -1,11 +1,4 @@
-"""插件系统测试：加载器(PluginManager)产出声明 + 激活器(PluginRunner)按会话生效。
-
-覆盖：
-1. load() 收集插件声明（tools/handlers/commands）
-2. factory 抛异常 → 该插件声明 FAILED，其余正常加载
-3. PluginRunner 把声明激活进会话：同名后到者覆盖
-4. discover 目录发现 + 启停过滤
-"""
+"""插件系统测试：加载器(PluginManager)产出声明 + 激活器(PluginRunner)按会话生效。"""
 
 
 from ..core import (

@@ -13,11 +13,7 @@ from ..infra import Skill, Tool
 
 
 class ToolFilter(BaseModel):
-    """工具筛选配置：allow/deny glob 列表，deny 优先于 allow。
-
-    allow 默认 []（禁用全部）；给出显式模式时仅保留命中 allow
-    且未命中 deny 的工具。模式为 fnmatch 风格（支持 mcp_obsidian*）。
-    """
+    """工具筛选配置：allow/deny glob 列表，deny 优先于 allow。"""
 
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
@@ -74,11 +70,7 @@ class Agent(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     def skill_prompt(self, skills: dict[str, Skill]) -> str:
-        """从会话可用技能拼清单（一行一技能）。
-
-        skills 为会话激活插件收集的技能（name→Skill）。白名单 self.skills：
-        空 = 不注入；["*"] = 全部；列表 = 只注入命中项。
-        """
+        """从会话可用技能拼清单（一行一技能）。"""
         if not self.skills or not skills:
             return ""
         wanted = None if "*" in self.skills else set(self.skills)
@@ -100,12 +92,7 @@ class Agent(BaseModel):
         name: str | None = None,
         root: Path | None = None,
     ) -> Agent:
-        """按名加载 Agent（.agent/agents/<name>.md）。
-
-        frontmatter 支持 name/description/temperature/skills/tools(筛选)/
-        handoffs/subagents(目标 agent 名)，正文即 instruction。工具不经
-        agent 配置——运行时由会话插件 runner 提供。
-        """
+        """按名加载 Agent（.agent/agents/<name>.md）。"""
         name = name or "default"
         root = root or AGENT_DIR / "agents"
         path = root / f"{name}.md"
@@ -138,11 +125,7 @@ class Agent(BaseModel):
             raise ValueError("Agent must have a name and description")
 
     def as_tool(self, env):
-        """派发子 agent 的工具：隔离历史，继承 provider/plugin_runner/cwd/agents/bus。
-
-        深度由子环境 +1 承担，供 runner 卡住递归。
-        子 agent headless：不继承 channel（无 ask_user / 交互式审批）。
-        """
+        """派发子 agent 的工具：隔离历史，继承 provider/plugin_runner/cwd/agents/bus。"""
         self._validate_tool_metadata()
         agent = self
 

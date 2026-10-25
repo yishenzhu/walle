@@ -6,12 +6,7 @@ from openai import AsyncOpenAI
 
 
 class OpenAIProvider:
-    """OpenAI 兼容 Provider：封装底层 client，对外只暴露 create / stream / model。
-
-    - `create` / `stream` 内部填充 model，调用方不需要感知模型参数
-    - `set_model()` 运行时切换模型（会话中途切换，下一轮立即生效）
-    - 底层 client 私有（`_client`），不对外暴露
-    """
+    """OpenAI 兼容 Provider：封装底层 client，对外只暴露 create / stream / model。"""
 
     _default: Self | None = None
 

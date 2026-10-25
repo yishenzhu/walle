@@ -58,11 +58,9 @@ async def canvas(
     html: str,
     canvas_id: str | None = None,
 ) -> CanvasResult | str:
-    """当用户要画图、示意图、公式推导、动画或可交互演示时，用本工具渲染 HTML 画布。
-
-    html 必须是完整 HTML 页面，可内联 CSS/JS，也可引用外部 CDN。同标题默认复用同一画布；
-    更新已有画布时传回上次返回的 canvas_id。画布只在聊天中显示入口卡，由用户点击打开。
-    """
+    """当用户要画图、示意图、公式推导、动画或可交互演示时，渲染 HTML 画布。
+    html 必须是完整页面，可内联 CSS/JS 或引用外部 CDN；同标题默认复用画布，
+    更新已有画布时传回上次的 canvas_id。"""
     ctx = tool_context.get()
     if ctx is None or not ctx.session_id:
         return "Error: canvas 不可用（当前会话没有会话标识）"

@@ -1,8 +1,4 @@
-"""核心数据类型：工具（Tool）与工具执行上下文注入点（tool_context）。
-
-Job / SessionView 等跨层可见的类型已上收至 spec（schemas/protocol）；
-本模块只保留 executor 与工具共同使用的具体实现（Tool）与 ContextVar。
-"""
+"""核心数据类型：工具（Tool）与工具执行上下文注入点（tool_context）。"""
 
 from __future__ import annotations
 
@@ -20,10 +16,7 @@ tool_context: ContextVar[SessionView | None] = ContextVar("tool_context", defaul
 
 @dataclass
 class Tool:
-    """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。
-
-    纯数据 + 行为，不需要 pydantic 序列化（schema 由 to_schema 生成）。
-    """
+    """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。"""
 
     name: str
     description: str

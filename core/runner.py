@@ -60,13 +60,7 @@ class RunOptions:
 
 @dataclass
 class SessionContext:
-    """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。
-
-    携带会话的插件激活层（plugin_runner）：工具执行期经它动态注册新工具。
-    agents 为会话 agent 注册表（name→Agent），handoff/subagent 工具按名
-    在此查表构造；depth 为派发深度（0=顶层会话），用于卡住子 agent 递归。
-    bus 为会话事件总线（Runner 发事件、工具执行钩子屏障共用同一实例）。
-    """
+    """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。"""
 
     history: Messages  # 会话历史（必填）
     provider: LLM | None = None  # 模型接入（协议面；装配根注入，见 Runner 注释）

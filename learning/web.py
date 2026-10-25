@@ -1,8 +1,4 @@
-"""学习插件的 Web 路由：课程列表、阅读页数据、进度、画布与导出。
-
-由 Web 通道在启动时按需挂载；路由只依赖 `learning.store`，不反向依赖
-Web 通道。`shell` 回调用于返回宿主 SPA 外壳。
-"""
+"""学习插件的 Web 路由：课程列表、阅读页数据、进度、画布与导出。"""
 
 from __future__ import annotations
 

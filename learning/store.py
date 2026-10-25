@@ -1,12 +1,4 @@
-"""课程包存储：一门课一个目录，md 正文 + 画布 + course.json 索引。
-
-    data/courses/<course_id>/
-        course.json          # 标题、目标、课节索引
-        lessons/<lesson>.md  # 课节正文（可含 {{canvas:<id>}} 占位）
-        canvas/<canvas>.html # 课程内交互演示
-
-课程包自包含，可直接打包/迁移；工作目录不参与课程文件落盘。
-"""
+"""课程包存储：一门课一个目录，md 正文 + 画布 + course.json 索引。"""
 
 from __future__ import annotations
 

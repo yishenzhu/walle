@@ -1,13 +1,4 @@
-"""τ-bench 公开基准评测入口。
-
-用法：
-  PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --limit 5    # 小规模验证
-  PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau             # 全量 retail test
-  PYTHONPATH=.. .venv/bin/python -m walle.eval.bench.run_tau --env airline --split dev
-
-读取 .env 的 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL（被测 agent 模型）；
-user simulator 默认同模型，可用 --user-model 指定更强的模型。
-"""
+"""τ-bench 公开基准评测入口。"""
 
 import argparse
 import asyncio
@@ -90,13 +81,7 @@ async def run_tau_case(
     state: dict,
     max_turns: int,
 ) -> TaskResult:
-    """跑单个 τ-bench 用例：env.reset → Walle Runner 驱动 → 取 reward。
-
-    τ-bench 协议：agent 的回复 = respond 动作。模型主动调 respond 工具时正常流转；
-    若模型输出纯文本（未调 respond），Runner 结束，外层把该文本兜底为 respond
-    （与官方 tool-calling agent 语义一致），拿到用户回复后继续，直到对话 done
-    或总轮次超限。
-    """
+    """跑单个 τ-bench 用例：env.reset → Walle Runner 驱动 → 取 reward。"""
     observation = env.reset(task_index).observation
     state["reward"] = None
     state["stopped"] = False
@@ -220,11 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     user_model = args.user_model or model
 
     def build_env() -> tuple:
-        """每用例独立环境（并发安全）：env + 工具集 + state + provider。
-
-        构造期用 human strategy：litellm 的 LLM 策略构造时会立即发起 API 调用，
-        构造后替换为走同一网关的 WalleUserSimulationEnv。
-        """
+        """每用例独立环境（并发安全）：env + 工具集 + state + provider。"""
         env = MockRetailDomainEnv(
             user_strategy="human",
             user_model=user_model,

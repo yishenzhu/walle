@@ -1,19 +1,4 @@
-"""会话实体：每个会话自持一套完整运行时。
-
-会话 = 独立边界：自己的事件总线(bus)、工具执行器(executor)、插件激活
-(PluginRunner)、agent 循环(Runner)。插件声明(PluginManager 加载的
-Plugin)跨会话共享，但"激活到哪个会话"由本会话的 PluginRunner 决定
-——不同会话可激活不同插件组合。
-
-依赖全部由装配根注入（messages / provider / plugins），Session 不自行
-new 具体实现——换后端或测试替换替身都无需改本模块。
-
-会话能力与状态的统一访问点是 context(SessionContext)：channel（attach/
-detach 切换）、jobs（后台作业表）、plugin_runner（工具/技能源）都在其上。
-
-生命周期：transport 可切换（attach/detach）。连接断开时 detach 保留
-messages（状态跨连接存活，供重连恢复）；真正销毁走 close()。
-"""
+"""会话实体：每个会话自持一套完整运行时。"""
 
 from __future__ import annotations
 
@@ -76,12 +61,7 @@ class SessionClosedError(RuntimeError):
 
 
 class Session:
-    """单会话运行时：自持 bus / agent 循环 / 插件激活。
-
-    transport 由 attach() 注入（通常为某连接的 SessionConn），作为会话的
-    channel 端点直接使用（session_id 补全在连接内完成）。能力与状态统一经
-    self.context（SessionContext）访问。
-    """
+    """单会话运行时：自持 bus / agent 循环 / 插件激活。"""
 
     def __init__(
         self,
@@ -191,10 +171,7 @@ class Session:
 
     @property
     def context(self) -> SessionContext:
-        """会话环境视图（每次现造）：对外访问会话能力的统一入口。
-
-        携带当前 transport / 作业表 / 插件激活层；runner.run 直接取此环境。
-        """
+        """会话环境视图（每次现造）：对外访问会话能力的统一入口。"""
         return SessionContext(
             provider=self._provider,
             channel=self,
@@ -254,10 +231,7 @@ class Session:
         return [m for m in messages if m.role != "system"]
 
     def set_agent(self, name: str = "default") -> None:
-        """按名切换 agent（重新加载 frontmatter）；缺省用 default。
-
-        历史保留，仅换 agent 配置——同一会话可随时切换。
-        """
+        """按名切换 agent（重新加载 frontmatter）；缺省用 default。"""
         self._agent = self._build_agent(name)
 
     async def notify(self, notification: NotificationUnion) -> None:
@@ -310,12 +284,7 @@ class Session:
         self._pending.clear()
 
     async def _on_message_end(self, evt: MessageEndEvent) -> None:
-        """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。
-
-        MessageEndEvent 只在 run 结束时发出（正常结束 / max_turns / 取消），
-        因此无论 output 是否为空都必须推送 DeltaEnd——否则客户端会一直等待
-        结束信号（Web 停在"生成中"、CLI 不再出现提示符）。
-        """
+        """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。"""
         await self.notify(DeltaEnd(reason=evt.reason))
 
     def attach(self, transport: Channel) -> None:
@@ -458,14 +427,7 @@ class Session:
 
 
 class SessionManager:
-    """进程级会话管理器 + 工厂：session_id → Session。
-
-    连接断开只 detach（保留状态），会话仍在 manager 中可被重连 attach；
-    显式 remove/close 才真正销毁。附加元数据（创建时间等）供列表展示。
-
-    agent 由 Session 内部按名 Agent.load；本类是会话装配根：按配置构造
-    历史存储与模型（协议面），create() 组装并登记 Session。
-    """
+    """进程级会话管理器 + 工厂：session_id → Session。"""
 
     def __init__(
         self,
@@ -489,13 +451,7 @@ class SessionManager:
         conn: SessionInit,
         plugin_names: list[str] | None = None,
     ) -> Session:
-        """新建会话并注册。
-
-        plugin_names=None → 激活插件池全部可用声明；给定名单 → 只激活命中的
-        （跳过加载失败的声明）。模型接入：客户端随握手提供则为本会话新建
-        provider（可指向不同端点），否则沿用进程默认。历史存储按 storage
-        配置构造（投影包装），与 provider 一并注入 Session。
-        """
+        """新建会话并注册。"""
         declarations = self.select_declarations(plugin_names)
         plugins = self.select_plugins(plugin_names)
         model_cfg = conn.model

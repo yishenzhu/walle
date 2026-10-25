@@ -1,6 +1,4 @@
-"""会话服务端/通道连接回归测试。
-
-覆盖读循环并发、命令帧与审批回复验证。"""
+"""会话服务端/通道连接回归测试。"""
 
 import asyncio
 import json
@@ -115,9 +113,7 @@ async def test_close_unblocks_run_without_peer_eof():
 
 
 async def test_conn_run_notifies_error_on_inbound_failure():
-    """on_inbound 抛异常：run 捕获后向客户端发 error 帧。
-
-    否则客户端等不到回复信号会一直卡住。"""
+    """on_inbound 抛异常：run 捕获后向客户端发 error 帧。"""
 
     async def handle_client(reader, writer):
         conn = SessionConn("err-conn", reader, writer)

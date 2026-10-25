@@ -1,14 +1,4 @@
-"""事件系统：事件基类 + 事件总线（对齐 Cordis 的 EventsService）。
-
-- 事件类继承 :class:`Event`；订阅用事件类、分发用实例，沿 MRO 命中基类订阅
-  （子类先、基类后）——订阅 `Event` 即全局兜底，订阅中间基类即域订阅。
-- 五种分发：emit（广播）/ bail（首个表态）/ serial（顺序聚合）/
-  parallel（并发聚合）/ waterfall（拦截改写链）。
-- 总线是 **host 级内建**（全体插件共享、兄弟可见），与 Cordis 一致：不是可替换
-  的能力面，属框架本体；隔离属 opt-in，当前不需要。
-
-监听器签名 `handler(event, value)`，同步/异步皆可；value 仅 waterfall 传递改写值。
-"""
+"""事件系统：事件基类 + 事件总线（对齐 Cordis 的 EventsService）。"""
 
 from __future__ import annotations
 

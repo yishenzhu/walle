@@ -1,17 +1,4 @@
-"""文件消息存储：会话正文集中落盘，按工作目录分组。
-
-目录布局（全局数据目录，不写进用户仓库）：
-
-    data/sessions/<workspace_id>/
-        workspace.json     # 工作目录身份（canonical path / 名称 / 时间）
-        <session>/
-            meta.json      # 会话身份、工作目录与时间戳，供列表/恢复使用
-            messages.jsonl # 追加写原文，一行一条消息
-            projection.json# new_window 切点（可选）
-
-JSONL 只追加，崩溃最多留下一条不完整行；读取时跳过损坏行并原子重写修复。
-同一会话只允许单写者（与 Session 的单写者模型一致）。
-"""
+"""文件消息存储：会话正文集中落盘，按工作目录分组。"""
 
 from __future__ import annotations
 
@@ -172,11 +159,7 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
 
 
 def load_messages(path: Path) -> tuple[list[Message], bool]:
-    """读取 JSONL；返回 (消息, 是否需要重写修复)。
-
-    损坏行（含崩溃留下的半行）跳过；文件末尾无换行时也重写，保证下一次
-    追加不会把新消息拼到旧行尾。
-    """
+    """读取 JSONL；返回 (消息, 是否需要重写修复)。"""
     if not path.exists():
         return [], False
     raw = path.read_text(encoding="utf-8", errors="replace")
@@ -225,11 +208,7 @@ def append_messages(path: Path, items: Sequence[Message]) -> None:
 
 
 class FileMessages:
-    """按会话目录持久化的 Messages 实现。
-
-    首次访问时把 JSONL 读入内存（会话历史规模有限），之后的追加同时写文件
-    与内存；pop/clear 用原子重写。读取操作返回副本，调用方修改不污染内部。
-    """
+    """按会话目录持久化的 Messages 实现。"""
 
     def __init__(
         self,

@@ -1,8 +1,4 @@
-"""Web 插件发现：扫描包内 plugin.py 的 WEB_PLUGINS 声明（惰性导入）。
-
-agent 进程只加载 PLUGIN；Web 进程额外读取 WEB_PLUGINS（"module:attr"），
-因此 Web 专属插件不会把 FastAPI 依赖带进 agent。
-"""
+"""Web 插件发现：扫描包内 plugin.py 的 WEB_PLUGINS 声明（惰性导入）。"""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
-"""插件发现：扫描目录，把模块约定（apply/inject/provides）装载为 Plugin 声明。
-
-每个子目录 = 一个插件，入口 `<dir>/plugin.py`；目录名排序 = 加载顺序，
-enabled 非空即白名单、disabled 优先。装载失败（缺入口 / 导入错误 / 无 apply）
-产出一个"必失败"声明，交 PluginHost 隔离为 FAILED，不影响其余插件。
-"""
+"""插件发现：扫描目录，把模块约定（apply/inject/provides）装载为 Plugin 声明。"""
 
 from __future__ import annotations
 

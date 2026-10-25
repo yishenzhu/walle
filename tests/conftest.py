@@ -80,11 +80,7 @@ class FakeClient:
 
 
 class FakeProvider:
-    """不依赖真实 API 的 OpenAIProvider mock。
-
-    与真实 provider 同构：Runner 只经 create / stream / model 访问。
-    client 保留仅供测试预编程响应（set_responses）。
-    """
+    """不依赖真实 API 的 OpenAIProvider mock。"""
 
     def __init__(self, model="test-model"):
         self.client = FakeClient()

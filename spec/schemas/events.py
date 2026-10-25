@@ -1,17 +1,4 @@
-"""事件总线载荷：每个事件即其载荷 dataclass（事件与载荷一体）。
-
-与 `spec/protocol/events.py`（EventBus 能力协议）配对：那里声明"怎么订阅/
-广播"，这里定义"广播什么"。
-
-事件 = 一个 dataclass 类。订阅用事件类（bus.on(TurnEndEvent, h)），发射用
-实例（bus.emit(TurnEndEvent(...))）。字段即该事件携带的数据，handler 收实例
-后以 `.` 访问，有静态类型与补全。
-
-置于 schemas 层（纯数据，无行为）：本模块只引用同层模型，不引用协议
-（spec.protocol）与任何实现——协议面依赖 schemas 是单向的，此处反引会成环。
-故事件字段只用值类型，不携带 Messages/LLM 等能力对象；需要与会话状态交互的
-handler 应从 SessionView / tool_context 取（见 spec.protocol.view）。
-"""
+"""事件总线载荷：每个事件即其载荷 dataclass（事件与载荷一体）。"""
 
 from __future__ import annotations
 

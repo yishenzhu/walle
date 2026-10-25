@@ -1,16 +1,6 @@
 """评测入口：PYTHONPATH=.. python -m walle.eval.run [选项]
-
 示例：
-  PYTHONPATH=.. python -m walle.eval.run --smoke                    # 快速冒烟（1 个任务）
-  PYTHONPATH=.. python -m walle.eval.run                            # 全量 14 任务
-  PYTHONPATH=.. python -m walle.eval.run --domain bash              # 只跑某域
-  PYTHONPATH=.. python -m walle.eval.run --task 'bash*'             # glob 过滤任务名
-  PYTHONPATH=.. python -m walle.eval.run --repeat 3                 # 每任务重复 3 次（报告均值）
-  PYTHONPATH=.. python -m walle.eval.run --price-prompt 0.07 --price-completion 0.27
-  PYTHONPATH=.. python -m walle.eval.run --render-only              # 不重跑 LLM，重渲染上次报告
-
-读取 .env 的 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL（--render-only 不需要）。
-"""
+PYTHONPATH=.. python -m walle.eval.run --smoke                    # 快速冒烟（1 个任务）…"""
 
 import argparse
 import asyncio

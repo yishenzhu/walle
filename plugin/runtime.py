@@ -1,10 +1,4 @@
-"""插件运行时：Plugin 声明 + Context（作用域）+ PluginHost（挂载编排）。
-
-Plugin：apply(ctx, config) 入口，inject/provides 声明依赖与提供的服务。
-Context：能力注册 / 事件订阅 / effect 生命周期；子作用域共享根的能力表与总线。
-PluginHost：依赖驱动的生命周期（PENDING→ACTIVE/FAILED→DISPOSED），服务
-注册/注销时直接回调（内核记账，非事件总线）。
-"""
+"""插件运行时：Plugin 声明 + Context（作用域）+ PluginHost（挂载编排）。"""
 
 from __future__ import annotations
 
@@ -26,11 +20,7 @@ class ServiceError(LookupError):
 
 
 class ScopedLayers:
-    """一个注册表的分层存储：全局层 + 按需创建的作用域覆盖层。
-
-    对齐 harness 的 `ScopedLayers`：全局条目 + 各作用域的覆盖层，解析时
-    **作用域掩盖全局**（同 key 后者胜）；层空即回收，不留空壳。
-    """
+    """一个注册表的分层存储：全局层 + 按需创建的作用域覆盖层。"""
 
     def __init__(self) -> None:
         self.global_layer: dict[type, Any] = {}
@@ -66,12 +56,7 @@ class ScopedLayers:
 
 
 class Context:
-    """插件作用域：能力按层解析（作用域掩盖全局），dispose 逆序回滚。
-
-    "一个注册上下文同时表达两件事"（对齐 harness 的 scope 原语）：
-    - **可见性**：注册落 `self._key` 对应的层，该作用域及其子作用域可见；
-    - **生命周期**：注册登记为本作用域 effect，作用域销毁随之回收。
-    """
+    """插件作用域：能力按层解析（作用域掩盖全局），dispose 逆序回滚。"""
 
     def __init__(
         self,
@@ -114,12 +99,7 @@ class Context:
         *,
         replace: bool = False,
     ) -> Callable[[], Awaitable[None]]:
-        """按能力协议注册实现到**本作用域的层**；返回异步注销函数。
-
-        全局作用域（key=None）注册即全局能力，会驱动 Host 的依赖激活；
-        作用域覆盖层的注册只影响该作用域（不参与 Host 依赖图）。
-        重复注册报错（防手滑）；replace=True 先注销旧实现再注册。
-        """
+        """按能力协议注册实现到**本作用域的层**；返回异步注销函数。"""
         self._assert_alive()
         layer = self._layers.layer_for(self._key)
         is_global = self._key is None
@@ -215,22 +195,14 @@ class Context:
         return _remove
 
     def child(self) -> Context:
-        """派生子作用域（插件挂载位置）；**继承本作用域的层 key**。
-
-        子销毁登记为父 effect，随父自动级联；层 key 相同，故挂在某 agent 作用域
-        下的插件注册仍落该 agent 的覆盖层（同层叠加，不另建层）。
-        """
+        """派生子作用域（插件挂载位置）；**继承本作用域的层 key**。"""
         self._assert_alive()
         child = Context(parent=self, key=self._key)
         child._detach = self.effect(child.dispose)
         return child
 
     def scope(self, key: object) -> Context:
-        """派生**某作用域**的上下文（对齐 harness 的 per-scope 注册）。
-
-        经此注册的能力落该 key 的覆盖层：只对该作用域（及其子）可见，且随
-        本上下文销毁而回收——一个注册上下文同时表达可见性与生命周期。
-        """
+        """派生**某作用域**的上下文（对齐 harness 的 per-scope 注册）。"""
         self._assert_alive()
         child = Context(parent=self, key=key)
         child._detach = self.effect(child.dispose)
@@ -285,10 +257,7 @@ class Plugin:
 
     @classmethod
     def from_module(cls, module: ModuleType) -> Plugin:
-        """按模块约定装载：读 name/apply/inject/provides/version/config 属性。
-
-        apply 为必需（缺失即报错）；其余可选，缺省见字段默认值。
-        """
+        """按模块约定装载：读 name/apply/inject/provides/version/config 属性。"""
         attrs = vars(module)
         apply = attrs.get("apply")
         if not callable(apply):
@@ -372,10 +341,7 @@ class PluginHost:
         *,
         strict: bool = False,
     ) -> list[PluginEntry]:
-        """收纳全部插件声明（PENDING）并激活依赖已就绪的；声明顺序无关。
-
-        同名插件、或两个插件 provides 同一能力 → 报错（拒绝静默覆盖）。
-        """
+        """收纳全部插件声明（PENDING）并激活依赖已就绪的；声明顺序无关。"""
         configs = configs or {}
         defs = [e if isinstance(e, Plugin) else Plugin.from_module(e) for e in plugins]
         names = [e.name for e in defs]

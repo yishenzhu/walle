@@ -1,7 +1,4 @@
-"""edit 工具测试：局部查找替换（与 read 对称的通用文件编辑）。
-
-note.md 等文件都是普通文件：read 读 → edit 改，无专用 note 工具。
-"""
+"""edit 工具测试：局部查找替换（与 read 对称的通用文件编辑）。"""
 
 from ..tools.builtin.edit import edit
 

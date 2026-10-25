@@ -1,8 +1,4 @@
-"""工具能力面实现：注册 + schema + 执行管线（spec.protocol.ToolService）。
-
-执行链：查找 → 通道通知 → 预执行裁决（ctx.bail）→ 超时执行 → 结果通知。
-工具级失败不抛，统一转成错误字符串结果。后台作业由 launch_pending 拉起。
-"""
+"""工具能力面实现：注册 + schema + 执行管线（spec.protocol.ToolService）。"""
 
 from __future__ import annotations
 

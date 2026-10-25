@@ -1,9 +1,4 @@
-"""评测任务定义：YAML → TaskSpec 的加载与校验。
-
-任务文件位于 eval/tasks/*.yaml，字段见 TaskSpec。评分规则见 ground_truth：
-- type: exact / contains / numeric / regex（对最终输出判定）
-- tool_trace: 期望的工具调用序列（顺序敏感的子序列匹配，允许穿插额外调用）
-"""
+"""评测任务定义：YAML → TaskSpec 的加载与校验。"""
 
 from pathlib import Path
 from typing import Literal

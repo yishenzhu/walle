@@ -1,8 +1,4 @@
-"""后台作业工具对：background（派发）+ job_result（查询取回）。
-
-background 只登记 pending 作业到 ctx.jobs（不碰 executor）；本轮工具执行
-完后由 executor.launch_pending_jobs 统一拉起，结果用 job_result 稍后查询取回。
-"""
+"""后台作业工具对：background（派发）+ job_result（查询取回）。"""
 
 import uuid
 
@@ -12,9 +8,7 @@ from ...spec import JobDispatch, JobResult
 
 async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
     """把任意工具放到后台异步执行：立即返回 job_id（本轮不阻塞）。
-
-    稍后用 job_result(job_id) 查询/取回结果。适合长任务（子代理、编译、搜索）。
-    """
+    `args` 是目标工具参数；结果用 job_result 查询。"""
     ctx = tool_context.get()
     if ctx is None:
         return JobDispatch(

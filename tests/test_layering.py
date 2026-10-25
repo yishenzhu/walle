@@ -1,14 +1,4 @@
-"""分层依赖约束测试（架构原则的可执行门禁）。
-
-docs/architecture.md 的「协议优先分层」此前只写在文档里，无任何机制阻止
-漂移。本测试用 AST 静态检查导入方向，把原则变成 CI 会拦下的断言：
-
-1. spec/ 是叶子：不得 import 任何其他层（协议面不依赖实现）。
-2. 实现层不得反向 import core（依赖方向单向：实现 → 协议/基建）。
-3. 引擎（runner/executor/agent）不得 import 具体注入件（messages 存储、
-   infra.provider）——它们必须经 spec 协议由装配根注入。
-   core/session.py 是会话装配根，按设计可 new 存储，故豁免。
-"""
+"""分层依赖约束测试（架构原则的可执行门禁）。"""
 
 import ast
 from pathlib import Path
@@ -115,11 +105,7 @@ def test_no_upward_import_into_core(layer):
 
 
 def test_schemas_does_not_import_protocol():
-    """spec 内部方向唯一：protocol → schemas。
-
-    schemas 反引 protocol 会在导入期成环（protocol 尚未初始化完即被回引），
-    也会让"数据模型"承载能力对象(如 Messages)。事件载荷因此只允许值类型。
-    """
+    """spec 内部方向唯一：protocol → schemas。"""
     problems = []
     for path in _iter_py_files("spec/schemas"):
         problems += _violations(

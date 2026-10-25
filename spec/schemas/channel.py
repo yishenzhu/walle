@@ -1,6 +1,4 @@
-"""通道载荷：notify（广播无返回）与 call（点对点有返回）。
-
-载荷按语义命名，类别由 Channel 方法表达；判别联合按 type 区分。"""
+"""通道载荷：notify（广播无返回）与 call（点对点有返回）。"""
 
 from typing import Annotated, Any, Literal
 
@@ -10,9 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelConfig(BaseModel):
-    """模型接入配置：OpenAI 兼容端点 + 模型名。
-
-    三项齐全才生效；缺省回退进程默认 provider。"""
+    """模型接入配置：OpenAI 兼容端点 + 模型名。"""
 
     api_key: str
     base_url: str
@@ -20,9 +16,7 @@ class ModelConfig(BaseModel):
 
 
 class SessionSpec(BaseModel):
-    """新建会话规格：session_id、cwd、模型配置与 agent 名。
-
-    model 缺省时回退进程默认 provider；agent 缺省为 default。"""
+    """新建会话规格：session_id、cwd、模型配置与 agent 名。"""
 
     session_id: str
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）

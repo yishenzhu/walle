@@ -30,11 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExecutor:
-    """工具执行器：无状态，通知渠道来自每次 execute 的会话上下文。
-
-    审批不在此内置——由审批插件（tools.approval.Approval）订阅
-    TOOL_EXECUTION_START 承担（preflight 事件是唯一审批屏障）。
-    """
+    """工具执行器：无状态，通知渠道来自每次 execute 的会话上下文。"""
 
     def __init__(self, config: ToolConfig | None = None):
         config = config or ToolConfig()
@@ -59,13 +55,7 @@ class ToolExecutor:
         *,
         notify: bool = True,
     ) -> tuple[str, Any]:
-        """核心链：查找 → 通知（可关）→ preflight 屏障 → 执行（超时）→ 结果/错误。
-
-        execute_tool_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
-        （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
-        静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
-        TOOL_EXECUTION_START 上的审批插件（tools.approval.Approval）承担。
-        """
+        """核心链：查找 → 通知（可关）→ preflight 屏障 → 执行（超时）→ 结果/错误。"""
         ft = tools.get(name)
         if ft is None:
             reason = f"Error: Unknown tool {name}"
@@ -154,12 +144,7 @@ class ToolExecutor:
         tool_calls: list,
         tools: dict[str, Tool],
     ) -> AsyncIterator[tuple[str, Any]]:
-        """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。
-
-        工具任务显式持有：run 被取消时（生成器被关闭）一并取消未完成的
-        工具任务——否则 as_completed 的协程任务会脱离 run 继续执行
-        （bash 的 killpg 清理也不会触发）。
-        """
+        """并发执行一批工具调用，按完成序逐个产出（runner 流式/非流式共用）。"""
         tasks = [
             asyncio.create_task(self.execute_tool_call(tool_call, tools))
             for tool_call in tool_calls
@@ -175,11 +160,7 @@ class ToolExecutor:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def launch_pending_jobs(self, tools: dict[str, Tool]) -> None:
-        """本轮工具执行完后：把 background 写下的 pending 作业拉起（create_task）。
-
-        job 状态 pending → running；run_job 跑完后写回 result/error
-        （供 job_result 读取）。ctx 原地取自 tool_context。
-        """
+        """本轮工具执行完后：把 background 写下的 pending 作业拉起（create_task）。"""
         ctx = tool_context.get()
         if ctx is None:
             return
@@ -196,11 +177,7 @@ class ToolExecutor:
         tools: dict[str, Tool],
         ctx: SessionView,
     ) -> None:
-        """后台作业执行体：执行工具并写回结果（done）或错误（error）。
-
-        launch_pending_jobs 拉起（create_task）后由本方法跑完。后台任务独立
-        context——开头注入 tool_context，工具/审批插件经它拿会话上下文。
-        """
+        """后台作业执行体：执行工具并写回结果（done）或错误（error）。"""
         tool_context.set(ctx)
         try:
             tc_id = f"bg-{uuid.uuid4().hex[:8]}"

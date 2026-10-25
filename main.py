@@ -15,9 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    """启动会话服务端，供 Web 等通道接入。
-
-    当前只提供 Web UI；其他通道可复用同一 SessionServer。"""
+    """启动会话服务端，供 Web 等通道接入。"""
     conf = Config.load()
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)

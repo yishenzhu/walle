@@ -7,11 +7,7 @@ MAX_BYTES = 256 * 1024  # 256KB 上限，防误读大文件/二进制
 
 async def read(path: str = "") -> str:
     """Read a text file and return its content.
-
-    Args:
-        path: Absolute or session-relative path to the file
-            (e.g. '.agent/skills/grilling/SKILL.md').
-    """
+    `path` is absolute or session-relative."""
     if not path:
         return "Error: path is required"
     p = resolve_tool_path(path)

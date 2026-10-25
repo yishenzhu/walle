@@ -1,17 +1,4 @@
-"""本地工具沙箱：bubblewrap 命令构造 + 沙箱插件（覆盖内置工具）。
-
-沙箱语义：
-- 整个文件系统只读（--ro-bind / /）
-- 会话工作目录（cwd）单独 bind 可写——agent 在 cwd 里正常干活，
-  cwd 之外（系统、HOME、其他项目）一律只读
-- hidden_paths 用空视图遮罩：目录→空 tmpfs，文件→ /dev/null（读为空）
-- network=False 时 --unshare-net 断网
-
-形态：沙箱作为插件（main 里 Sandbox().plugin()），注入 ToolService 后同名覆盖
-内置工具（builtin 先激活、沙箱后激活 → 后到覆盖先到）。
-配置随沙箱实例构造注入，不挂全局 conf；"是否沙箱"体现在装配哪个插件。
-沙箱依赖会话工作目录（cwd）：无 cwd 时沙箱工具直接报错，不回退。
-"""
+"""本地工具沙箱：bubblewrap 命令构造 + 沙箱插件（覆盖内置工具）。"""
 
 import shutil
 from dataclasses import dataclass, field
@@ -36,21 +23,13 @@ class SandboxConfig:
 
 
 class Sandbox:
-    """沙箱插件：覆盖内置工具为沙箱实现（当前覆盖 bash，可扩展）。
-
-    用法（main.py）：plugins 列表中放 Sandbox().plugin()，须在 builtin 之后——
-    会话激活时后到者同名覆盖先到者。
-    """
+    """沙箱插件：覆盖内置工具为沙箱实现（当前覆盖 bash，可扩展）。"""
 
     def __init__(self, config: SandboxConfig | None = None):
         self._config = config or SandboxConfig()
 
     def argv(self, cwd: str, cmd: str) -> list[str]:
-        """构造沙箱执行 bash -c 的完整 argv。
-
-        挂载序：全盘只读 → /dev /proc /tmp → cwd 可写 → 隐藏路径遮罩。
-        隐藏路径：目录→空 tmpfs；文件→/dev/null（读为空）；宿主不存在→跳过。
-        """
+        """构造沙箱执行 bash -c 的完整 argv。"""
         cfg = self._config
         args = ["bwrap", "--ro-bind", "/", "/"]
         # 基础伪文件系统先挂（--tmpfs /tmp 等会覆盖 /tmp 下路径，须先于 cwd bind）
@@ -100,11 +79,7 @@ class Sandbox:
         api.register_tool(self._bash())
 
     async def _apply(self, ctx, config) -> None:
-        """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，后到覆盖）。
-
-        宿主机无 bwrap 时抛异常 → Host 标记 FAILED，自动跳过
-        （会话仍用 builtin 裸 bash），实现优雅降级。
-        """
+        """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，后到覆盖）。"""
         if shutil.which("bwrap") is None:
             raise RuntimeError(
                 "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"

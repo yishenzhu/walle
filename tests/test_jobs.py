@@ -1,11 +1,4 @@
-"""后台作业全链路测试：background 派发 → launch_pending_jobs 拉起 → job_result 取回。
-
-覆盖：
-- background 登记 pending、job_result 查询 running/done/error、取走即删
-- executor.launch_pending_jobs 拉起 + run_job 静默执行（后台不推送通知）
-- 集成：Runner 两轮模型驱动（第一轮派发 background、第二轮 job_result 取回）
-- Session close 取消未完成作业
-"""
+"""后台作业全链路测试：background 派发 → launch_pending_jobs 拉起 → job_result 取回。"""
 
 import asyncio
 import json

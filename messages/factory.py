@@ -1,8 +1,4 @@
-"""消息存储装配工厂：按配置构造会话历史（投影包装）。
-
-由装配根（SessionManager）调用；Session 只接收构造好的 Messages，
-不自行 new 具体存储——换后端 / 测试注入替身都不必改 Session。
-"""
+"""消息存储装配工厂：按配置构造会话历史（投影包装）。"""
 
 from pathlib import Path
 
@@ -29,13 +25,7 @@ def build_history(
     session_id: str,
     cwd: str | Path | None = None,
 ) -> Messages:
-    """构造会话历史：file 集中落盘；sqlite 落数据库；memory 不落盘。
-
-    三种后端都包一层投影视图——模型读到投影，原文在底层全量保留。
-    path 按后端解释：file = 会话根（缺省 data/sessions）；sqlite = db 文件
-    （缺省 data/session.db）；memory 忽略。file 后端按工作目录分组，但不写进
-    用户仓库。
-    """
+    """构造会话历史：file 集中落盘；sqlite 落数据库；memory 不落盘。"""
     if storage == "memory":
         return ProjectedMessages(InMemoryMessages())
     if storage == "file":

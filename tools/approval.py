@@ -1,8 +1,4 @@
-"""审批插件：工具审批（规则判断 + 人工审批）作为插件声明。
-
-native_approval 作为插件加进 main 的插件声明池，每个会话注入后订阅
-PreExecuteToolEvent；旧式插件可继续用 Approval.legacy_plugin。
-"""
+"""审批插件：工具审批（规则判断 + 人工审批）作为插件声明。"""
 
 import fnmatch
 import logging
@@ -120,15 +116,7 @@ class ChannelApprover:
 
 
 class Approval:
-    """审批插件：把工具审批（规则判断 + 人工审批）作为插件提供。
-
-    订阅 TOOL_EXECUTION_START——内部用 ApprovalPolicy（conf 规则）做
-    deny/allow/ask 判断；ASK 时经 tool_context 的 channel 发起人工审批
-    （Approval 服务），拒绝即 HookVerdict(block)。
-
-    main 组装：plugins 列表放 native_approval；工具预执行事件是唯一审批屏障，
-    审批策略可被替换/覆盖。
-    """
+    """审批插件：把工具审批（规则判断 + 人工审批）作为插件提供。"""
 
     def __init__(self, config: ApprovalConfig | None = None):
         self._policy = ApprovalPolicy(config or ApprovalConfig())

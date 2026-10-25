@@ -1,7 +1,4 @@
-"""报告生成：report.md + results.csv + results.json（趋势）+ results_detail.json（重渲染）。
-
-单元格内容统一转义 `|`，避免 markdown 表格结构被内容破坏。
-"""
+"""报告生成：report.md + results.csv + results.json（趋势）+ results_detail.json（重渲染）。"""
 
 import csv
 import json
@@ -33,10 +30,7 @@ def _progress_bar(rate: float, width: int = 12) -> str:
 
 
 def _compact_detail(items: list[str]) -> str:
-    """把评分明细压缩成短标签：'numeric 8.0±0.01: PASS' → 'numeric PASS'。
-
-    失败项保留完整描述（调试需要）。多项用 · 连接（避免引入表格分隔符）。
-    """
+    """把评分明细压缩成短标签：'numeric 8.0±0.01: PASS' → 'numeric PASS'。"""
     parts = []
     for it in items:
         if ": PASS" in it:

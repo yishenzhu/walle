@@ -1,14 +1,4 @@
-"""系统提示词组装的默认实现（对齐 harness 的 `ctx.systemPrompt`）。
-
-注册表 + 一次组装：section 按 (order, name) 拼接。
-
-**分层**（照搬 ToolService 的做法）：全局注册表 + 各 agent 作用域的注册表。
-作用域注册表继承全局的段，叠加自己那层；同名段本层掩盖全局。于是"某 agent
-独有的提示词段"由挂进它作用域的插件注册——插件不必回读 Agent 字段，核心也不必
-认识插件的配置。
-
-工具 schema 不经本面：线上 `tools` 是独立参数，循环直接取 ToolService.schemas()。
-"""
+"""系统提示词组装的默认实现（对齐 harness 的 `ctx.systemPrompt`）。"""
 
 from __future__ import annotations
 
@@ -29,11 +19,7 @@ INSTRUCTION_SECTION = "agent:instruction"
 
 
 class Prompts:
-    """PromptService 能力的默认实现：段注册表。
-
-    `base` 为继承来源（全局注册表在作用域里是 base=None；agent 作用域的注册表
-    以全局为 base）。本层的注册与 base 的注册合并：**同名段本层掩盖全局**。
-    """
+    """PromptService 能力的默认实现：段注册表。"""
 
     def __init__(self, base: Prompts | None = None) -> None:
         self._base = base
@@ -68,9 +54,5 @@ class Prompts:
 
 @plugin(name="system-prompt", provides=(PromptService,))
 async def native_system_prompt(ctx, config) -> None:
-    """系统提示词组装默认实现：发布**全局** PromptService 能力。
-
-    各 agent 作用域的注册表由 Agents.ctx_for 以本表为 base 建立；instruction
-    段也由它在建作用域时按定义注册（本插件不认识 Agent 定义）。
-    """
+    """系统提示词组装默认实现：发布**全局** PromptService 能力。"""
     await ctx.register(PromptService, Prompts())

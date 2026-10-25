@@ -1,8 +1,4 @@
-"""edit 工具：与 read 对称的局部查找替换（old 须唯一匹配）。
-
-匹配按严格度降级：精确子串 → 忽略行尾空白 → 忽略行首尾空白
-（末级命中后按原缩进重排新内容）。换行风格（LF/CRLF）与 BOM 按原文件保真。
-"""
+"""edit 工具：与 read 对称的局部查找替换（old 须唯一匹配）。"""
 
 import codecs
 
@@ -25,10 +21,7 @@ def match_exact(text: str, old: str) -> list[tuple[int, int]]:
 
 
 def match_lines(text: str, old: str, cmp) -> list[tuple[int, int]]:
-    """按行窗口匹配（cmp 决定空白严格度）的全部区间。
-
-    text/old 均为 LF 归一化文本。
-    """
+    """按行窗口匹配（cmp 决定空白严格度）的全部区间。"""
     lines = text.split("\n")
     pat = old.split("\n")
     trailing = pat[-1] == ""  # old 以换行结尾：区间连末尾换行一起吃掉
@@ -52,14 +45,8 @@ def match_lines(text: str, old: str, cmp) -> list[tuple[int, int]]:
 
 async def edit(path: str, old_text: str, new_text: str = "") -> str:
     """Replace one text fragment in a file.
-
-    Read the file first via `read`; old_text must match exactly once.
-    Whitespace/indentation differences are tolerated as a fallback.
-    Args:
-        path: Absolute or session-relative path (same as `read`).
-        old_text: Text to replace.
-        new_text: Replacement (empty deletes).
-    """
+    Read the file first; `old_text` must match exactly once.
+    Whitespace differences are tolerated as a fallback."""
     if not path:
         return "Error: path is required"
     if old_text == "":

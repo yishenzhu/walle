@@ -1,11 +1,4 @@
-"""τ-bench 适配层：把 τ-bench 环境折叠成 Walle 工具集，由 Walle Runner 驱动。
-
-设计原则：
-- 借 τ-bench 的数据集 + 状态机环境（env.step），不借它的 agent 协议与 LLM 调用
-- 环境（工具执行 + user simulator）全部包装为 Walle 工具：模型调工具 → env.step
-- 评分：env.step 在 done 时自动计算 reward（数据库状态 hash + 输出匹配），直接取用
-- user simulator 用同步 OpenAI client 走同一网关（litellm 默认端点不可达）
-"""
+"""τ-bench 适配层：把 τ-bench 环境折叠成 Walle 工具集，由 Walle Runner 驱动。"""
 
 import asyncio
 import logging
@@ -25,11 +18,7 @@ DEFAULT_MAX_TURNS = 40  # τ-bench 官方 max_steps 同量级
 
 
 class WalleUserSimulationEnv:
-    """user simulator：同步 OpenAI client 走同一网关，官方 prompt 模板原样。
-
-    实现 BaseUserSimulationEnv 协议（reset/step/get_total_cost），构造 env 后
-    替换 env.user 即可（Env 只依赖这三个方法）。token 自行累计。
-    """
+    """user simulator：同步 OpenAI client 走同一网关，官方 prompt 模板原样。"""
 
     def __init__(self, api_key: str, base_url: str, model: str):
         self._client = OpenAI(api_key=api_key, base_url=base_url)
@@ -78,13 +67,7 @@ Rules:
 
 
 def build_tau_tools(env: Env) -> tuple[list[Tool], dict[str, Any]]:
-    """把 τ-bench 环境折叠成 Walle 工具集。
-
-    每个领域工具 fn 内部调 env.step（同步），返回 observation（工具输出或用户回复）；
-    respond 工具回复用户。所有 step 用同一把锁串行（模型可能并行发起 tool_calls，
-    而 env 共享数据库状态，必须保持顺序）。
-    返回 (工具列表, 共享状态)，state["reward"] 在对话 done 时写入。
-    """
+    """把 τ-bench 环境折叠成 Walle 工具集。"""
     state: dict[str, Any] = {"reward": None, "stopped": False}
     lock = asyncio.Lock()
 
@@ -141,10 +124,7 @@ def build_tau_tools(env: Env) -> tuple[list[Tool], dict[str, Any]]:
 
 
 def build_task_spec(idx: int, first_observation: str, env_slug: str) -> TaskSpec:
-    """把 τ-bench 用例包装成 TaskSpec（复用现有 metrics/report 管线）。
-
-    success 不经过 graders（由 τ-bench reward 决定），ground_truth 仅为满足 schema。
-    """
+    """把 τ-bench 用例包装成 TaskSpec（复用现有 metrics/report 管线）。"""
     return TaskSpec(
         name=f"tau_{env_slug}_{idx}",
         domain=f"tau_{env_slug}",

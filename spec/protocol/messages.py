@@ -1,8 +1,4 @@
-"""消息存储能力：历史读写 / 投影 / 切点持久化。
-
-Runner 只依赖本协议面做读写，具体存储形态（内存/持久化/投影包装）
-由使用侧在装配时注入。
-"""
+"""消息存储能力：历史读写 / 投影 / 切点持久化。"""
 
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
@@ -28,11 +24,7 @@ class Messages(Protocol):
         """窗口查询：按追加顺序取 [offset, offset+limit) 的原始消息。"""
 
     async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
-        """关键词检索：词间 AND 子串匹配，返回 (绝对序号, 消息) 倒序最近 limit 条。
-
-        debug: 绝对序号 = 消息在会话中的位置（同 query 的 offset 寻址），命中后
-        可直接用该序号查看附近窗口。
-        """
+        """关键词检索：词间 AND 子串匹配，返回 (绝对序号, 消息) 倒序最近 limit 条。"""
 
     async def count(self) -> int:
         """原始消息总条数。"""

@@ -1,8 +1,4 @@
-"""技能（Skill）：渐进式披露的提示词资源，不是工具。
-
-技能目录由 SkillService 提供；skill 插件扫描 .agent/skills/ 注册声明。
-会话从服务取清单注入 system prompt，模型按需用 read 加载全文。
-"""
+"""技能（Skill）：渐进式披露的提示词资源，不是工具。"""
 
 import logging
 from pathlib import Path

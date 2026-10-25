@@ -1,13 +1,4 @@
-"""模型定义工具的校验、加载与持久化。
-
-模型通过 define_tool 提供 name/code：
-- 静态分析（ast 语法 + pyflakes）拦语法/逻辑错误
-- 契约校验：code 必须定义顶层 async def <name>，且必填 docstring（作为工具描述）
-- importlib 加载函数 → 供 Tool.from_function 构造工具
-- 持久化到 .agent/tools/<name>/code.py，启动时扫描恢复
-
-安全模型：不限制 import（执行风险交给 ApprovalPolicy 审批）。
-"""
+"""模型定义工具的校验、加载与持久化。"""
 
 import ast
 import importlib.util
@@ -127,9 +118,7 @@ class DefinedTool:
 
 async def define_tool(name: str = "", code: str = "") -> str:
     """定义一个新工具：提交代码（顶层 async def <name> + docstring 即描述）。
-
-    校验通过后持久化并立即注册进当前会话。
-    """
+    校验通过后持久化并立即注册进当前会话。"""
     try:
         tool = DefinedTool().create(name, code)
     except (ToolCodeError, OSError, ValueError) as e:

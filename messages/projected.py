@@ -1,16 +1,4 @@
-"""投影视图：把底层会话历史投影成模型可见形态。
-
-原始消息在底层存储全量保留，投影只影响读取：切点之前的消息移出模型
-视野（纯截断），切点及之后的消息原样返回。不设投影时（切点为 None）
-行为等同底层存储。模型主动 new_window 硬切会话窗口时调用 set_projection
-推进切点。
-
-切点是「移出前 N 条消息」的位置语义，不依赖底层 id/序号，故 InMemory 与
-SQLite 行为一致。
-
-投影状态（cut）默认进程内存级；可注入 ProjectionStore（SQLite meta 表）
-持久化，重启后经懒恢复重新生效——避免重启后折叠失效、全文重新暴露。
-"""
+"""投影视图：把底层会话历史投影成模型可见形态。"""
 
 from collections.abc import Sequence
 
@@ -18,18 +6,7 @@ from ..spec import Message, Messages, Projection, ProjectionStore, Usage
 
 
 class ProjectedMessages(Projection):
-    """包装底层 Messages，读取时投影成「切点后原文」。
-
-    实现 Projection 协议（underlying + set_projection + projection）；Runner
-    无感知：它只调用 get()，拿到的是投影结果。底层原文永不清除。
-
-    get() 语义：先对底层全量做切点截断，再按 limit 取前 N 条。limit 由本类
-    统一处理，不依赖底层存储的实现差异（InMemory 与 SQLite 的 limit 语义
-    原本不对称）。
-
-    projection_store 注入时，set/clear 同步落盘；首次 get/set 前惰性恢复
-    （重启后投影不丢）。无 store（内存/测试）则纯进程内存。
-    """
+    """包装底层 Messages，读取时投影成「切点后原文」。"""
 
     def __init__(
         self,

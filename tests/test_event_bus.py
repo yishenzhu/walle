@@ -1,10 +1,4 @@
-"""EventBus 单元测试 + Runner 生命周期埋点验证。
-
-覆盖：
-1. EventBus 注册/发射/顺序/失败隔离
-2. 未知事件名报错
-3. Runner 在 agent_start / turn_start / turn_end / agent_end 正确发射
-"""
+"""EventBus 单元测试 + Runner 生命周期埋点验证。"""
 
 import pytest
 

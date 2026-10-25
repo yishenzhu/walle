@@ -1,7 +1,4 @@
-"""SQLite 异步存储基类。
-
-封装懒连接与 asyncio.to_thread 样板。子类只需实现 _connect()（建表）与业务方法。
-"""
+"""SQLite 异步存储基类。"""
 
 import asyncio
 import sqlite3

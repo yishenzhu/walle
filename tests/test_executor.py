@@ -27,10 +27,7 @@ def make_tool_call(id="tc1", name="echo", arguments=None):
 
 
 async def mount_approval(ctx, config) -> None:
-    """把审批插件（按 conf 规则）激活到 ctx.bus。
-
-    审批不再由 executor 内置——测试经插件验证 deny/ask 语义。
-    """
+    """把审批插件（按 conf 规则）激活到 ctx.bus。"""
     from ..core import EventBus, PluginManager, PluginRunner
     from ..infra import tool_context
     from ..tools.approval import Approval

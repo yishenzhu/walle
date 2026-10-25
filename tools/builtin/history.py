@@ -1,8 +1,4 @@
-"""消息层工具：history（只读回源）+ new_window（模型主动硬切窗口）。
-
-经 tool_context 拿会话视图（Messages/Projection 协议面），不依赖具体
-存储实现——故与其余内置工具同置 tools/builtin/。
-"""
+"""消息层工具：history（只读回源）+ new_window（模型主动硬切窗口）。"""
 
 from ...infra import tool_context
 from ...spec import Projection, ToolMessage, UserMessage
@@ -17,14 +13,8 @@ async def history(
     limit: int = DEFAULT_LIMIT,
 ) -> str:
     """Read this session's raw conversation history (read-only).
-
-    Keyword search (newest first) or, when `offset` is set, a message-index
-    window from the oldest message upward.
-    Args:
-        query: Space-separated words, all must appear (case-insensitive); empty = recent.
-        offset: Start at this message index (0 = oldest); ignores query, ascending.
-        limit: Max messages (default 20, max 50).
-    """
+    `query` is space-separated keywords (newest first); `offset` switches to
+    an ascending message-index window; `limit` defaults to 20, max 50."""
     ctx = tool_context.get()
     if ctx is None or ctx.history is None:
         return "Error: no session history available"
@@ -60,9 +50,7 @@ async def history(
 
 async def new_window() -> str:
     """Hard-cut to a fresh window (older turns leave the model view).
-
-    Call after writing anything still needed into .agent/note.md via `edit`.
-    """
+    Write anything still needed into .agent/note.md via `edit` first."""
     ctx = tool_context.get()
     if ctx is None or ctx.history is None:
         return "Error: no session history available"

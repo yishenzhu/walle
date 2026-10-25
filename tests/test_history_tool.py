@@ -1,8 +1,4 @@
-"""history 工具与存储层窗口/检索测试。
-
-覆盖：SQLite/InMemory 的 query/search/count；history 工具渲染与过滤；
-折叠后仍能经 history 查回被折叠的原文（无损回源）。
-"""
+"""history 工具与存储层窗口/检索测试。"""
 import pytest
 
 from ..infra import tool_context

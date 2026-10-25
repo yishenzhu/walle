@@ -1,12 +1,4 @@
-"""沙箱（bubblewrap）测试。
-
-单测只验 argv 构造 / 插件覆盖（不依赖 bwrap 存在）；集成测试真跑
-bwrap 验证隔离，宿主机无 bwrap 时自动跳过。
-
-集成测试的可写区 = 会话 cwd，用 PROJECT_ROOT/data/sandbox/_test/ 下的
-真实目录：bwrap 的挂载目标须在沙箱视图中已存在（ro-bind / 提供），
-全新路径会因 mkdir 只读失败；/tmp 下路径又被 --tmpfs /tmp 替换。
-"""
+"""沙箱（bubblewrap）测试。"""
 import asyncio
 import shutil
 import subprocess

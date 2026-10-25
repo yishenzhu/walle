@@ -1,6 +1,4 @@
-"""会话服务端：连接端点 + 监听/会话管理。
-
-连接只处理帧；业务解释在 SessionServer。"""
+"""会话服务端：连接端点 + 监听/会话管理。"""
 
 import asyncio
 import logging
@@ -28,9 +26,7 @@ CALL_TIMEOUT = 300.0
 
 
 class SessionConn:
-    """一个客户端连接的 Channel 端点。
-
-    notify/call 收发帧；input 交给上层，连接不解释业务。"""
+    """一个客户端连接的 Channel 端点。"""
 
     def __init__(
         self,
@@ -172,9 +168,7 @@ class SessionConn:
 
 
 class SessionServer:
-    """会话服务端：监听端口，按 hello 创建或 attach 会话。
-
-    连接断开只 detach；run 继续，新连接 attach 后接收后续事件。"""
+    """会话服务端：监听端口，按 hello 创建或 attach 会话。"""
 
     def __init__(
         self,
@@ -210,9 +204,7 @@ class SessionServer:
 
     # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
     async def _handle_conn(self, reader, writer) -> None:
-        """每连接一个任务：握手 → 创建/attach 会话 → 读循环。
-
-        连接断开时 detach 保留会话。"""
+        """每连接一个任务：握手 → 创建/attach 会话 → 读循环。"""
         session_id = ""
         session = None
         conn: SessionConn | None = None

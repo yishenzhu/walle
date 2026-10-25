@@ -1,13 +1,4 @@
-"""课程包导出：生成可离线打开的静态站点 zip。
-
-zip 内包含：
-    index.html        # 阅读器（读 data.js，不依赖 fetch，file:// 可打开）
-    data.js           # 课程清单、课节 Markdown、画布 HTML
-    static/           # marked / KaTeX / DOMPurify 与字体
-    course.json       # 脱敏后的课程索引
-    lessons/*.md      # 原始课节源文件
-    canvas/*.html     # 原始画布源文件
-"""
+"""课程包导出：生成可离线打开的静态站点 zip。"""
 
 from __future__ import annotations
 
