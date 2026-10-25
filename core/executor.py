@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """工具执行器：无状态，通知渠道来自每次 execute 的会话上下文。
 
-    审批不在此内置——由审批扩展（tools.approval.Approval）订阅
+    审批不在此内置——由审批插件（tools.approval.Approval）订阅
     TOOL_EXECUTION_START 承担（preflight 事件是唯一审批屏障）。
     """
 
@@ -64,7 +64,7 @@ class ToolExecutor:
         execute_tool_call（解包模型回调）与 run_job（后台作业）共用；参数已解包
         （name/args/tc_id），不依赖模型回调对象结构。notify=False 时
         静默执行（后台作业用，不推送 ToolStart/ToolResult）。审批由
-        TOOL_EXECUTION_START 上的审批扩展（tools.approval.Approval）承担。
+        TOOL_EXECUTION_START 上的审批插件（tools.approval.Approval）承担。
         """
         ft = tools.get(name)
         if ft is None:
@@ -73,7 +73,7 @@ class ToolExecutor:
             return tc_id, reason
 
         # 会话上下文由调用方（runner 每轮 / run_job 后台任务）注入
-        # tool_context——审批扩展、preflight 钩子与工具执行都原地获取。
+        # tool_context——审批插件、preflight 钩子与工具执行都原地获取。
         ctx = tool_context.get()
         channel = ctx.channel if ctx is not None else None
 
@@ -101,7 +101,7 @@ class ToolExecutor:
                 if not isinstance(verdict, HookVerdict):
                     continue  # None 放行
                 if verdict.blocks:
-                    blocked = f"Tool '{name}' blocked by extension"
+                    blocked = f"Tool '{name}' blocked by plugin"
                     if verdict.block:
                         blocked += f": {verdict.block}"
                     logger.info(blocked)
@@ -135,8 +135,8 @@ class ToolExecutor:
             TOOL_ERRORS.add(1, attrs)
             error = await report_error(f"Error: {e}")
         finally:
-            # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型扩展。
-            # 工具未找到 / 审批拒绝 / 被扩展阻止的路径不经过 try，不发 after。
+            # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型插件。
+            # 工具未找到 / 审批拒绝 / 被插件阻止的路径不经过 try，不发 after。
             if ctx is not None and ctx.bus is not None:
                 await ctx.bus.emit(
                     ToolExecutionEndEvent(
@@ -199,7 +199,7 @@ class ToolExecutor:
         """后台作业执行体：执行工具并写回结果（done）或错误（error）。
 
         launch_pending_jobs 拉起（create_task）后由本方法跑完。后台任务独立
-        context——开头注入 tool_context，工具/审批扩展经它拿会话上下文。
+        context——开头注入 tool_context，工具/审批插件经它拿会话上下文。
         """
         tool_context.set(ctx)
         try:

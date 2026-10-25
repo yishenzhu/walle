@@ -1,4 +1,4 @@
-"""学习扩展的 Web 路由：课程列表、阅读页数据、进度、画布与导出。
+"""学习插件的 Web 路由：课程列表、阅读页数据、进度、画布与导出。
 
 由 Web 通道在启动时按需挂载；路由只依赖 `learning.store`，不反向依赖
 Web 通道。`shell` 回调用于返回宿主 SPA 外壳。
@@ -14,6 +14,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
+from ..plugin import plugin
+from ..spec import WebService
 from .store import (
     canvas_file,
     course_progress,
@@ -33,9 +35,14 @@ class ProgressUpdate(BaseModel):
     completed: bool | None = None
 
 
-def install(app) -> None:
-    """把课程路由挂到宿主应用；宿主提供 shell 与静态资源目录。"""
-    app.include_router(create_router(app.state.shell, app.state.static_dir))
+@plugin(name="learning-web", inject=(WebService,))
+async def learning_web(ctx, config) -> None:
+    """学习 Web 插件：把课程路由挂到宿主 Web 服务。"""
+    web = ctx.get(WebService)
+    web.include_router(create_router(web.shell, web.static_dir))
+
+
+PLUGIN = learning_web
 
 
 def create_router(

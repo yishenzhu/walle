@@ -1,4 +1,4 @@
-"""技能（Skill）扩展 + Agent 技能提示词拼接测试。"""
+"""技能（Skill）插件 + Agent 技能提示词拼接测试。"""
 
 
 from ..core import Agent
@@ -110,9 +110,9 @@ class TestAgentSkillPrompt:
         )
 
 
-async def test_skill_as_extension_registers_into_session(tmp_path, monkeypatch):
-    """技能扩展：SkillLoader.as_extension 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
-    from ..core import ExtensionManager, ExtensionRunner
+async def test_skill_legacy_plugin_registers_into_session(tmp_path, monkeypatch):
+    """技能插件：SkillLoader.legacy_plugin 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
+    from ..core import PluginManager, PluginRunner
     from ..infra import EventBus
     from ..tools import skill as skill_mod
 
@@ -120,17 +120,17 @@ async def test_skill_as_extension_registers_into_session(tmp_path, monkeypatch):
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "review", "Review code")
 
-    loader = ExtensionManager()
-    loader.add("skills", skill_mod.SkillLoader.as_extension)
+    loader = PluginManager()
+    loader.add("skills", skill_mod.SkillLoader.legacy_plugin)
     await loader.load()
-    assert loader.extensions[0].error is None
+    assert loader.plugins[0].error is None
 
-    runner = ExtensionRunner(EventBus())
-    runner.activate(loader.extensions[0])
+    runner = PluginRunner(EventBus())
+    runner.activate(loader.plugins[0])
     names = set(runner.skills)
     assert names == {"grilling", "review"}
     assert runner.skills["grilling"].path.endswith("grilling/SKILL.md")
 
-    # 卸载扩展 → 技能清单摘除
+    # 卸载插件 → 技能清单摘除
     runner.unload("skills")
     assert runner.skills == {}

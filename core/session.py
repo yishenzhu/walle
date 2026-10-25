@@ -1,15 +1,15 @@
 """会话实体：每个会话自持一套完整运行时。
 
-会话 = 独立边界：自己的事件总线(bus)、工具执行器(executor)、扩展激活
-(ExtensionRunner)、agent 循环(Runner)。扩展声明(ExtensionManager 加载的
-Extension)跨会话共享，但"激活到哪个会话"由本会话的 ExtensionRunner 决定
-——不同会话可激活不同扩展组合。
+会话 = 独立边界：自己的事件总线(bus)、工具执行器(executor)、插件激活
+(PluginRunner)、agent 循环(Runner)。插件声明(PluginManager 加载的
+Plugin)跨会话共享，但"激活到哪个会话"由本会话的 PluginRunner 决定
+——不同会话可激活不同插件组合。
 
-依赖全部由装配根注入（messages / provider / extensions），Session 不自行
+依赖全部由装配根注入（messages / provider / plugins），Session 不自行
 new 具体实现——换后端或测试替换替身都无需改本模块。
 
 会话能力与状态的统一访问点是 context(SessionContext)：channel（attach/
-detach 切换）、jobs（后台作业表）、extension_runner（工具/技能源）都在其上。
+detach 切换）、jobs（后台作业表）、plugin_runner（工具/技能源）都在其上。
 
 生命周期：transport 可切换（attach/detach）。连接断开时 detach 保留
 messages（状态跨连接存活，供重连恢复）；真正销毁走 close()。
@@ -25,11 +25,12 @@ from ..conf import ToolConfig
 from ..infra import (
     CommandContext,
     EventBus,
-    Extension,
-    ExtensionRunner,
+    HookVerdict,
     MessageDeltaEvent,
     MessageEndEvent,
     OpenAIProvider,
+    PluginDeclaration,
+    PluginRunner,
 )
 from ..messages import (
     build_ephemeral_history,
@@ -37,6 +38,7 @@ from ..messages import (
     list_sessions,
     list_workspaces,
 )
+from ..plugin import Context, Plugin, PluginHost
 from ..spec import (
     LLM,
     Channel,
@@ -47,15 +49,21 @@ from ..spec import (
     Message,
     Messages,
     NotificationUnion,
+    PreExecuteToolEvent,
+    PromptService,
     RequestUnion,
     SessionInit,
+    SkillService,
     ToolCallPrepareEvent,
+    ToolExecutionStartEvent,
     ToolPrepare,
+    ToolService,
     TurnEndEvent,
     UserInput,
 )
 from .agent import Agent
 from .executor import ToolExecutor
+from .plugins import SessionPromptService, SessionSkillService, SessionToolService
 from .runner import Runner, RunOptions, SessionContext
 
 
@@ -68,7 +76,7 @@ class SessionClosedError(RuntimeError):
 
 
 class Session:
-    """单会话运行时：自持 bus / agent 循环 / 扩展激活。
+    """单会话运行时：自持 bus / agent 循环 / 插件激活。
 
     transport 由 attach() 注入（通常为某连接的 SessionConn），作为会话的
     channel 端点直接使用（session_id 补全在连接内完成）。能力与状态统一经
@@ -80,7 +88,8 @@ class Session:
         session_id: str,
         history: Messages,
         tool_config: ToolConfig | None = None,
-        extensions: list[Extension] | None = None,
+        declarations: list[PluginDeclaration] | None = None,
+        plugins: list[Plugin] | None = None,
         transport: Channel | None = None,
         provider: LLM | None = None,
         cwd: str | None = None,
@@ -88,23 +97,28 @@ class Session:
         agent: str | None = None,
     ) -> None:
         self.id = session_id
-        # 会话元数据：核心不解释键名，由扩展按需读写
+        # 会话元数据：核心不解释键名，由插件按需读写
         self._metadata: dict[str, Any] = {}
         # 创建时间内聚在 Session（管理器/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
         self._cwd = cwd
+        self._tool_config = tool_config or ToolConfig()
+        self._plugins = plugins or []
+        self._host: PluginHost | None = None
+        self._plugin_ctx: Context | None = None
+        self._prompt: PromptService | None = None
 
-        # ── 会话级运行时（每会话独立：bus/agent 循环/扩展激活）──
-        self._bus = EventBus()  # 会话私有事件总线（扩展事件/工具钩子按会话隔离）
+        # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
+        self._bus = EventBus()  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
         # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
-        executor = ToolExecutor(tool_config or ToolConfig())
+        executor = ToolExecutor(self._tool_config)
         self._agent_runner = Runner(executor=executor)
-        self._extension_runner = ExtensionRunner(
+        self._plugin_runner = PluginRunner(
             self._bus
-        )  # 会话级扩展激活（含工具表/命令表）
-        if extensions:
-            self._extension_runner.activate(*extensions)  # 按会话选择激活扩展
+        )  # 会话级插件激活（含工具表/命令表）
+        if declarations:
+            self._plugin_runner.activate(*declarations)  # 按会话选择激活旧式声明
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
@@ -133,11 +147,53 @@ class Session:
         self._run_task: asyncio.Task | None = None
         self._cancel_reason: str | None = None
 
+    async def start(self) -> None:
+        """启动插件运行时：把服务适配到本会话，再执行插件 apply。"""
+        if not self._plugins:
+            return
+        host = PluginHost()
+        self._host = host
+        self._plugin_ctx = host.root
+        await host.root.register(
+            ToolService, SessionToolService(self._plugin_runner, self._tool_config)
+        )
+        await host.root.register(PromptService, SessionPromptService())
+        await host.root.register(SkillService, SessionSkillService(self._plugin_runner))
+        # 新插件的事件总线桥接：工具预执行裁决回落到旧 executor 的 HookVerdict
+        self._bus.on(ToolExecutionStartEvent, self._plugin_tool_gate)
+        await host.launch(
+            self._plugins,
+            {
+                "approval": {"config": self._tool_config.approval},
+            },
+        )
+        self._prompt = host.root.get(PromptService)
+
+    async def _plugin_tool_gate(self, evt: ToolExecutionStartEvent) -> HookVerdict | None:
+        """把新插件总线的 PreExecuteToolEvent 裁决桥接给旧 ToolExecutor。"""
+        if self._plugin_ctx is None:
+            return None
+        verdict = await self._plugin_ctx.bail(
+            PreExecuteToolEvent(
+                name=evt.tool_name,
+                arguments=evt.arguments,
+                tool_call_id=evt.tool_call_id,
+            )
+        )
+        if isinstance(verdict, HookVerdict):
+            return verdict
+        if isinstance(verdict, dict):
+            if "block" in verdict:
+                return HookVerdict(block=verdict.get("block") or "blocked")
+            if isinstance(verdict.get("arguments"), dict):
+                return HookVerdict(arguments=verdict["arguments"])
+        return None
+
     @property
     def context(self) -> SessionContext:
         """会话环境视图（每次现造）：对外访问会话能力的统一入口。
 
-        携带当前 transport / 作业表 / 扩展激活层；runner.run 直接取此环境。
+        携带当前 transport / 作业表 / 插件激活层；runner.run 直接取此环境。
         """
         return SessionContext(
             provider=self._provider,
@@ -145,12 +201,13 @@ class Session:
             history=self._history,
             session_id=self.id,
             jobs=self._jobs,
-            extension_runner=self._extension_runner,  # 工具执行期动态注册通道
+            plugin_runner=self._plugin_runner,  # 工具执行期动态注册通道
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
             history_factory=build_ephemeral_history,  # 子 agent 隔离历史
             metadata=self._metadata,
+            prompt=self._prompt,  # 插件提供的动态 system 段
         )
 
     @property
@@ -167,7 +224,7 @@ class Session:
                 self._metadata[key] = value
 
     def _build_agent(self, name: str | None = None) -> Agent:
-        """按名加载 agent 并缓存（工具不经 agent——运行时由扩展 runner 提供）。"""
+        """按名加载 agent 并缓存（工具不经 agent——运行时由插件 runner 提供）。"""
         name = name or "default"
         if name not in self._agents:
             self._agents[name] = Agent.load(name)
@@ -334,7 +391,7 @@ class Session:
         try:
             # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
             # （messages/provider），命令 handler 按需自取。
-            if await self._extension_runner.dispatch(
+            if await self._plugin_runner.dispatch(
                 content,
                 CommandContext(
                     channel=self,
@@ -394,6 +451,9 @@ class Session:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._jobs.clear()
+        if self._host is not None:
+            await self._host.dispose()
+            self._host = None
         await self._history.close()
 
 
@@ -410,13 +470,15 @@ class SessionManager:
     def __init__(
         self,
         tool_config: ToolConfig | None = None,
-        extensions: list[Extension] | None = None,
+        declarations: list[PluginDeclaration] | None = None,
+        plugins: list[Plugin] | None = None,
         provider: LLM | None = None,
         storage: str = "file",
         path: str | None = None,
     ) -> None:
         self._tool_config = tool_config
-        self._extensions = extensions or []  # 进程级扩展声明池
+        self._declarations = declarations or []  # 旧式插件声明池（兼容）
+        self._plugins = plugins or []  # 新式插件声明池
         self._provider = provider
         self._storage = storage
         self._path = path
@@ -425,16 +487,17 @@ class SessionManager:
     def create(
         self,
         conn: SessionInit,
-        extension_names: list[str] | None = None,
+        plugin_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。
 
-        extension_names=None → 激活扩展池全部可用声明；给定名单 → 只激活命中的
+        plugin_names=None → 激活插件池全部可用声明；给定名单 → 只激活命中的
         （跳过加载失败的声明）。模型接入：客户端随握手提供则为本会话新建
         provider（可指向不同端点），否则沿用进程默认。历史存储按 storage
         配置构造（投影包装），与 provider 一并注入 Session。
         """
-        extensions = self.select_extensions(extension_names)
+        declarations = self.select_declarations(plugin_names)
+        plugins = self.select_plugins(plugin_names)
         model_cfg = conn.model
         provider = (
             OpenAIProvider(
@@ -454,7 +517,8 @@ class SessionManager:
                 cwd=conn.cwd,
             ),
             tool_config=self._tool_config,
-            extensions=extensions,
+            declarations=declarations,
+            plugins=plugins,
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
             agent=conn.agent,  # 客户端指定 agent（None = default）
@@ -463,12 +527,19 @@ class SessionManager:
         self.register(session)
         return session
 
-    def select_extensions(self, extension_names: list[str] | None) -> list[Extension]:
-        """从扩展声明池按名单挑扩展（默认全部可用声明；跳过加载失败的）。"""
-        pool = [e for e in self._extensions if e.error is None]
-        if extension_names is None:
+    def select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
+        """从插件声明池按名单挑选（默认全部）。"""
+        if plugin_names is None:
+            return list(self._plugins)
+        wanted = set(plugin_names)
+        return [plugin for plugin in self._plugins if plugin.name in wanted]
+
+    def select_declarations(self, plugin_names: list[str] | None) -> list[PluginDeclaration]:
+        """从旧式插件声明池按名单挑选（默认全部可用声明）。"""
+        pool = [e for e in self._declarations if e.error is None]
+        if plugin_names is None:
             return pool
-        wanted = set(extension_names)
+        wanted = set(plugin_names)
         return [e for e in pool if e.name in wanted]
 
     def register(self, session: Session) -> None:

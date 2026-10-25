@@ -65,7 +65,7 @@ class Agent(BaseModel):
     subagents: list[str] = Field(default_factory=list)
     temperature: float | None = None
     output_type: type[BaseModel] | None = None
-    # 工具筛选配置：运行时从扩展 runner 取全部工具后按名字过滤
+    # 工具筛选配置：运行时从插件 runner 取全部工具后按名字过滤
     # （allow/deny glob，deny 优先）
     tool_filter: ToolFilter = Field(default_factory=ToolFilter)
     # 技能白名单：[] 不注入 / ["*"] 全部 / 列表仅命中项
@@ -76,7 +76,7 @@ class Agent(BaseModel):
     def skill_prompt(self, skills: dict[str, Skill]) -> str:
         """从会话可用技能拼清单（一行一技能）。
 
-        skills 为会话激活扩展收集的技能（name→Skill）。白名单 self.skills：
+        skills 为会话激活插件收集的技能（name→Skill）。白名单 self.skills：
         空 = 不注入；["*"] = 全部；列表 = 只注入命中项。
         """
         if not self.skills or not skills:
@@ -104,7 +104,7 @@ class Agent(BaseModel):
 
         frontmatter 支持 name/description/temperature/skills/tools(筛选)/
         handoffs/subagents(目标 agent 名)，正文即 instruction。工具不经
-        agent 配置——运行时由会话扩展 runner 提供。
+        agent 配置——运行时由会话插件 runner 提供。
         """
         name = name or "default"
         root = root or AGENT_DIR / "agents"
@@ -138,7 +138,7 @@ class Agent(BaseModel):
             raise ValueError("Agent must have a name and description")
 
     def as_tool(self, env):
-        """派发子 agent 的工具：隔离历史，继承 provider/extension_runner/cwd/agents/bus。
+        """派发子 agent 的工具：隔离历史，继承 provider/plugin_runner/cwd/agents/bus。
 
         深度由子环境 +1 承担，供 runner 卡住递归。
         子 agent headless：不继承 channel（无 ask_user / 交互式审批）。
@@ -156,7 +156,7 @@ class Agent(BaseModel):
             child = SessionContext(
                 history=env.history_factory(),  # 子 agent 独立历史，不继承父对话
                 provider=env.provider,
-                extension_runner=env.extension_runner,
+                plugin_runner=env.plugin_runner,
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,

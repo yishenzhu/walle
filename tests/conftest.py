@@ -134,7 +134,7 @@ class FakeSession:
     jobs: dict = field(default_factory=dict)
     cwd: str | None = None
     history: Any = None
-    extension_runner: Any = None
+    plugin_runner: Any = None
     bus: Any = None
     metadata: dict = field(default_factory=dict)
 
@@ -145,7 +145,7 @@ def make_session(
     jobs=None,
     cwd=None,
     history=None,
-    extension_runner=None,
+    plugin_runner=None,
     bus=None,
     metadata=None,
 ) -> FakeSession:
@@ -155,7 +155,7 @@ def make_session(
         jobs=jobs if jobs is not None else {},
         cwd=cwd,
         history=history,
-        extension_runner=extension_runner,
+        plugin_runner=plugin_runner,
         bus=bus,
         metadata=metadata if metadata is not None else {},
     )

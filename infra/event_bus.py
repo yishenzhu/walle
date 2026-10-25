@@ -29,7 +29,7 @@ class EventBus:
         self._handlers.setdefault(event_type, []).append(handler)
 
     def off(self, event_type: type, handler: Handler) -> None:
-        """退订（扩展卸载时精确摘除）。不存在则忽略。"""
+        """退订（插件卸载时精确摘除）。不存在则忽略。"""
         handlers = self._handlers.get(event_type)
         if handlers and handler in handlers:
             handlers.remove(handler)
@@ -55,5 +55,5 @@ class EventBus:
         return bool(self._handlers.get(event_type))
 
     def clear(self) -> None:
-        """清空全部监听器（停机 / 重载扩展时用）。"""
+        """清空全部监听器（停机 / 重载插件时用）。"""
         self._handlers.clear()

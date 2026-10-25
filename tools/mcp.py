@@ -14,7 +14,9 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import AGENT_DIR, MCPConfig
-from ..infra import ExtensionAPI, Tool
+from ..infra import PluginAPI, Tool
+from ..plugin import Plugin
+from ..spec import ToolService
 
 logger = logging.getLogger(__name__)
 
@@ -75,15 +77,26 @@ class MCPManager:
         for c in self._clients:
             await c.close()
 
-    async def as_extension(self, api: ExtensionAPI) -> None:
-        """MCP 扩展工厂：main 组装时 extensions.add("mcp", mcp.as_extension)。
-
-        把全部已连接客户端的远端工具注册进扩展 api——MCP 作为扩展
-        声明，工具随扩展进各会话。
-        """
+    async def legacy_plugin(self, api: PluginAPI) -> None:
+        """兼容旧插件 API：把远端工具注册进旧插件声明。"""
         for client in self._clients:
             for tool in client.tools:
                 api.register_tool(tool)
+
+    def plugin(self) -> Plugin:
+        """返回 MCP 插件声明：把已连接客户端的远端工具注册进会话。"""
+        return Plugin(
+            name="mcp",
+            apply=self._apply,
+            inject=(ToolService,),
+        )
+
+    async def _apply(self, ctx, config) -> None:
+        """把全部已连接客户端的远端工具注册进 ToolService。"""
+        tools = ctx.get(ToolService)
+        for client in self._clients:
+            for tool in client.tools:
+                tools.register_tool(tool)
 
 
 class MCPClient:

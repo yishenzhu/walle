@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ..core import Agent, EventBus, ExtensionRunner
+from ..core import Agent, EventBus, PluginRunner
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
@@ -168,7 +168,7 @@ def build_agent(task: TaskSpec) -> tuple[Agent, dict[str, Agent]]:
       返回 (入口 agent, name→Agent 注册表) 供 SessionContext.agents 查表
     - 普通任务：加载 frontmatter agent（如 default），仅覆写工具 allowlist 与温度
 
-    工具不经 agent——由调用方挂到会话扩展 runner（env.extension_runner）。
+    工具不经 agent——由调用方挂到会话插件 runner（env.plugin_runner）。
     """
     if task.agents:
         agents: dict[str, Agent] = {}
@@ -202,18 +202,18 @@ async def run_task(
             timeout=TimeoutConfig(default=60.0),
         )
     )
-    # 会话扩展 runner 持有工具表：初集注册进工具表，define_tool 等运行时
-    # 动态注册也落这里（extension_runner 随 env 传给工具）
+    # 会话插件 runner 持有工具表：初集注册进工具表，define_tool 等运行时
+    # 动态注册也落这里（plugin_runner 随 env 传给工具）
     bus = EventBus()
-    extension_runner = ExtensionRunner(bus)
-    extension_runner.register_tool(*tool_source())
+    plugin_runner = PluginRunner(bus)
+    plugin_runner.register_tool(*tool_source())
     agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        extension_runner=extension_runner,
+        plugin_runner=plugin_runner,
         agents=agents,
         bus=bus,
     )

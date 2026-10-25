@@ -30,7 +30,7 @@ def write_canvas(
     canvas_id: str | None,
     root: Path,
 ) -> CanvasResult | str:
-    """把一页 HTML 写入指定画布目录（通用 canvas 与领域扩展共用）。"""
+    """把一页 HTML 写入指定画布目录（通用 canvas 与领域插件共用）。"""
     title = (title or "").strip() or "画布"
     if not html or not html.strip():
         return "Error: html 不能为空"

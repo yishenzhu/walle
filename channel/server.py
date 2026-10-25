@@ -259,7 +259,7 @@ class SessionServer:
 
             session_id = msg.get("session_id") or f"session-{uuid.uuid4().hex[:12]}"
             attach = bool(msg.get("attach", False))
-            extension_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
+            plugin_names = msg.get("plugins")  # 可选：本会话要激活的插件名（缺省=全部）
             cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
             # 交互等待上限：缺省 CALL_TIMEOUT；显式 null = 不设上限
             # （Web 端人机审批用；连接断开会 fail 挂起请求，页面另有停止按钮）
@@ -330,8 +330,9 @@ class SessionServer:
                     session.set_agent(conn.agent)
                 logger.info(f"channel client reattached: {session_id}")
             else:
-                # 新会话：sessions.create（按需激活指定扩展）
-                session = self._sessions.create(conn, extension_names)
+                # 新会话：sessions.create（按需激活指定插件）
+                session = self._sessions.create(conn, plugin_names)
+                await session.start()
                 # 新建也可能命中磁盘上同 id 的会话（如 Web 重启后恢复），
                 # 带上快照让客户端直接接续。
                 await conn.send(

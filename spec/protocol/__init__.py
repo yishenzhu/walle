@@ -8,19 +8,37 @@ from .channel import Channel, SessionInit, Sessions
 from .events import EventBus
 from .llm import LLM
 from .messages import Messages, Projection, ProjectionStore
-from .runtime import ExtensionLayer, ToolTable
+from .prompt import (
+    AssembleContext,
+    PromptAssembly,
+    PromptOrder,
+    PromptSection,
+    PromptService,
+)
+from .runtime import PluginLayer, ToolTable
+from .skill import SkillService
+from .tool import ToolService
 from .view import SessionView
+from .web import WebService
 
 __all__ = [
     "Channel",
     "SessionInit",
     "Sessions",
-    "ExtensionLayer",
+    "PluginLayer",
     "ToolTable",
+    "ToolService",
+    "SkillService",
+    "PromptService",
+    "PromptOrder",
+    "PromptSection",
+    "PromptAssembly",
+    "AssembleContext",
     "Messages",
     "Projection",
     "ProjectionStore",
     "EventBus",
     "LLM",
     "SessionView",
+    "WebService",
 ]

@@ -33,6 +33,7 @@ packages = [
     "walle.spec",
     "walle.spec.protocol",
     "walle.spec.schemas",
+    "walle.plugin",
     "walle.infra",
     "walle.learning",
     "walle.messages",
@@ -51,6 +52,7 @@ walle = "."
 "walle.spec" = "spec"
 "walle.spec.protocol" = "spec/protocol"
 "walle.spec.schemas" = "spec/schemas"
+"walle.plugin" = "plugin"
 "walle.infra" = "infra"
 "walle.learning" = "learning"
 "walle.messages" = "messages"

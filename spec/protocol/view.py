@@ -1,6 +1,6 @@
 """工具执行期可见的会话能力面（能力收窄的视图协议）。
 
-工具与审批扩展只经 tool_context 拿到本面，绝不 import Session /
+工具与审批插件只经 tool_context 拿到本面，绝不 import Session /
 SessionContext 具体类。刻意不含 provider / agents / depth（属引擎内部）；
 session_id 仅用于按会话归属落盘的工具（如 canvas），不暴露会话内容。
 """
@@ -25,6 +25,6 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    extension_runner: ToolTable | None
+    plugin_runner: ToolTable | None
     bus: EventBus | None
     metadata: dict[str, Any]

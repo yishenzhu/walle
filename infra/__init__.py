@@ -17,22 +17,6 @@ from ..spec import (
     TurnStartEvent,
 )
 from .event_bus import EventBus, Handler
-from .extension import (
-    Command,
-    CommandContext,
-    Extension,
-    ExtensionAPI,
-    ExtensionFactory,
-    ExtensionManager,
-    ExtensionMount,
-    ExtensionRunner,
-    ExtensionSpec,
-    ExtensionState,
-    HookVerdict,
-    InstructionsProvider,
-    Skill,
-    discover_extension_specs,
-)
 from .logger import LogConfig, setup_logger
 from .metrics import (
     AGENT_ITERATIONS,
@@ -40,6 +24,20 @@ from .metrics import (
     TOOL_CALLS,
     TOOL_DURATION,
     TOOL_ERRORS,
+)
+from .plugin import (
+    Command,
+    CommandContext,
+    HookVerdict,
+    InstructionsProvider,
+    PluginAPI,
+    PluginDeclaration,
+    PluginFactory,
+    PluginManager,
+    PluginMount,
+    PluginRunner,
+    PluginState,
+    Skill,
 )
 from .provider import OpenAIProvider
 from .sqlite_store import SQLiteStore
@@ -70,22 +68,19 @@ __all__ = [
     "JobStatus",
     "SessionView",
     "tool_context",
-    # extension — 扩展加载/激活
+    # plugin — 插件加载/激活
     "Command",
     "CommandContext",
-    "ContextProvider",
-    "Extension",
-    "ExtensionAPI",
-    "ExtensionFactory",
-    "ExtensionMount",
-    "ExtensionManager",
-    "ExtensionRunner",
-    "ExtensionSpec",
-    "ExtensionState",
+    "PluginAPI",
+    "PluginDeclaration",
+    "PluginFactory",
+    "PluginMount",
+    "PluginManager",
+    "PluginRunner",
+    "PluginState",
     "HookVerdict",
     "InstructionsProvider",
     "Skill",
-    "discover_extension_specs",
     # logger / telemetry / metrics — 可观测性
     "setup_logger",
     "LogConfig",

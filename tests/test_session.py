@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
+from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, ToolConfig
 from ..core import Session, SessionManager
 from ..infra import AgentStartEvent, MessageDeltaEvent, MessageEndEvent
 from ..messages import (
@@ -258,14 +258,14 @@ class TestSessionManager:
 class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
         """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
-        from ..core import ExtensionAPI, ExtensionManager
+        from ..core import PluginAPI, PluginManager
         from ..spec import UserInput
 
         ch = FakeChannel()
-        # 构造一个注册了 /ping 命令的扩展声明，激活进会话
-        loader = ExtensionManager()
+        # 构造一个注册了 /ping 命令的插件声明，激活进会话
+        loader = PluginManager()
 
-        async def load_cli(api: ExtensionAPI):
+        async def load_cli(api: PluginAPI):
             from ..spec import Delta, DeltaEnd
 
             async def ping(args: str, ctx):
@@ -277,7 +277,7 @@ class TestSessionCommandDispatch:
 
         loader.add("cli", load_cli)
         await loader.load()
-        extension = loader.extensions[0]
+        plugin = loader.plugins[0]
 
         s = Session(
             session_id="cmd-1",
@@ -285,7 +285,7 @@ class TestSessionCommandDispatch:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=[extension],
+            declarations=[plugin],
             transport=ch,
         )
 
@@ -299,13 +299,13 @@ class TestSessionCommandDispatch:
 
     async def test_silent_command_no_push(self, tmp_path):
         """静默命令（handler 返回 None）：命中但无任何推送。"""
-        from ..core import ExtensionAPI, ExtensionManager
+        from ..core import PluginAPI, PluginManager
         from ..spec import UserInput
 
         ch = FakeChannel()
-        loader = ExtensionManager()
+        loader = PluginManager()
 
-        async def load_cli(api: ExtensionAPI):
+        async def load_cli(api: PluginAPI):
             async def noop(args: str, ctx):
                 return None  # 不调用 ctx → 静默执行
 
@@ -320,7 +320,7 @@ class TestSessionCommandDispatch:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=[loader.extensions[0]],
+            declarations=[loader.plugins[0]],
             transport=ch,
         )
         try:
@@ -433,12 +433,12 @@ class TestSessionStreamForward:
             await s.close()
 
     async def _manager(self, tmp_path) -> SessionManager:
-        from ..core import ExtensionAPI, ExtensionManager
+        from ..core import PluginAPI, PluginManager
         from ..infra import Tool
 
-        loader = ExtensionManager()
+        loader = PluginManager()
 
-        async def extension_a(api: ExtensionAPI):
+        async def plugin_a(api: PluginAPI):
             async def fa(args):
                 return "a"
 
@@ -447,7 +447,7 @@ class TestSessionStreamForward:
             )
             api.on(AgentStartEvent, lambda evt: None)
 
-        async def extension_b(api: ExtensionAPI):
+        async def plugin_b(api: PluginAPI):
             async def fb(args):
                 return "b"
 
@@ -455,23 +455,23 @@ class TestSessionStreamForward:
                 Tool(name="tool_b", description="b", parameters={}, fn=fb)
             )
 
-        loader.add("extension_a", extension_a)
-        loader.add("extension_b", extension_b)
+        loader.add("plugin_a", plugin_a)
+        loader.add("plugin_b", plugin_b)
         await loader.load()
-        pool = [e for e in loader.extensions if e.error is None]
+        pool = [e for e in loader.plugins if e.error is None]
 
         manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=pool,
+            declarations=pool,
             storage="memory",
             path=str(tmp_path / "s.db"),
         )
         return manager
 
-    async def test_sessions_activate_different_extensions(self, tmp_path):
-        """会话 1 用全部扩展；会话 2 只激活 extension_a——工具表不同、事件隔离。"""
+    async def test_sessions_activate_different_plugins(self, tmp_path):
+        """会话 1 用全部插件；会话 2 只激活 plugin_a——工具表不同、事件隔离。"""
         manager = await self._manager(tmp_path)
 
         class Conn:
@@ -481,25 +481,79 @@ class TestSessionStreamForward:
                 self.model = None
                 self.agent = None
 
-        s1 = manager.create(Conn("s1"))  # 默认：全部扩展
-        s2 = manager.create(Conn("s2"), extension_names=["extension_a"])  # 只激活 extension_a
+        s1 = manager.create(Conn("s1"))  # 默认：全部插件
+        s2 = manager.create(Conn("s2"), plugin_names=["plugin_a"])  # 只激活 plugin_a
 
-        names1 = {t.name for t in s1.context.extension_runner.all_tools()}
-        names2 = {t.name for t in s2.context.extension_runner.all_tools()}
+        names1 = {t.name for t in s1.context.plugin_runner.all_tools()}
+        names2 = {t.name for t in s2.context.plugin_runner.all_tools()}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
-        assert names2 == {"tool_a"}  # 会话 2 只有 extension_a
+        assert names2 == {"tool_a"}  # 会话 2 只有 plugin_a
 
-        # 运行时隔离：各自 context / 扩展激活层独立（bus/工具表随会话）
+        # 运行时隔离：各自 context / 插件激活层独立（bus/工具表随会话）
         assert s1.context is not s2.context
-        assert s1.context.extension_runner is not s2.context.extension_runner
-        assert s1.context.extension_runner.active_extensions == {"extension_a", "extension_b"}
-        assert s2.context.extension_runner.active_extensions == {"extension_a"}
+        assert s1.context.plugin_runner is not s2.context.plugin_runner
+        assert s1.context.plugin_runner.active_plugins == {"plugin_a", "plugin_b"}
+        assert s2.context.plugin_runner.active_plugins == {"plugin_a"}
 
         await manager.close()
 
-    async def test_mcp_extensionension_tools_visible_in_session(self, tmp_path):
-        """MCP 工具经扩展组装进会话：extension → 扩展声明 → 会话激活。"""
-        from ..core import ExtensionManager
+    async def test_new_plugins_start_into_session(self, tmp_path):
+        """新插件经 PluginHost 启动，工具落到会话工具表。"""
+        from ..tools.builtin.plugin import builtin_plugin
+
+        s = Session(
+            session_id="plugin-1",
+            history=build_history("memory", str(tmp_path / "s.db"), "plugin-1"),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
+            ),
+            plugins=[builtin_plugin],
+        )
+        try:
+            await s.start()
+            names = {t.name for t in s.context.plugin_runner.all_tools()}
+            assert {"bash", "read", "write"} <= names
+            assert s.context.prompt is not None  # 插件 prompt 服务已接入
+        finally:
+            await s.close()
+
+    async def test_new_approval_plugin_blocks_legacy_executor(self, tmp_path):
+        """新插件总线经桥接生效：approval 插件能拦住旧 ToolExecutor。"""
+        from ..infra import Tool, tool_context
+        from ..tools.approval import native_approval
+
+        s = Session(
+            session_id="plugin-approval",
+            history=build_history("memory", str(tmp_path / "s.db"), "plugin-approval"),
+            tool_config=ToolConfig(
+                approval=ApprovalConfig(
+                    rules=[ApprovalRuleSpec(ApprovalDecision.DENY, "bash")],
+                    default=ApprovalDecision.ALLOW,
+                )
+            ),
+            plugins=[native_approval],
+        )
+        try:
+            await s.start()
+
+            async def fn(args):
+                return "ran"
+
+            tool = Tool(name="bash", description="b", parameters={}, fn=fn)
+            token = tool_context.set(s.context)
+            try:
+                _, result = await s._agent_runner._executor.execute_tool(
+                    "bash", {}, "tc1", {"bash": tool}
+                )
+            finally:
+                tool_context.reset(token)
+            assert "denied by policy" in result
+        finally:
+            await s.close()
+
+    async def test_mcp_pluginension_tools_visible_in_session(self, tmp_path):
+        """MCP 工具经插件组装进会话：plugin → 插件声明 → 会话激活。"""
+        from ..core import PluginManager
         from ..infra import Tool
         from ..tools.mcp import MCPManager
 
@@ -520,17 +574,17 @@ class TestSessionStreamForward:
         mcp = MCPManager()
         mcp._clients.append(FakeMcpClient())
 
-        # main 组装路径：MCPManager 作为扩展声明
-        loader = ExtensionManager()
-        loader.add("mcp", mcp.as_extension)
+        # main 组装路径：MCPManager 作为插件声明
+        loader = PluginManager()
+        loader.add("mcp", mcp.legacy_plugin)
         await loader.load()
-        mcp_extension = [e for e in loader.extensions if e.error is None]
+        mcp_plugin = [e for e in loader.plugins if e.error is None]
 
         manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            extensions=mcp_extension,
+            declarations=mcp_plugin,
             storage="memory",
             path=str(tmp_path / "s.db"),
         )
@@ -542,7 +596,7 @@ class TestSessionStreamForward:
             agent = None
 
         s = manager.create(Conn())
-        names = {t.name for t in s.context.extension_runner.all_tools()}
-        assert "mcp_remote_search" in names  # MCP 工具经扩展进会话工具表
+        names = {t.name for t in s.context.plugin_runner.all_tools()}
+        assert "mcp_remote_search" in names  # MCP 工具经插件进会话工具表
 
         await manager.close()

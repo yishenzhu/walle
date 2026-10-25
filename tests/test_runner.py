@@ -57,13 +57,13 @@ def runner(allow_executor):
 @pytest.fixture
 def env(channel, provider):
     """默认会话环境：模型（协议面注入）+ 历史（每测试隔离）+ 会话工具表。"""
-    from ..core import EventBus, ExtensionRunner
+    from ..core import EventBus, PluginRunner
 
     return SessionContext(
         provider=provider,
         channel=channel,
         history=InMemoryMessages(),
-        extension_runner=ExtensionRunner(EventBus()),
+        plugin_runner=PluginRunner(EventBus()),
         history_factory=build_ephemeral_history,
     )
 
@@ -202,7 +202,7 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        env.extension_runner.register_tool(make_echo_tool("result!"))
+        env.plugin_runner.register_tool(make_echo_tool("result!"))
 
         result = await runner.run(agent, "use echo", env=env)
 
@@ -242,7 +242,7 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        env.extension_runner.register_tool(tool_a, tool_b)
+        env.plugin_runner.register_tool(tool_a, tool_b)
 
         result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
@@ -282,7 +282,7 @@ class TestRunnerMaxTurns:
         provider.client.chat.completions.set_responses(*responses)
 
         agent = Agent(instruction="helpful")
-        env.extension_runner.register_tool(make_echo_tool())
+        env.plugin_runner.register_tool(make_echo_tool())
 
         result = await runner.run(
             agent,
@@ -385,7 +385,7 @@ class TestRunnerSubagent:
         contents = [m.content for m in await env.history.get()]
         assert any("child answer" in str(c) for c in contents)
 
-    async def test_subagent_inherits_extension_tools(self, provider, env, runner):
+    async def test_subagent_inherits_plugin_tools(self, provider, env, runner):
         """子 agent 继承父会话的工具源（否则派发出去无工具可用）。"""
         provider.client.chat.completions.set_responses(
             FakeCompletion(
@@ -400,7 +400,7 @@ class TestRunnerSubagent:
             FakeCompletion(FakeMessage(content="child done")),  # 子 agent 轮
             FakeCompletion(FakeMessage(content="done")),  # 父收尾轮
         )
-        env.extension_runner.register_tool(make_echo_tool("echoed-in-child"))
+        env.plugin_runner.register_tool(make_echo_tool("echoed-in-child"))
 
         helper = Agent(
             name="helper",
@@ -423,8 +423,8 @@ class TestRunnerSubagent:
         assert "echo" in seen[1], f"子 agent 未继承工具源: {seen[1]}"
 
     async def test_subagent_env_inherits_capabilities(self, monkeypatch):
-        """子环境继承 provider/cwd/extension_runner/agents，隔离历史与 channel，深度 +1。"""
-        from ..core import EventBus, ExtensionRunner
+        """子环境继承 provider/cwd/plugin_runner/agents，隔离历史与 channel，深度 +1。"""
+        from ..core import EventBus, PluginRunner
         from ..core import runner as runner_mod
 
         captured: list[SessionContext] = []
@@ -437,12 +437,12 @@ class TestRunnerSubagent:
         monkeypatch.setattr(runner_mod, "Runner", SpyRunner)
 
         helper = Agent(name="helper", description="helper")
-        extension_runner = ExtensionRunner(EventBus())
+        plugin_runner = PluginRunner(EventBus())
         parent = SessionContext(
             history=InMemoryMessages(),
             provider="fake-provider",
             channel="parent-channel",
-            extension_runner=extension_runner,
+            plugin_runner=plugin_runner,
             cwd="/tmp/proj",
             agents={"helper": helper},
             depth=2,
@@ -454,7 +454,7 @@ class TestRunnerSubagent:
 
         child = captured[0]
         assert child.provider == "fake-provider"
-        assert child.extension_runner is extension_runner
+        assert child.plugin_runner is plugin_runner
         assert child.cwd == "/tmp/proj"
         assert child.agents == {"helper": helper}
         assert child.depth == 3  # 父 depth + 1
@@ -490,7 +490,7 @@ class TestRunnerModelParams:
 
 
 class TestRunnerBuildTools:
-    """_build_tools 方法测试：源 = 会话工具列表（调用方从扩展 runner 取）。"""
+    """_build_tools 方法测试：源 = 会话工具列表（调用方从插件 runner 取）。"""
 
     def _env(self, agents: dict | None = None, depth: int = 0) -> SessionContext:
         return SessionContext(
@@ -552,7 +552,7 @@ class TestRunnerBuildTools:
         assert runner._build_tools(agent2, [tool], self._env()) == {}
 
     def test_no_tools_returns_empty(self, provider):
-        """空源（无 extension_runner / 无工具）→ 空工具。"""
+        """空源（无 plugin_runner / 无工具）→ 空工具。"""
         agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
         runner = Runner()
         assert runner._build_tools(agent, [], self._env()) == {}
@@ -604,7 +604,7 @@ class TestRunnerToolHooks:
             instruction="helpful",
             tool_filter=ToolFilter(allow=["*"]),
         )
-        env.extension_runner.register_tool(make_echo_tool())
+        env.plugin_runner.register_tool(make_echo_tool())
         result = await runner.run(agent, "use echo", env=env)
 
         # 工具被拦下 → 无输出结果，但流程继续（工具结果为空导致轮次结束）
@@ -612,7 +612,7 @@ class TestRunnerToolHooks:
         assert result.output == "done"
 
     async def test_tool_after_hook_notified(self, provider, env):
-        from ..core import EventBus, ExtensionRunner
+        from ..core import EventBus, PluginRunner
         from ..infra import ToolExecutionEndEvent
 
         seen: list[str] = []
@@ -643,8 +643,8 @@ class TestRunnerToolHooks:
             instruction="helpful",
             tool_filter=ToolFilter(allow=["*"]),
         )
-        env.extension_runner = ExtensionRunner(bus)  # 工具经会话扩展 runner 提供
-        env.extension_runner.register_tool(make_echo_tool())
+        env.plugin_runner = PluginRunner(bus)  # 工具经会话插件 runner 提供
+        env.plugin_runner.register_tool(make_echo_tool())
         await runner.run(agent, "use echo", env=env)
 
         assert seen == ["echo"]

@@ -45,9 +45,9 @@ session:
   path: "data/sessions"          # file=会话根；sqlite=db 文件；memory 忽略
 
 
-# 扩展：默认加载 .agent/extensions/ 下全部扩展；enabled 非空 = 白名单，disabled 优先
-extension:
-  dir: ".agent/extensions"
+# 插件：默认加载 .agent/plugins/ 下全部插件；enabled 非空 = 白名单，disabled 优先
+plugin:
+  dir: ".agent/plugins"
   enabled: []                    # 例: ["audit", "sandbox"]
   disabled: []
 

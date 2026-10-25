@@ -12,7 +12,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ...plugin import PluginHost
+from ...spec import WebService
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
+from .plugins import discover_web_plugins
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Walle Web")
@@ -81,15 +84,36 @@ async def api_sessions(cwd: str = "") -> dict:
     return {"cwd": str(target), "sessions": reply.get("sessions") or []}
 
 
-def install_web_plugins() -> None:
-    """加载声明了 Web 安装器的扩展，自动挂载其路由。"""
-    from ...infra import discover_extension_specs
+class WebHost:
+    """Web 宿主能力实现：把插件路由挂到 FastAPI 应用。"""
 
-    app.state.shell = index
-    app.state.static_dir = STATIC
-    for spec in discover_extension_specs():
-        if spec.web is not None:
-            spec.web(app)
+    def __init__(self, app: FastAPI, shell, static_dir: Path) -> None:
+        self._app = app
+        self._shell = shell
+        self._static_dir = static_dir
+
+    @property
+    def shell(self):
+        return self._shell
+
+    @property
+    def static_dir(self) -> Path:
+        return self._static_dir
+
+    def include_router(self, router) -> None:
+        self._app.include_router(router)
+
+
+def install_web_plugins() -> None:
+    """启动 Web 插件宿主：注册 WebService，加载包内声明的 Web 插件。"""
+
+    async def install() -> None:
+        host = PluginHost()
+        await host.root.register(WebService, WebHost(app, index, STATIC))
+        await host.launch(discover_web_plugins())
+        app.state.plugin_host = host
+
+    asyncio.run(install())
 
 
 install_web_plugins()

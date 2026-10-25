@@ -1,18 +1,71 @@
-"""学习插件清单：agent 扩展工厂 + 可选 Web 路由安装器。"""
+"""学习插件：课程工具 + 课程动态提示（按会话 metadata 注入）。"""
 
-from ..infra import ExtensionSpec
-from .extension import learning_extension
+from typing import Any
 
-
-def install_web(app) -> None:
-    """把学习扩展的课程路由挂到宿主 Web 应用。"""
-    from .web import install
-
-    install(app)
-
-
-PLUGIN = ExtensionSpec(
-    name="learning",
-    factory=learning_extension,
-    web=install_web,
+from ..infra import Tool
+from ..plugin import plugin
+from ..spec import (
+    AssembleContext,
+    PromptOrder,
+    PromptSection,
+    PromptService,
+    ToolService,
 )
+from .store import load_course, read_lesson
+from .tools import course_canvas, create_course, read_course, write_lesson
+
+
+def course_instructions(metadata: dict[str, Any]) -> str | None:
+    """按会话 metadata 生成课程答疑提示；未指定课程时返回 None。"""
+    course_id = metadata.get("course_id")
+    if not course_id:
+        return None
+    lesson_id = metadata.get("lesson_id")
+    course = load_course(course_id)
+    if course is None:
+        return f"Course context: {course_id} (course not found)"
+    lines = [f"Course: {course.get('title') or course_id}"]
+    if course.get("goal"):
+        lines.append(f"Goal: {course['goal']}")
+    lines.append("Lessons:")
+    for item in course.get("lessons") or []:
+        marker = " (current)" if item.get("id") == lesson_id else ""
+        lines.append(
+            f"- {item.get('order') or '?'}. {item.get('title')} "
+            f"[{item.get('id')}]{marker}"
+        )
+    if lesson_id:
+        lesson = read_lesson(course_id, lesson_id)
+        if lesson is not None:
+            lines.append(
+                f"Current lesson: {lesson.get('title')} "
+                f"[{lesson_id}]; use read_course to read it."
+            )
+    lines.append("Answer as the course tutor. Use read_course for lesson details.")
+    return "\n".join(lines)
+
+
+def course_section(context: AssembleContext) -> str:
+    """PromptService 段：课程上下文随会话 metadata 变化。"""
+    return course_instructions(context.metadata) or ""
+
+
+@plugin(name="learning", inject=(ToolService, PromptService))
+async def learning_plugin(ctx, config) -> None:
+    """注册课程工具与课程动态提示段。"""
+    tools = ctx.get(ToolService)
+    for fn in (create_course, write_lesson, course_canvas, read_course):
+        tools.register_tool(Tool.from_function(fn))
+    ctx.get(PromptService).section(
+        PromptSection(
+            name="learning:course",
+            order=PromptOrder.RUNTIME,
+            text=course_section,
+        )
+    )
+
+
+PLUGIN = learning_plugin
+
+# Web 进程按需加载的 Web 插件（惰性导入，避免 agent 进程加载 FastAPI）
+WEB_PLUGINS = ["walle.learning.web:PLUGIN"]

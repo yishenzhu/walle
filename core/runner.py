@@ -17,6 +17,7 @@ from ..spec import (
     LLM,
     AgentEndEvent,
     AgentStartEvent,
+    AssembleContext,
     AssistantMessage,
     Channel,
     Job,
@@ -24,6 +25,7 @@ from ..spec import (
     MessageEndEvent,
     Messages,
     MessageStartEvent,
+    PromptService,
     SessionEndEvent,
     SessionStartEvent,
     SystemMessage,
@@ -38,7 +40,7 @@ from ..spec import (
     EventBus as EventBusProtocol,
 )
 from ..spec import (
-    ExtensionLayer as ExtensionLayerProtocol,
+    PluginLayer as PluginLayerProtocol,
 )
 from .agent import Agent, Handoff
 from .executor import ToolExecutor
@@ -60,7 +62,7 @@ class RunOptions:
 class SessionContext:
     """会话级上下文与状态：Session 唯一持有，每次 run 原样传入。
 
-    携带会话的扩展激活层（extension_runner）：工具执行期经它动态注册新工具。
+    携带会话的插件激活层（plugin_runner）：工具执行期经它动态注册新工具。
     agents 为会话 agent 注册表（name→Agent），handoff/subagent 工具按名
     在此查表构造；depth 为派发深度（0=顶层会话），用于卡住子 agent 递归。
     bus 为会话事件总线（Runner 发事件、工具执行钩子屏障共用同一实例）。
@@ -71,13 +73,14 @@ class SessionContext:
     channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    extension_runner: ExtensionLayerProtocol | None = None  # 会话工具表 + 动态指令
+    plugin_runner: PluginLayerProtocol | None = None  # 会话工具表 + 动态指令
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
     bus: EventBusProtocol | None = None  # 会话事件总线（None 时 run 内现造，仅测试用）
     history_factory: Callable[[], Messages] | None = None  # 子 agent 隔离历史来源（装配注入）
-    metadata: dict[str, Any] = field(default_factory=dict)  # 会话元数据（扩展自定义键值）
+    metadata: dict[str, Any] = field(default_factory=dict)  # 会话元数据（插件自定义键值）
+    prompt: PromptService | None = None  # 插件提供的动态 system 段
 
 
 @dataclass
@@ -146,7 +149,7 @@ class Runner:
 
                 messages = await self._build_messages(agent, history, env)
                 tool_source = (
-                    env.extension_runner.all_tools() if env.extension_runner is not None else []
+                    env.plugin_runner.all_tools() if env.plugin_runner is not None else []
                 )
                 tools = self._build_tools(agent, tool_source, env)
 
@@ -322,19 +325,28 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        if ctx.extension_runner is not None:
-            for text in ctx.extension_runner.instructions(ctx.metadata):
+        if ctx.plugin_runner is not None:
+            for text in ctx.plugin_runner.instructions(ctx.metadata):
                 messages += [SystemMessage(content=text)]
-            skill_prompt = agent.skill_prompt(ctx.extension_runner.skills)
+            skill_prompt = agent.skill_prompt(ctx.plugin_runner.skills)
             if skill_prompt:
                 messages += [SystemMessage(content=skill_prompt)]
+        if ctx.prompt is not None:
+            assembly = await ctx.prompt.assemble(
+                AssembleContext(
+                    agent=agent.name or "",
+                    depth=ctx.depth,
+                    metadata=ctx.metadata,
+                )
+            )
+            messages += [SystemMessage(content=text) for text in assembly.sections]
         return messages
 
     def _build_tools(
         self, agent: Agent, source: list[Tool], env: SessionContext
     ) -> dict[str, Tool]:
         # 按 agent 的可用工具（源经 tool_filter 过滤）构造工具表；工具不经
-        # agent 配置——源来自会话扩展 runner，每轮实时取。
+        # agent 配置——源来自会话插件 runner，每轮实时取。
         tools: dict[str, Tool] = {}
         for t in agent.available_tools(source):
             tools[t.name] = t

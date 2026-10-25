@@ -16,7 +16,17 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent  # 仓库根 = walle 包目录
-LAYERS = ("spec", "infra", "messages", "core", "tools", "channel", "conf")
+LAYERS = (
+    "spec",
+    "plugin",
+    "infra",
+    "messages",
+    "core",
+    "tools",
+    "learning",
+    "channel",
+    "conf",
+)
 
 
 def _iter_py_files(layer: str):
@@ -90,7 +100,9 @@ def test_spec_is_leaf():
     assert problems == [], "分层违规（spec 必须保持叶子）:\n" + "\n".join(problems)
 
 
-@pytest.mark.parametrize("layer", ("infra", "messages", "tools", "channel", "conf"))
+@pytest.mark.parametrize(
+    "layer", ("plugin", "infra", "messages", "tools", "learning", "channel", "conf")
+)
 def test_no_upward_import_into_core(layer):
     """实现层不得反向依赖 core：依赖方向单向，避免环。"""
     problems = []

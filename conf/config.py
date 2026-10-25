@@ -95,10 +95,10 @@ class SessionConfig(BaseModel):
     path: str | None = None
 
 
-class ExtensionConfig(BaseModel):
-    """扩展加载配置：目录 + 启停名单（enabled 非空即白名单，disabled 优先）。"""
+class PluginConfig(BaseModel):
+    """插件加载配置：目录 + 启停名单（enabled 非空即白名单，disabled 优先）。"""
 
-    dir: str = ".agent/extensions"  # 扩展目录（相对项目根）
+    dir: str = ".agent/plugins"  # 插件目录（相对项目根）
     enabled: list[str] = Field(default_factory=list)  # 空 = 全部启用
     disabled: list[str] = Field(default_factory=list)
 
@@ -108,7 +108,7 @@ class Config(BaseModel):
     telemetry: TelemetryConfig = TelemetryConfig()
     tool: ToolConfig = ToolConfig()
     session: SessionConfig = SessionConfig()
-    extension: ExtensionConfig = ExtensionConfig()
+    plugin: PluginConfig = PluginConfig()
 
     @classmethod
     def load(cls, path: str = "conf.yaml"):

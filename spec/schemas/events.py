@@ -109,6 +109,26 @@ class ToolExecutionStartEvent:
 
 
 @dataclass
+class PreExecuteToolEvent:
+    """工具执行前拦截（新事件面：监听器返回 dict 或 HookVerdict）。"""
+
+    name: str
+    arguments: dict[str, Any]
+    tool_call_id: str
+
+
+@dataclass
+class ToolResultEvent:
+    """工具执行后（新事件面：结果 / 错误 / 改写后的参数）。"""
+
+    name: str
+    arguments: dict[str, Any]
+    tool_call_id: str
+    result: Any
+    error: Any
+
+
+@dataclass
 class ToolExecutionEndEvent:
     """工具执行后（非阻断通知，带结果/错误/耗时）。"""
 

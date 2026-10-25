@@ -229,15 +229,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import EventBus, ExtensionRunner
+        from ..core import EventBus, PluginRunner
 
-        extension_runner = ExtensionRunner(EventBus())
-        extension_runner.register_tool(
+        plugin_runner = PluginRunner(EventBus())
+        plugin_runner.register_tool(
             make_tool("slow", "slow-done", delay=0.05),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.extension_runner = extension_runner
+        env.plugin_runner = plugin_runner
 
         agent = Agent(
             instruction="You are helpful.",
@@ -289,15 +289,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import EventBus, ExtensionRunner
+        from ..core import EventBus, PluginRunner
 
-        extension_runner = ExtensionRunner(EventBus())
-        extension_runner.register_tool(
+        plugin_runner = PluginRunner(EventBus())
+        plugin_runner.register_tool(
             make_tool("slow", "done-42", delay=0.1),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.extension_runner = extension_runner
+        env.plugin_runner = plugin_runner
 
         agent = Agent(
             instruction="You are helpful.",

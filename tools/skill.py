@@ -1,9 +1,7 @@
 """技能（Skill）：渐进式披露的提示词资源，不是工具。
 
-每个技能是 .agent/skills/<name>/SKILL.md（frontmatter name/description +
-正文指令）。技能作为单个"skills"扩展声明：SkillLoader.as_extension 扫全部技能
-目录，把清单（名 + 描述 + 路径）注册进扩展——会话激活该扩展后技能清单
-注入 system prompt，模型按需用 read 工具加载全文。
+技能目录由 SkillService 提供；skill 插件扫描 .agent/skills/ 注册声明。
+会话从服务取清单注入 system prompt，模型按需用 read 加载全文。
 """
 
 import logging
@@ -12,7 +10,9 @@ from pathlib import Path
 import frontmatter
 
 from ..conf import AGENT_DIR
-from ..infra import ExtensionAPI, Skill
+from ..infra import PluginAPI, Skill
+from ..plugin import plugin
+from ..spec import SkillService
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +59,15 @@ class SkillLoader:
         return metas
 
     @classmethod
-    async def as_extension(cls, api: ExtensionAPI) -> None:
-        """技能扩展：扫描 .agent/skills/ 把全部技能声明注册进扩展。
-
-        会话激活该扩展后，技能清单（名/描述/路径）注入 system prompt，
-        模型按需用 read 加载对应 SKILL.md 全文（渐进式披露）。
-        """
+    async def legacy_plugin(cls, api: PluginAPI) -> None:
+        """兼容旧插件 API：把技能声明注册进旧插件声明。"""
         for meta in cls.scan():
             api.register_skill(meta.name, meta.description, meta.path)
+
+
+@plugin(name="skill", inject=(SkillService,))
+async def native_skill(ctx, config) -> None:
+    """技能插件：扫描 .agent/skills/，注册到会话的 SkillService。"""
+    skills = ctx.get(SkillService)
+    for meta in SkillLoader.scan(config.get("root")):
+        skills.add(meta.name, meta.description, meta.path)

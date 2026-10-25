@@ -1,6 +1,6 @@
 """沙箱（bubblewrap）测试。
 
-单测只验 argv 构造 / 扩展覆盖（不依赖 bwrap 存在）；集成测试真跑
+单测只验 argv 构造 / 插件覆盖（不依赖 bwrap 存在）；集成测试真跑
 bwrap 验证隔离，宿主机无 bwrap 时自动跳过。
 
 集成测试的可写区 = 会话 cwd，用 PROJECT_ROOT/data/sandbox/_test/ 下的
@@ -94,7 +94,7 @@ class TestSandbox:
         assert argv[-3:] == ["bash", "-c", "ls -la"]
 
 
-# ── 沙箱扩展：同名覆盖内置 bash ──────────────────────
+# ── 沙箱插件：同名覆盖内置 bash ──────────────────────
 
 class TestSandboxExt:
     def test_registers_tool_named_bash(self, monkeypatch):
@@ -110,7 +110,7 @@ class TestSandboxExt:
         api = FakeAPI()
 
         async def run():
-            await Sandbox().as_extension(api)
+            await Sandbox().legacy_plugin(api)
 
         asyncio.run(run())
         assert [t.name for t in api.tools] == ["bash"]
@@ -119,7 +119,7 @@ class TestSandboxExt:
         monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: None)
 
         async def run():
-            await Sandbox().as_extension(object())  # noqa: BLE001
+            await Sandbox().legacy_plugin(object())  # noqa: BLE001
 
         with pytest.raises(RuntimeError):
             asyncio.run(run())

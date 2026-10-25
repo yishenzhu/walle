@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core import ExtensionRunner
+from ..core import PluginRunner
 from ..infra import EventBus, Tool
 
 
@@ -55,7 +55,7 @@ class TestTool:
 
 
 class TestRunnerToolTable:
-    """会话工具表由 ExtensionRunner 持有：注册 / 覆盖 / 摘除 / 查询。"""
+    """会话工具表由 PluginRunner 持有：注册 / 覆盖 / 摘除 / 查询。"""
 
     @staticmethod
     def _tool(name: str) -> Tool:
@@ -66,7 +66,7 @@ class TestRunnerToolTable:
 
     @pytest.fixture
     def runner(self):
-        return ExtensionRunner(EventBus())
+        return PluginRunner(EventBus())
 
     def test_empty_tool_table(self, runner):
         assert runner.all_tools() == []

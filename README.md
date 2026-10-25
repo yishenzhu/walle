@@ -1,6 +1,6 @@
 # Walle 🤖
 
-> 一个从零构建的 AI Agent 框架 —— 工具调用 · 多智能体 · MCP · 运行时自扩展 · 全链路可观测
+> 一个从零构建的 AI Agent 框架 —— 工具调用 · 多智能体 · MCP · 运行时插件化 · 全链路可观测
 
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev)
@@ -16,14 +16,14 @@
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
 | 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选/技能白名单），启动按名加载，会话内可切换 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
-| 🔌 **MCP 协议集成** | MCP 作为扩展声明（stdio / Streamable HTTP），连接进程级共享，工具随扩展进会话 |
-| 🛡️ **工具治理** | 审批即扩展：conf 规则（allow/deny/ask）由 `Approval` 扩展订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
-| 🔒 **OS 级沙箱** | 可选 bwrap 沙箱扩展：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
+| 🔌 **MCP 协议集成** | MCP 作为插件（stdio / Streamable HTTP），连接进程级共享，工具随插件进会话 |
+| 🛡️ **工具治理** | 审批即插件：conf 规则（allow/deny/ask）由 `Approval` 插件订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
+| 🔒 **OS 级沙箱** | 可选 bwrap 沙箱插件：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **Web 通道** | JSON-line 会话服务端 + WebSocket 桥接；多客户端并发、流式回复，断开重连保留状态 |
 | 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
 | 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；课程页可直接提问，答疑继续生成该课程的原对话 |
-| 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
+| 🔌 **插件化** | `apply(ctx, config)` + 服务依赖注入 + 每会话 PluginHost；工具 / 提示段 / 技能 / 事件 / Web 路由都是插件，`.agent/plugins/` 即插即用 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
 ---
@@ -34,33 +34,35 @@
 
 ```mermaid
 flowchart TD
-    Main["main.py<br/>组装扩展池 · 启动"]
-    ExtManager["ExtensionManager<br/>进程级加载器<br/>builtin / sandbox / mcp / skill / approval<br/>+ .agent/extensions/ 用户扩展"]
-    SessionManager["SessionManager<br/>会话管理器 · 工厂<br/>持扩展声明池 / tool_config"]
-    S["Session<br/>会话运行时容器<br/>bus · executor · runner · extension_runner"]
-    ER["ExtensionRunner<br/>会话级激活层<br/>工具表 / 技能表 / 命令表"]
+    Main["main.py<br/>组装插件声明 · 启动"]
+    Plugins["插件声明<br/>apply(ctx, config)<br/>builtin / sandbox / mcp / skill / approval / learning<br/>+ .agent/plugins/ 用户插件"]
+    SessionManager["SessionManager<br/>会话管理器 · 工厂<br/>持插件声明池 / tool_config"]
+    S["Session<br/>会话运行时容器<br/>bus · host · runner · tool table"]
+    Host["PluginHost<br/>每会话插件运行时<br/>Context 作用域 · 依赖驱动激活"]
+    Services["服务适配器<br/>ToolService / PromptService / SkillService"]
     R["Runner<br/>Agent 循环 · 流式增量事件"]
     E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
     A["Agent<br/>定义 · tool_filter · 技能白名单"]
     T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
     Ch["Channel<br/>notify / call<br/>Web 多会话"]
 
-    Main --> ExtManager
-    ExtManager -->|Extension 声明池| SessionManager
+    Main --> Plugins
+    Plugins -->|Plugin 声明池| SessionManager
     SessionManager -->|create 会话| S
-    S -->|activate 选中扩展| ER
+    S -->|start: launch 选中插件| Host
+    Host --> Services
     S --> R
     S --> E
     R --> A
     E --> T
-    ER -->|all_tools 工具源| R
+    Services -->|工具 / 提示段 / 技能| R
     Ch --> S
 
     classDef entry fill:#e8f5e9,stroke:#2e7d32
     classDef core fill:#e3f2fd,stroke:#1565c0
     classDef tool fill:#fff3e0,stroke:#e65100
-    class Main,ExtManager,SessionManager entry
-    class S,ER,R,E,A core
+    class Main,Plugins,SessionManager entry
+    class S,Host,Services,R,E,A core
     class T,Ch tool
 ```
 
@@ -86,7 +88,7 @@ sequenceDiagram
         alt 有 tool_calls
             R->>R: tool_context 统一注入本轮 ctx
             R->>E: execute_tool_calls（并发）
-            E->>B: TOOL_EXECUTION_START（审批扩展 deny/ask → 人工确认）
+            E->>B: TOOL_EXECUTION_START（审批插件 deny/ask → 人工确认）
             E->>E: 执行工具（超时）→ TOOL_EXECUTION_END
             E-->>R: 结果
             alt 含 Handoff
@@ -109,10 +111,10 @@ sequenceDiagram
 | 层 | 目录 | 职责 |
 |---|---|---|
 | 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions/SessionInit）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
-| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、进程默认 provider、会话服务端 |
-| 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
+| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：插件声明（builtin/sandbox/mcp/skill/approval/learning/用户插件）、进程默认 provider、会话服务端 |
+| 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、插件加载/激活器 |
 | 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
-| 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
+| 工具/插件 | `tools/` | ToolService 实现、内置工具、mcp/skill/approval/sandbox 插件 —— 均依赖协议面与服务能力 |
 | 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ 与通道无关的会话服务端（`server.py`）+ Web 工作区；新增通道复用 Channel 协议即可 |
 | 消息存储 | `messages/` | File/SQLite/InMemory/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
 | 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
@@ -126,7 +128,7 @@ sequenceDiagram
 ### 前置条件
 
 - **Python ≥ 3.12**（pyproject.toml 要求）
-- **bubblewrap**（可选，启用 OS 级沙箱：`apt install bubblewrap`；缺失时沙箱扩展自动跳过）
+- **bubblewrap**（可选，启用 OS 级沙箱：`apt install bubblewrap`；缺失时沙箱插件自动跳过）
 - **Docker + Docker Compose**（可选，用于可观测性栈）
 
 ### 安装
@@ -256,8 +258,8 @@ session:
   storage: "file"                     # file | sqlite | memory
   path: "data/sessions"               # file=会话根；sqlite=db 文件；memory 忽略
 
-extension:
-  dir: ".agent/extensions"            # 用户扩展目录
+plugin:
+  dir: ".agent/plugins"              # 用户插件目录
   enabled: []                         # 空 = 全部启用；非空 = 白名单
   disabled: []                        # disabled 优先于 enabled
 
@@ -285,7 +287,7 @@ extension:
 | `.agent/agents/` | Agent 定义（frontmatter Markdown，文件名即 agent 名） | 手动编辑 |
 | `.agent/skills/` | 技能（SKILL.md + 可选 scripts/assets） | `skill-creator` 或手动 |
 | `.agent/tools/` | 模型定义的代码工具 | `define_tool` |
-| `.agent/extensions/` | 用户扩展（Python，可同名覆盖内置工具） | 手动编辑 |
+| `.agent/plugins/` | 用户插件（`plugin.py` 定义 `apply(ctx, config)`，可同名覆盖内置工具） | 手动编辑 |
 | `.agent/note.md` | 工作笔记（todo / goal / 决策；位于会话工作目录下） | 模型 `read` / `edit` |
 | `.agent/mcp.yaml` | MCP Server 配置 | 手动编辑 |
 
@@ -334,8 +336,8 @@ tools:
 | `tools.deny` | list[string] | 可选，拒绝的工具 glob（优先于 allow） |
 | `skills` | list[string] | 可选，技能白名单：`[]` 不注入 / `["*"]` 全部 / 列表仅命中项 |
 
-- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配。Agent 不持有工具源——运行时每轮从会话扩展 runner 取工具表并经 `tools` 过滤
-- **技能注入**：会话激活技能扩展后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
+- **工具筛选**：`deny` 优先于 `allow`，支持 `mcp_obsidian*` 等 glob 通配。Agent 不持有工具源——运行时每轮从会话插件 runner 取工具表并经 `tools` 过滤
+- **技能注入**：会话激活技能插件后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **课程导师**：`.agent/agents/tutor.md`，只读答疑（仅允许 `read_course`），课程页自动使用
 - **学习规划**：`.agent/agents/learning.md`，按章节顺序生成课程包（当前课正文和画布完成后再进入下一课），Web「学习模式」使用
@@ -343,7 +345,7 @@ tools:
 
 ---
 
-## 🔧 扩展
+## 🔧 插件
 
 ### 添加内置工具
 
@@ -353,43 +355,68 @@ from .. import tool_context
 
 async def my_tool(query: str) -> str:
     """工具描述，会自动生成 schema。"""
-    ctx = tool_context.get()   # 访问会话视图 SessionView（channel / jobs / bus / extension_runner / cwd / history）
+    ctx = tool_context.get()   # 访问会话视图 SessionView（channel / jobs / bus / cwd / history / metadata）
     return f"result: {query}"
 ```
 
+插件采用 `apply(ctx, config)` 入口，通过服务能力面注册工具、技能、提示词与事件：
+
 ```python
-# main.py 引导扩展里注册（内置工具也走扩展系统，先于用户扩展）
-async def builtin_extension(api) -> None:
+# tools/builtin/plugin.py
+from ...plugin import plugin
+from ...spec import ToolService
+
+@plugin(name="builtin", inject=(ToolService,))
+async def builtin_plugin(ctx, config) -> None:
+    tools = ctx.get(ToolService)
     for fn in (bash, ask_user, read, edit, write, ..., history, new_window):
-        api.register_tool(Tool.from_function(fn))
+        tools.register_tool(Tool.from_function(fn))
 ```
 
-用户扩展（`.agent/extensions/`）后注册可同名覆盖内置工具。
+- `inject` / `provides`：声明依赖与提供的服务，`PluginHost` 依赖驱动激活
+- `ctx.register(Service, impl)`：注册能力，作用域销毁时自动回滚
+- `ctx.on(Event, handler)`：订阅事件，handler 签名为 `(event, value)`
+- `ctx.child()` / `ctx.scope(key)`：作用域分层（覆盖全局能力）
+- 插件加载顺序无关；失败单项隔离，不影响其他插件
 
-扩展还可以注册**动态指令**：每次模型调用前按会话 `metadata` 返回一段文本，
-由运行时追加为 system 消息（对应 PydanticAI capability instructions /
-LangChain `dynamic_prompt` 的同一类扩展点）：
+插件还可以注册**动态提示词段**：每次模型调用前按会话 `metadata` 求值，
+由 `PromptService` 组装成 system 消息（对应 PydanticAI capability instructions /
+LangChain `dynamic_prompt`）：
 
 ```python
-async def my_extension(api) -> None:
-    api.register_instructions(
-        lambda metadata: "Use metric units." if metadata.get("metric") else None
+from ...spec import PromptOrder, PromptSection, PromptService
+
+@plugin(name="my-plugin", inject=(PromptService,))
+async def my_plugin(ctx, config) -> None:
+    ctx.get(PromptService).section(
+        PromptSection(
+            name="my-plugin:units",
+            order=PromptOrder.RUNTIME,
+            text=lambda context: (
+                "Use metric units." if context.metadata.get("metric") else ""
+            ),
+        )
     )
 ```
 
-学习扩展的课程上下文就走这个入口，核心运行时不需要知道 course/lesson。
-
-领域插件在包内提供 `plugin.py`：
+领域插件在包内提供 `plugin.py`。agent 插件与 Web 插件分开声明；Web 插件用字符串惰性引用，避免 agent 进程加载 FastAPI：
 
 ```python
-PLUGIN = ExtensionSpec(
-    name="learning",
-    factory=learning_extension,  # agent 侧：工具 / 指令 / 钩子
-    web=install_web,             # Web 侧：自动挂载路由（可选，惰性导入）
-)
+# learning/plugin.py
+PLUGIN = learning_plugin
+WEB_PLUGINS = ["walle.learning.web:PLUGIN"]
 ```
 
-装配根与 Web 启动都会扫描包内的 `plugin.py`，因此插件加载时其路由会自动生效，Web 通道不需要硬编码具体插件。
+Web 插件注入 `WebService`，自己挂路由：
+
+```python
+@plugin(name="learning-web", inject=(WebService,))
+async def learning_web(ctx, config):
+    web = ctx.get(WebService)
+    web.include_router(create_router(web.shell, web.static_dir))
+```
+
+Web 通道只注册 `WebService` 实现并加载发现到的 Web 插件，不认识具体领域插件。
 
 ### 添加 Skill
 
@@ -443,7 +470,7 @@ async def weather(city: str) -> str:
 
 ### 🪟 上下文窗口管理（模型主动换窗口，对齐 note.md + history 思路）
 
-工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在会话 JSONL 中全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩扩展、无 token 阈值自动折叠。
+工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在会话 JSONL 中全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩插件、无 token 阈值自动折叠。
 
 | 能力 | 说明 |
 |---|---|
@@ -458,7 +485,7 @@ async def weather(city: str) -> str:
 `canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?`：
 
 - 普通画布写入 `data/canvas/<session_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
-- 课程画布由学习扩展提供 `course_canvas`，写入 `data/courses/<course_id>/canvas/<canvas_id>.html`；
+- 课程画布由学习插件提供 `course_canvas`，写入 `data/courses/<course_id>/canvas/<canvas_id>.html`；
 - 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
 - Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
 - 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
@@ -476,7 +503,7 @@ data/courses/<course_id>/
 └── canvas/<canvas>.html   # 课程内交互演示
 ```
 
-学习扩展（`learning/`）提供的工具与动态指令；核心运行时只认识会话元数据，不认识 course/lesson：
+学习插件（`learning/`）提供的工具与动态指令；核心运行时只认识会话元数据，不认识 course/lesson：
 
 - `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
 - `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
@@ -524,6 +551,10 @@ writer = Agent(
 ```
 walle/
 ├── main.py                    # 入口（装配根）
+├── plugin/                   # 插件运行时（EventBus / Context / PluginHost）
+│   ├── events.py              #   事件类 + 5 种分发（emit/bail/serial/parallel/waterfall）
+│   ├── runtime.py             #   Plugin / Context 作用域 / PluginHost 生命周期
+│   └── discovery.py           #   目录与包内 plugin.py 发现
 ├── conf.yaml.example          # 配置模板
 ├── pyproject.toml             # 依赖声明 + 显式包映射 + ruff/pytest 配置
 ├── .github/workflows/ci.yml   # CI：ruff check + pytest（3.12 / 3.13）
@@ -531,7 +562,11 @@ walle/
 │   ├── protocol/              #   跨层能力协议（唯一声明面）
 │   │   ├── channel.py         #     Channel / Sessions / SessionInit
 │   │   ├── messages.py        #     Messages / Projection / ProjectionStore
-│   │   ├── runtime.py         #     ToolTable / ExtensionLayer（工具表 + 动态指令）
+│   │   ├── tool.py            #     ToolService（注册 / schema / 执行）
+│   │   ├── prompt.py          #     PromptService（动态提示词段）
+│   │   ├── skill.py           #     SkillService（技能目录）
+│   │   ├── web.py             #     WebService（插件挂载 Web 路由）
+│   │   ├── runtime.py         #     ToolTable / PluginLayer（工具表 + 动态指令）
 │   │   ├── events.py          #     EventBus（事件总线能力）
 │   │   ├── llm.py             #     LLM（模型能力）
 │   │   └── view.py            #     SessionView（工具可见会话面）
@@ -540,30 +575,35 @@ walle/
 │       ├── events.py          #     事件总线载荷（Session/Turn/Tool 事件）
 │       ├── channel.py         #     通道载荷（连接/通知/服务 + 判别联合）
 │       ├── job.py             #     后台作业（Job/JobStatus + Dispatch/Result）
+│       ├── tools.py           #     ToolRestriction（作用域 allow/deny）
 │       ├── diagnostics.py     #     资源诊断
 │       └── usage.py           #     Token 用量
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（并发·超时）
-│   ├── session.py             #   Session + SessionManager（会话装配根）
+│   ├── executor.py            #   工具执行器（兼容层：ToolService 执行适配）
+│   ├── prompt.py              #   PromptService 默认实现（Prompts）
+│   ├── plugins.py             #   插件服务 → 会话运行时适配（Tool/Prompt/Skill）
+│   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   ├── transport.py           #   JSON-line 帧传输
 │   ├── server.py              #   与通道无关的会话服务端（SessionServer/SessionConn）
 │   └── web/                   #   Web 通道（WebSocket ↔ SessionServer）
-│       ├── app.py             #     FastAPI 应用与桥接（对话/画布；按需挂载学习路由）
+│       ├── app.py             #     FastAPI 应用与桥接（对话/画布；注册 WebService）
+│       ├── plugins.py         #     Web 插件发现（WEB_PLUGINS，惰性导入）
 │       ├── index.html         #     Shell：对话 + 学习空间视图 + 画布
 │       ├── static/app/        #     conversation.js / views.js / course-view.css
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
-├── tools/                     # 工具与扩展声明
-│   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.as_extension）
-│   ├── skill.py               #   技能扫描（SkillLoader.as_extension）
-│   ├── approval.py            #   审批扩展（Approval.as_extension：规则 + 人工确认）
-│   ├── sandbox.py             #   沙箱扩展（bwrap 同名覆盖内置 bash）
+├── tools/                     # 工具与插件声明
+│   ├── tool.py                #   ToolService 默认实现（Tools：注册/schema/执行）
+│   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.plugin）
+│   ├── skill.py               #   技能扫描（native_skill 插件）
+│   ├── approval.py            #   审批插件（native_approval：规则 + 人工确认）
+│   ├── sandbox.py             #   沙箱插件（bwrap 同名覆盖内置 bash）
 │   ├── __init__.py            #   tools 公共导出
-│   └── builtin/               #   内置工具扩展
+│   └── builtin/               #   内置工具插件
 │       ├── bash.py            #     Bash 执行
 │       ├── read.py            #     文件读取
 │       ├── edit.py            #     文件局部替换（降级匹配 + 换行/BOM 保真）
@@ -574,13 +614,12 @@ walle/
 │       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
-│       └── extension.py       #     builtin 扩展声明
-├── learning/                  # 可选学习扩展（通用运行时之上）
-│   ├── plugin.py              #   插件清单：agent 工厂 + Web 路由安装器
-│   ├── extension.py           #   课程工具 + 动态课程指令（learning_extension）
+│       └── plugin.py          #     builtin 插件（向 ToolService 注册工具）
+├── learning/                  # 可选学习插件（通用运行时之上）
+│   ├── plugin.py              #   课程工具 + 动态提示段 + PLUGIN / WEB_PLUGINS
 │   ├── tools.py               #   课程包工具（create_course / write_lesson / course_canvas / read_course）
 │   ├── store.py               #   课程包文件存储（course.json / lessons / canvas）
-│   ├── web.py                 #   课程 Web 路由（列表/阅读/进度/画布），按需挂载
+│   ├── web.py                 #   课程 Web 插件（注入 WebService 挂路由）
 │   ├── web_export.py          #   课程包 zip 导出
 │   └── export.html            #   离线课程阅读器模板
 ├── messages/                  # 消息存储
@@ -591,8 +630,8 @@ walle/
 │   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
-│   ├── extension.py           #   ExtensionManager / ExtensionRunner / CommandContext
-│   ├── event_bus.py           #   会话事件总线（具体实现）
+│   ├── plugin.py              #   旧式插件兼容层（PluginManager / Runner / CommandContext）
+│   ├── event_bus.py           #   会话事件总线（Runner 事件，兼容层）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
@@ -620,7 +659,7 @@ walle/
 │   ├── agents/                #   Agent 定义（frontmatter Markdown）
 │   ├── skills/                #   技能（skill-creator 生成）
 │   ├── tools/                 #   模型定义的工具（define_tool）
-│   ├── extensions/            #   用户扩展（.py，可同名覆盖内置）
+│   ├── plugins/               #   用户插件（plugin.py，可同名覆盖内置）
 │   ├── note.md                #   工作笔记（模型 read/edit 维护，运行时生成）
 │   └── mcp.yaml               #   MCP Server 配置（手动编辑）
 └── scripts/

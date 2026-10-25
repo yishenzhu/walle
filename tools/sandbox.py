@@ -1,4 +1,4 @@
-"""本地工具沙箱：bubblewrap 命令构造 + 沙箱扩展（覆盖内置工具）。
+"""本地工具沙箱：bubblewrap 命令构造 + 沙箱插件（覆盖内置工具）。
 
 沙箱语义：
 - 整个文件系统只读（--ro-bind / /）
@@ -7,9 +7,9 @@
 - hidden_paths 用空视图遮罩：目录→空 tmpfs，文件→ /dev/null（读为空）
 - network=False 时 --unshare-net 断网
 
-形态：沙箱作为进程级扩展（main 里 extensions.add("sandbox", Sandbox().as_extension)），
-同名覆盖内置工具（builtin 先激活、沙箱后激活 → 后到覆盖先到）。
-配置随沙箱实例构造注入，不挂全局 conf；"是否沙箱"体现在装配哪个扩展。
+形态：沙箱作为插件（main 里 Sandbox().plugin()），注入 ToolService 后同名覆盖
+内置工具（builtin 先激活、沙箱后激活 → 后到覆盖先到）。
+配置随沙箱实例构造注入，不挂全局 conf；"是否沙箱"体现在装配哪个插件。
 沙箱依赖会话工作目录（cwd）：无 cwd 时沙箱工具直接报错，不回退。
 """
 
@@ -17,8 +17,10 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..infra.extension import ExtensionAPI
+from ..infra.plugin import PluginAPI
 from ..infra.tool import Tool, tool_context
+from ..plugin import Plugin
+from ..spec import ToolService
 from .builtin.bash import run_command
 
 # 沙箱内默认隐藏的凭据路径（目录或文件均可，不存在则忽略）
@@ -34,10 +36,10 @@ class SandboxConfig:
 
 
 class Sandbox:
-    """沙箱扩展：覆盖内置工具为沙箱实现（当前覆盖 bash，可扩展）。
+    """沙箱插件：覆盖内置工具为沙箱实现（当前覆盖 bash，可扩展）。
 
-    用法（main.py）：extensions.add("sandbox", Sandbox().as_extension)，
-    须在 builtin 之后注册——会话激活时后到者同名覆盖先到者。
+    用法（main.py）：plugins 列表中放 Sandbox().plugin()，须在 builtin 之后——
+    会话激活时后到者同名覆盖先到者。
     """
 
     def __init__(self, config: SandboxConfig | None = None):
@@ -67,25 +69,44 @@ class Sandbox:
             args += ["--unshare-net"]
         return [*args, "bash", "-c", cmd]
 
-    async def as_extension(self, api: ExtensionAPI) -> None:
-        """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，激活后到覆盖）。
-
-        宿主机无 bwrap 时抛异常 → 扩展加载期标记 FAILED，自动跳过
-        （会话仍用 builtin 裸 bash），实现优雅降级。
-        """
-        if shutil.which("bwrap") is None:
-            raise RuntimeError(
-                "bwrap 不可用：沙箱扩展跳过（apt install bubblewrap 可启用）"
-            )
-
+    def _bash(self):
+        """构造沙箱版 bash 工具函数。"""
         async def bash(cmd: str = "") -> str:
             if not cmd:
                 return "Error: cmd is required"
-            ctx = tool_context.get()
-            cwd = ctx.cwd if ctx is not None else None
+            session = tool_context.get()
+            cwd = session.cwd if session is not None else None
             if not cwd:
                 return "Error: 沙箱 bash 需要会话工作目录（cwd）"
             # 复用内置 bash 的执行原语（超时 killpg + 输出上限），argv 直传不经 shell
             return await run_command(self.argv(cwd, cmd))
 
-        api.register_tool(Tool.from_function(bash))
+        return Tool.from_function(bash)
+
+    def plugin(self) -> Plugin:
+        """返回沙箱插件声明：注入 ToolService 并覆盖 bash。"""
+        return Plugin(
+            name="sandbox",
+            apply=self._apply,
+            inject=(ToolService,),
+        )
+
+    async def legacy_plugin(self, api: PluginAPI) -> None:
+        """兼容旧插件 API：把沙箱 bash 注册进旧插件声明。"""
+        if shutil.which("bwrap") is None:
+            raise RuntimeError(
+                "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"
+            )
+        api.register_tool(self._bash())
+
+    async def _apply(self, ctx, config) -> None:
+        """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，后到覆盖）。
+
+        宿主机无 bwrap 时抛异常 → Host 标记 FAILED，自动跳过
+        （会话仍用 builtin 裸 bash），实现优雅降级。
+        """
+        if shutil.which("bwrap") is None:
+            raise RuntimeError(
+                "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"
+            )
+        ctx.get(ToolService).register_tool(self._bash())

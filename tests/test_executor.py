@@ -27,21 +27,21 @@ def make_tool_call(id="tc1", name="echo", arguments=None):
 
 
 async def mount_approval(ctx, config) -> None:
-    """把审批扩展（按 conf 规则）激活到 ctx.bus。
+    """把审批插件（按 conf 规则）激活到 ctx.bus。
 
-    审批不再由 executor 内置——测试经扩展验证 deny/ask 语义。
+    审批不再由 executor 内置——测试经插件验证 deny/ask 语义。
     """
-    from ..core import EventBus, ExtensionManager, ExtensionRunner
+    from ..core import EventBus, PluginManager, PluginRunner
     from ..infra import tool_context
     from ..tools.approval import Approval
 
-    loader = ExtensionManager()
-    loader.add("approval", Approval(config).as_extension)
+    loader = PluginManager()
+    loader.add("approval", Approval(config).legacy_plugin)
     await loader.load()
-    assert loader.extensions[0].error is None
+    assert loader.plugins[0].error is None
     if ctx.bus is None:
         ctx.bus = EventBus()
-    ExtensionRunner(ctx.bus).activate(loader.extensions[0])
+    PluginRunner(ctx.bus).activate(loader.plugins[0])
     # 模拟 runner 每轮统一注入：tool_context 由调用方设置，executor 不再自设
     tool_context.set(ctx)
 
@@ -437,7 +437,7 @@ class TestToolHooks:
             make_tool_call(name="echo"), {"echo": tool}
         )
         assert tc_id == "tc1"
-        assert "blocked by extension" in result
+        assert "blocked by plugin" in result
         assert "危险命令" in result  # reason 透传给模型
 
     async def test_before_hook_rewrites_arguments(self, ctx):
@@ -477,7 +477,7 @@ class TestToolHooks:
         assert seen == {"command": "cd /repo && ls"}  # 工具收到改写后的参数
 
     async def test_after_hook_receives_result(self, ctx):
-        """TOOL_EXECUTION_END 携带执行结果 / 耗时（观测型扩展可用）。"""
+        """TOOL_EXECUTION_END 携带执行结果 / 耗时（观测型插件可用）。"""
         from ..core import EventBus
         from ..infra import ToolExecutionEndEvent
 

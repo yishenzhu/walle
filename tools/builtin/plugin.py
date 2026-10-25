@@ -1,10 +1,8 @@
-"""内置工具扩展：注册 bash/ask_user/canvas/background/job_result/read/edit/
-write/define_tool/history/new_window，由 main 组装进扩展加载器随会话激活。
+"""内置工具插件：向 ToolService 注册内置工具。"""
 
-技能(Skill)不是工具，由 Agent 拼 system prompt、模型用 read 加载。
-"""
-
-from ...infra import ExtensionAPI, Tool
+from ...infra import Tool
+from ...plugin import plugin
+from ...spec import ToolService
 from .ask_user import ask_user
 from .bash import bash
 from .canvas import canvas
@@ -31,7 +29,9 @@ BUILTIN_TOOLS = (
 )
 
 
-async def builtin_extension(api: ExtensionAPI) -> None:
-    """内置工具扩展：注册全部随代码内置的工具（用户扩展可同名覆盖）。"""
+@plugin(name="builtin", inject=(ToolService,))
+async def builtin_plugin(ctx, config) -> None:
+    """内置工具插件：向会话工具服务注册全部内置工具。"""
+    tools = ctx.get(ToolService)
     for fn in BUILTIN_TOOLS:
-        api.register_tool(Tool.from_function(fn))
+        tools.register_tool(Tool.from_function(fn))

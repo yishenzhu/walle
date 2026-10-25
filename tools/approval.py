@@ -1,7 +1,7 @@
-"""审批扩展：工具审批（规则判断 + 人工审批）作为扩展声明。
+"""审批插件：工具审批（规则判断 + 人工审批）作为插件声明。
 
-Approval(config).as_extension 与 mcp/skill 同形态——main 里作为 "approval"
-扩展加进进程级扩展池，每个会话激活后订阅 TOOL_EXECUTION_START。
+native_approval 作为插件加进 main 的插件声明池，每个会话注入后订阅
+PreExecuteToolEvent；旧式插件可继续用 Approval.legacy_plugin。
 """
 
 import fnmatch
@@ -12,12 +12,13 @@ from pydantic import BaseModel
 
 from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec
 from ..infra import (
-    ExtensionAPI,
     HookVerdict,
+    PluginAPI,
     ToolExecutionStartEvent,
     tool_context,
 )
-from ..spec import ApprovalRequest, ApprovalResponse, Channel
+from ..plugin import plugin
+from ..spec import ApprovalRequest, ApprovalResponse, Channel, PreExecuteToolEvent
 
 logger = logging.getLogger(__name__)
 
@@ -119,48 +120,64 @@ class ChannelApprover:
 
 
 class Approval:
-    """审批扩展：把工具审批（规则判断 + 人工审批）作为扩展提供。
+    """审批插件：把工具审批（规则判断 + 人工审批）作为插件提供。
 
     订阅 TOOL_EXECUTION_START——内部用 ApprovalPolicy（conf 规则）做
     deny/allow/ask 判断；ASK 时经 tool_context 的 channel 发起人工审批
     （Approval 服务），拒绝即 HookVerdict(block)。
 
-    main 组装：extensions.add("approval", Approval(conf.tool.approval).as_extension)。
-    executor 不再内置审批——preflight 事件是唯一审批屏障，审批策略可被替换/覆盖。
+    main 组装：plugins 列表放 native_approval；工具预执行事件是唯一审批屏障，
+    审批策略可被替换/覆盖。
     """
 
     def __init__(self, config: ApprovalConfig | None = None):
         self._policy = ApprovalPolicy(config or ApprovalConfig())
 
-    async def as_extension(self, api: ExtensionAPI) -> None:
-        """把审批 handler 注册进扩展 api（与 mcp/skill 的 as_extension 同形态）。"""
-        async def check(evt: ToolExecutionStartEvent) -> HookVerdict | None:
-            name = evt.tool_name
-            args = evt.arguments
-            tc_id = evt.tool_call_id
+    async def check(self, evt: PreExecuteToolEvent, value=None) -> HookVerdict | None:
+        """审批屏障：规则判断 + ASK 时经 channel 人工确认。"""
+        name = evt.name
+        args = evt.arguments
+        tc_id = evt.tool_call_id
 
-            decision = self._policy.evaluate(name, args)
-            if decision == ApprovalDecision.DENY:
-                return HookVerdict(block=f"Tool '{name}' denied by policy")
-            if decision == ApprovalDecision.ALLOW:
-                return None
+        decision = self._policy.evaluate(name, args)
+        if decision == ApprovalDecision.DENY:
+            return HookVerdict(block=f"Tool '{name}' denied by policy")
+        if decision == ApprovalDecision.ALLOW:
+            return None
 
-            # ASK：经执行上下文（tool_context 提前注入）的 channel 问用户
-            ctx = tool_context.get()
-            if ctx is None or ctx.channel is None:
-                return HookVerdict(block=f"Tool '{name}' denied: no approval channel")
-            try:
-                response = await ChannelApprover(ctx.channel).ask(name, args, tc_id)
-            except Exception as exc:
-                # 审批拿不到答复（超时 / 连接断开）时必须拒绝：EventBus 会把
-                # 监听器异常当作"无意见"吞掉，放行会绕过审批执行工具。
-                logger.warning(f"approval for '{name}' failed: {exc}")
-                return HookVerdict(block=f"Tool '{name}' denied: approval failed ({exc})")
-            if response.approved:
-                return None
-            reason = f"Tool '{name}' denied by user"
-            return HookVerdict(
-                block=f"{reason}: {response.reason}" if response.reason else reason
+        # ASK：经执行上下文（tool_context 提前注入）的 channel 问用户
+        session = tool_context.get()
+        if session is None or session.channel is None:
+            return HookVerdict(block=f"Tool '{name}' denied: no approval channel")
+        try:
+            response = await ChannelApprover(session.channel).ask(name, args, tc_id)
+        except Exception as exc:
+            logger.warning(f"approval for '{name}' failed: {exc}")
+            return HookVerdict(block=f"Tool '{name}' denied: approval failed ({exc})")
+        if response.approved:
+            return None
+        reason = f"Tool '{name}' denied by user"
+        return HookVerdict(
+            block=f"{reason}: {response.reason}" if response.reason else reason
+        )
+
+
+    async def legacy_plugin(self, api: PluginAPI) -> None:
+        """兼容旧插件 API：订阅旧工具预执行事件。"""
+        async def legacy_check(evt: ToolExecutionStartEvent) -> HookVerdict | None:
+            return await self.check(
+                PreExecuteToolEvent(
+                    name=evt.tool_name,
+                    arguments=evt.arguments,
+                    tool_call_id=evt.tool_call_id,
+                )
             )
 
-        api.on(ToolExecutionStartEvent, check)
+        api.on(ToolExecutionStartEvent, legacy_check)
+
+
+@plugin(name="approval")
+async def native_approval(ctx, config) -> None:
+    """审批插件：订阅工具预执行事件，拒绝即阻断。"""
+    approval = Approval(config.get("config"))
+    ctx.on(PreExecuteToolEvent, approval.check)

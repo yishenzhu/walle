@@ -3,19 +3,13 @@ import logging
 
 from .channel import SessionServer
 from .conf import Config
-from .core import (
-    ExtensionManager,
-    SessionManager,
-)
-from .infra import (
-    OpenAIProvider,
-    discover_extension_specs,
-    setup_logger,
-    setup_telemetry,
-)
-from .tools import Approval, MCPManager, Sandbox
-from .tools.builtin.extension import builtin_extension
-from .tools.skill import SkillLoader
+from .core import SessionManager
+from .infra import OpenAIProvider, setup_logger, setup_telemetry
+from .plugin import Plugin, discover, discover_packages
+from .tools import MCPManager, Sandbox
+from .tools.approval import native_approval
+from .tools.builtin.plugin import builtin_plugin
+from .tools.skill import native_skill
 
 logger = logging.getLogger(__name__)
 
@@ -31,35 +25,30 @@ async def main() -> None:
     # 进程默认模型：装配根构造一次并注入管理器（会话无自带 model 配置时沿用）
     provider = OpenAIProvider.get_default()
 
-    # 进程级共享 MCP 客户端：连接一次，组装成"mcp"扩展进扩展池
+    # 进程级共享 MCP 客户端：连接一次，组装成"mcp"插件进插件池
     mcp = MCPManager()
     await mcp.connect()
 
-    # 进程级扩展加载器：内置工具扩展 + MCP 扩展 + 技能 + 审批 + 沙箱 + .agent/extensions/ 用户扩展。
-    # 只加载声明，不激活——激活发生在每个会话（会话自持 bus/工具表）。
-    extensions = ExtensionManager()
-    extensions.add("builtin", builtin_extension)
-    extensions.add(
-        "sandbox", Sandbox().as_extension
-    )  # 沙箱：同名覆盖内置工具（须在 builtin 后）
-    extensions.add("mcp", mcp.as_extension)  # MCP 远端工具作为扩展声明
-    extensions.add("skill", SkillLoader.as_extension)  # 技能清单作为扩展声明
-    extensions.add("approval", Approval(conf.tool.approval).as_extension)  # 审批作为扩展
-    # 领域插件：包内 plugin.py 声明 PLUGIN，自动加载（如 learning）
-    for spec in discover_extension_specs():
-        extensions.add(spec.name, spec.factory)
-    extensions.discover(
-        root=conf.extension.dir,
-        enabled=conf.extension.enabled,
-        disabled=conf.extension.disabled,
-    )
-    await extensions.load()
-    loaded = [e for e in extensions.extensions if e.error is None]
-    logger.info(f"extensions loaded: {len(loaded)}")
+    # 插件声明：进程级加载，会话级激活（每会话独立 host / bus / 工具表）。
+    sandbox = Sandbox()
+    plugins: list[Plugin] = [
+        builtin_plugin,
+        sandbox.plugin(),  # 同名覆盖 bash，须在 builtin 后
+        mcp.plugin(),
+        native_skill,
+        native_approval,
+        *discover_packages(),
+        *discover(
+            root=conf.plugin.dir,
+            enabled=conf.plugin.enabled,
+            disabled=conf.plugin.disabled,
+        ),
+    ]
+    logger.info(f"plugins loaded: {len(plugins)}")
 
     sessions = SessionManager(
         tool_config=conf.tool,
-        extensions=loaded,
+        plugins=plugins,
         provider=provider,
         storage=conf.session.storage,
         path=conf.session.path,

@@ -39,8 +39,8 @@ def test_unusual_name_allowed(tmp_path):
     assert "obsidian 库" in store.load()
 
 
-def test_as_extension_registers_into_api():
-    """MCPManager.as_extension 把客户端工具逐个注册进扩展 api。"""
+def test_legacy_plugin_registers_into_api():
+    """MCPManager.legacy_plugin 把客户端工具逐个注册进插件 api。"""
     from ..infra import Tool
 
     async def fake_fn(args):
@@ -61,5 +61,5 @@ def test_as_extension_registers_into_api():
         def register_tool(self, tool):
             collected.append(tool.name)
 
-    asyncio.run(manager.as_extension(FakeAPI()))  # noqa: RUF006
+    asyncio.run(manager.legacy_plugin(FakeAPI()))  # noqa: RUF006
     assert collected == ["mcp_a_t1", "mcp_a_t2"]
