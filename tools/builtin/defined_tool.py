@@ -26,7 +26,7 @@ class DefinedTool:
 
     @staticmethod
     def _validate_code(code: str, name: str) -> None:
-        """静态分析 + 契约校验，失败抛 ToolCodeError。"""
+        """Static analysis and contract validation; raises ToolCodeError."""
         # 语法检查
         try:
             tree = ast.parse(code)
@@ -68,7 +68,7 @@ class DefinedTool:
 
     @staticmethod
     def _load_from_file(path: str, fn_name: str):
-        """从 .py 文件加载指定函数。"""
+        """Load a function from a .py file."""
         spec = importlib.util.spec_from_file_location("defined_tool", path)
         if spec is None or spec.loader is None:
             raise ToolCodeError(f"无法加载模块: {path}")
@@ -83,7 +83,7 @@ class DefinedTool:
         return self._root / name
 
     def create(self, name: str, code: str) -> Tool:
-        """校验 + 保存 + 加载 + 构造 Tool，一步完成。失败抛 ToolCodeError/OSError。"""
+        """Validate, save, load, and build a Tool. Raises ToolCodeError/OSError."""
         self._validate_code(code, name)
         path = self.dir_for(name) / "code.py"
         self.dir_for(name).mkdir(parents=True, exist_ok=True)
@@ -92,7 +92,7 @@ class DefinedTool:
         return Tool.from_function(fn)
 
     def _read_codes(self) -> dict[str, str]:
-        """扫描全部已持久化工具，返回 name -> code。"""
+        """Scan persisted tools and return name -> code."""
         result: dict[str, str] = {}
         if not self._root.exists():
             return result
@@ -106,7 +106,7 @@ class DefinedTool:
         return result
 
     def load(self) -> list[Tool]:
-        """加载全部已持久化工具为可注册的 Tool（单个失败跳过）。"""
+        """Load persisted tools as registrable Tools (skip broken ones)."""
         tools: list[Tool] = []
         for name, code in self._read_codes().items():
             try:
@@ -117,8 +117,8 @@ class DefinedTool:
 
 
 async def define_tool(name: str = "", code: str = "") -> str:
-    """定义一个新工具：提交代码（顶层 async def <name> + docstring 即描述）。
-    校验通过后持久化并立即注册进当前会话。"""
+    """Define a new tool from code (top-level `async def <name>` with a docstring).
+    Validated tools are persisted and registered in the current session."""
     try:
         tool = DefinedTool().create(name, code)
     except (ToolCodeError, OSError, ValueError) as e:

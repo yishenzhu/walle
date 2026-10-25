@@ -7,8 +7,8 @@ from ...spec import JobDispatch, JobResult
 
 
 async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
-    """把任意工具放到后台异步执行：立即返回 job_id（本轮不阻塞）。
-    `args` 是目标工具参数；结果用 job_result 查询。"""
+    """Run any tool in the background and return a job id immediately.
+    `args` are the target tool arguments; fetch results with `job_result`."""
     ctx = tool_context.get()
     if ctx is None:
         return JobDispatch(
@@ -23,7 +23,7 @@ async def background(tool_name: str, args: dict | None = None) -> JobDispatch:
 
 
 async def job_result(job_id: str) -> JobResult:
-    """查询后台作业（background 启动）的状态与结果。"""
+    """Fetch the status and result of a background job."""
     ctx = tool_context.get()
     if ctx is None:
         return JobResult(job_id=job_id, status=JobStatus.ERROR, error="无执行上下文")

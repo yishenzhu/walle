@@ -23,7 +23,7 @@ def canvas_env(tmp_path, monkeypatch):
 
 async def test_canvas_writes_session_scoped_html_and_returns_result(canvas_env):
     result = await canvas_module.canvas(
-        "勾股定理", "<html><body>a²+b²=c²</body></html>"
+        "勾股定理", html="<html><body>a²+b²=c²</body></html>"
     )
 
     assert isinstance(result, CanvasResult)
@@ -37,8 +37,8 @@ async def test_canvas_writes_session_scoped_html_and_returns_result(canvas_env):
 
 
 async def test_canvas_same_title_reuses_canvas(canvas_env):
-    first = await canvas_module.canvas("推导", "<html>v1</html>")
-    second = await canvas_module.canvas("推导", "<html>v2</html>")
+    first = await canvas_module.canvas("推导", html="<html>v1</html>")
+    second = await canvas_module.canvas("推导", html="<html>v2</html>")
 
     assert isinstance(first, CanvasResult)
     assert isinstance(second, CanvasResult)
@@ -49,8 +49,8 @@ async def test_canvas_same_title_reuses_canvas(canvas_env):
 
 
 async def test_canvas_explicit_id_updates_in_place(canvas_env):
-    await canvas_module.canvas("旧标题", "<html>v1</html>", canvas_id="demo")
-    result = await canvas_module.canvas("新标题", "<html>v2</html>", canvas_id="demo")
+    await canvas_module.canvas("旧标题", html="<html>v1</html>", canvas_id="demo")
+    result = await canvas_module.canvas("新标题", html="<html>v2</html>", canvas_id="demo")
 
     assert isinstance(result, CanvasResult)
     assert result.canvas_id == "demo"
@@ -59,8 +59,21 @@ async def test_canvas_explicit_id_updates_in_place(canvas_env):
     assert path.read_text(encoding="utf-8") == "<html>v2</html>"
 
 
+async def test_canvas_spec_wraps_runtime_page(canvas_env):
+    result = await canvas_module.canvas(
+        "向量",
+        spec='{ title: "向量", draw(k, s) { k.arrow([0,0],[1,1], "accent"); } }',
+        canvas_id="spec-demo",
+    )
+    assert isinstance(result, CanvasResult)
+    path = canvas_env / "web-abc123" / "spec-demo.html"
+    text = path.read_text(encoding="utf-8")
+    assert "window.CANVAS_SPEC =" in text
+    assert "/plugins/learning/canvas-runtime.js" in text
+
+
 async def test_canvas_rejects_unsafe_id(canvas_env):
-    result = await canvas_module.canvas("x", "<html></html>", canvas_id="../escape")
+    result = await canvas_module.canvas("x", html="<html></html>", canvas_id="../escape")
     assert isinstance(result, str)
     assert result.startswith("Error:")
     assert not any(canvas_env.iterdir())
@@ -70,7 +83,7 @@ async def test_canvas_requires_session(monkeypatch, tmp_path):
     monkeypatch.setattr(canvas_module, "CANVAS_ROOT", tmp_path)
     token = tool_context.set(FakeSession())
     try:
-        result = await canvas_module.canvas("x", "<html></html>")
+        result = await canvas_module.canvas("x", html="<html></html>")
     finally:
         tool_context.reset(token)
     assert isinstance(result, str)

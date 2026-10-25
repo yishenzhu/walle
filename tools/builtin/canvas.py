@@ -1,6 +1,7 @@
-"""画布工具：把一页自包含 HTML 渲染到 Web 画布。"""
+"""Canvas tool: render an interactive page into the web canvas."""
 
 import hashlib
+import html as html_module
 import re
 import time
 import uuid
@@ -16,7 +17,7 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class CanvasResult(BaseModel):
-    """画布工具结果：客户端据此渲染入口卡并按 id/version 加载页面。"""
+    """Canvas result: id/title/version for the client entry card."""
 
     type: Literal["canvas"] = "canvas"
     canvas_id: str
@@ -24,13 +25,38 @@ class CanvasResult(BaseModel):
     version: int
 
 
-def write_canvas(
+def spec_html(title: str, spec: str) -> str:
+    """Wrap a runtime spec in a minimal HTML page."""
+    safe_title = html_module.escape(title or "Canvas")
+    body = spec.strip()
+    if body.startswith("window.CANVAS_SPEC"):
+        body = body.split("=", 1)[1].strip()
+    body = body.rstrip(";").replace("</script", "<\\/script")
+    return (
+        "<!doctype html>\n"
+        '<html lang="zh-CN"><head><meta charset="utf-8">'
+        f"<title>{safe_title}</title></head><body>\n"
+        "<script>\n"
+        f"window.CANVAS_SPEC = {body};\n"
+        "</script>\n"
+        '<script src="/plugins/learning/canvas-runtime.js"></script>\n'
+        "</body></html>\n"
+    )
+
+
+def create_canvas(
     title: str,
-    html: str,
+    spec: str | None,
+    html: str | None,
     canvas_id: str | None,
     root: Path,
 ) -> CanvasResult | str:
-    """把一页 HTML 写入指定画布目录（通用 canvas 与领域插件共用）。"""
+    """Validate, wrap, and write one canvas page."""
+    if bool(spec) == bool(html) or (spec and "draw" not in spec):
+        return "Error: provide one of spec (with draw) or html"
+    if spec:
+        html = spec_html(title, spec)
+
     title = (title or "").strip() or "画布"
     if not html or not html.strip():
         return "Error: html 不能为空"
@@ -55,14 +81,15 @@ def write_canvas(
 
 async def canvas(
     title: str,
-    html: str,
+    spec: str | None = None,
+    html: str | None = None,
     canvas_id: str | None = None,
 ) -> CanvasResult | str:
-    """当用户要画图、示意图、公式推导、动画或可交互演示时，渲染 HTML 画布。
-    html 必须是完整页面，可内联 CSS/JS 或引用外部 CDN；同标题默认复用画布，
-    更新已有画布时传回上次的 canvas_id。"""
+    """Create or update an interactive canvas.
+    Prefer `spec`; see the `canvas-spec` skill for the schema and kit.
+    Use `html` only for custom pages; pass `canvas_id` to update."""
     ctx = tool_context.get()
     if ctx is None or not ctx.session_id:
         return "Error: canvas 不可用（当前会话没有会话标识）"
     key = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session_id)[:64] or "default"
-    return write_canvas(title, html, canvas_id, CANVAS_ROOT / key)
+    return create_canvas(title, spec, html, canvas_id, CANVAS_ROOT / key)

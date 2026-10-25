@@ -18,7 +18,7 @@ async def run_command(
     cwd: str | None = None,
     timeout: float = COMMAND_TIMEOUT,
 ) -> str:
-    """执行子进程（argv 完整形式）并返回 stdout+stderr 文本。"""
+    """Run a subprocess (full argv) and return stdout+stderr."""
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=cwd,

@@ -29,7 +29,7 @@ class Sandbox:
         self._config = config or SandboxConfig()
 
     def argv(self, cwd: str, cmd: str) -> list[str]:
-        """构造沙箱执行 bash -c 的完整 argv。"""
+        """Build the full argv for sandboxed bash -c."""
         cfg = self._config
         args = ["bwrap", "--ro-bind", "/", "/"]
         # 基础伪文件系统先挂（--tmpfs /tmp 等会覆盖 /tmp 下路径，须先于 cwd bind）
@@ -49,8 +49,9 @@ class Sandbox:
         return [*args, "bash", "-c", cmd]
 
     def _bash(self):
-        """构造沙箱版 bash 工具函数。"""
+        """Build the sandboxed bash tool."""
         async def bash(cmd: str = "") -> str:
+            """Execute a bash command in the sandbox and return stdout+stderr."""
             if not cmd:
                 return "Error: cmd is required"
             session = tool_context.get()
@@ -63,7 +64,7 @@ class Sandbox:
         return Tool.from_function(bash)
 
     def plugin(self) -> Plugin:
-        """返回沙箱插件声明：注入 ToolService 并覆盖 bash。"""
+        """Return the sandbox plugin: inject ToolService and override bash."""
         return Plugin(
             name="sandbox",
             apply=self._apply,
@@ -71,7 +72,7 @@ class Sandbox:
         )
 
     async def legacy_plugin(self, api: PluginAPI) -> None:
-        """兼容旧插件 API：把沙箱 bash 注册进旧插件声明。"""
+        """Legacy plugin API: register the sandboxed bash."""
         if shutil.which("bwrap") is None:
             raise RuntimeError(
                 "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"
@@ -79,7 +80,7 @@ class Sandbox:
         api.register_tool(self._bash())
 
     async def _apply(self, ctx, config) -> None:
-        """覆盖 bash：注册沙箱版（与 builtin 的裸 bash 同名，后到覆盖）。"""
+        """Override bash with the sandboxed version (same name; last wins)."""
         if shutil.which("bwrap") is None:
             raise RuntimeError(
                 "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"

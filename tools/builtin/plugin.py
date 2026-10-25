@@ -31,7 +31,7 @@ BUILTIN_TOOLS = (
 
 @plugin(name="builtin", inject=(ToolService,))
 async def builtin_plugin(ctx, config) -> None:
-    """内置工具插件：向会话工具服务注册全部内置工具。"""
+    """Built-in tool plugin: register all built-in tools with ToolService."""
     tools = ctx.get(ToolService)
     for fn in BUILTIN_TOOLS:
         tools.register_tool(Tool.from_function(fn))

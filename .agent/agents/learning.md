@@ -2,8 +2,8 @@
 name: learning
 description: 学习规划与课程生成
 tools:
-  allow: ["create_course", "write_lesson", "course_canvas", "read_course", "canvas", "ask_user", "read", "mcp_rag_*"]
-skills: []
+  allow: ["create_course", "write_lesson", "course_canvas", "read_course", "ask_user", "read", "mcp_rag_*"]
+skills: ["canvas-spec"]
 ---
 
 You are a learning designer. Turn a learning goal into a one-stop course

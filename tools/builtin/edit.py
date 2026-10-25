@@ -11,7 +11,7 @@ LINE_MATCHERS = (str.rstrip, str.strip)
 
 
 def match_exact(text: str, old: str) -> list[tuple[int, int]]:
-    """精确子串匹配的全部区间。"""
+    """All exact substring matches."""
     spans: list[tuple[int, int]] = []
     start = text.find(old)
     while start != -1:
@@ -21,7 +21,7 @@ def match_exact(text: str, old: str) -> list[tuple[int, int]]:
 
 
 def match_lines(text: str, old: str, cmp) -> list[tuple[int, int]]:
-    """按行窗口匹配（cmp 决定空白严格度）的全部区间。"""
+    """All line-window matches (cmp controls whitespace strictness)."""
     lines = text.split("\n")
     pat = old.split("\n")
     trailing = pat[-1] == ""  # old 以换行结尾：区间连末尾换行一起吃掉

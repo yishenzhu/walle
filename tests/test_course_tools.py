@@ -52,8 +52,8 @@ async def test_course_canvas_lives_in_course_bundle(courses, context):
 
     rendered = await course_canvas(
         "波形",
-        "<html><body>wave</body></html>",
         result.course_id,
+        html="<html><body>wave</body></html>",
         canvas_id="wave",
     )
     assert not isinstance(rendered, str)
@@ -62,8 +62,25 @@ async def test_course_canvas_lives_in_course_bundle(courses, context):
     assert path.read_text(encoding="utf-8") == "<html><body>wave</body></html>"
 
 
+async def test_course_canvas_spec_wraps_runtime_page(courses, context):
+    result = await create_course("课程", lessons=["演示"])
+    assert not isinstance(result, str)
+
+    rendered = await course_canvas(
+        "向量",
+        result.course_id,
+        spec='{ title: "向量", draw(k, s) { k.arrow([0,0],[1,1], "accent"); } }',
+        canvas_id="spec-wave",
+    )
+    assert not isinstance(rendered, str)
+    path = courses / result.course_id / "canvas" / "spec-wave.html"
+    text = path.read_text(encoding="utf-8")
+    assert "window.CANVAS_SPEC =" in text
+    assert "/plugins/learning/canvas-runtime.js" in text
+
+
 async def test_canvas_rejects_unknown_course(courses, context):
-    result = await course_canvas("x", "<html></html>", "missing")
+    result = await course_canvas("x", "missing", html="<html></html>")
     assert isinstance(result, str)
     assert "course 不存在" in result
 
