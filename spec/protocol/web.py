@@ -22,3 +22,9 @@ class WebService(Protocol):
 
     def include_router(self, router: Any) -> None:
         """把插件提供的 APIRouter 挂到宿主应用。"""
+
+    def mount_static(self, prefix: str, directory: Path) -> None:
+        """把插件静态目录挂到宿主 URL 前缀。"""
+
+    def register_ui(self, manifest: dict[str, Any]) -> None:
+        """登记插件 UI 清单（导航、脚本、样式），由 Shell 动态加载。"""

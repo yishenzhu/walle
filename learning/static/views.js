@@ -1,80 +1,6 @@
-/* 学习空间视图：客户端路由 + 课程列表 + 课程阅读。
+/* 学习空间视图：课程列表 + 课程阅读。
  * 课程答疑不在这里：右侧主对话就是答疑，课程视图只负责课程内容。 */
 (function () {
-  class Router {
-    constructor({ onRoute }) {
-      this.onRoute = onRoute;
-      this.started = false;
-      this.onPopState = () => this.render();
-      this.onClick = (event) => this.handleClick(event);
-    }
-
-    parse(pathname = location.pathname) {
-      if (pathname === "/courses" || pathname === "/courses/") {
-        return { name: "courses", path: "/courses", search: location.search };
-      }
-      const match = pathname.match(/^\/courses\/([^/]+)\/?$/);
-      if (match) {
-        let courseId = match[1];
-        try {
-          courseId = decodeURIComponent(courseId);
-        } catch (err) {
-          console.error(err);
-        }
-        return {
-          name: "course",
-          courseId,
-          path: `/courses/${encodeURIComponent(courseId)}`,
-          search: location.search,
-        };
-      }
-      return { name: "chat", path: "/", search: location.search };
-    }
-
-    start() {
-      if (this.started) return;
-      this.started = true;
-      window.addEventListener("popstate", this.onPopState);
-      document.addEventListener("click", this.onClick);
-    }
-
-    render() {
-      const route = this.parse();
-      Promise.resolve(this.onRoute(route)).catch((err) => console.error(err));
-      return route;
-    }
-
-    navigate(path, { replace = false } = {}) {
-      const next = new URL(path, location.origin);
-      const current = `${location.pathname}${location.search}${location.hash}`;
-      const target = `${next.pathname}${next.search}${next.hash}`;
-      if (target !== current) {
-        if (replace) history.replaceState(null, "", target);
-        else history.pushState(null, "", target);
-      }
-      return this.render();
-    }
-
-    replace(path) {
-      history.replaceState(null, "", path);
-    }
-
-    handleClick(event) {
-      if (event.defaultPrevented || event.button !== 0) return;
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const link = event.target.closest("a[data-route]");
-      if (!link) return;
-      if (link.target && link.target !== "_self") return;
-      if (link.hasAttribute("download")) return;
-      const href = link.getAttribute("href");
-      if (!href) return;
-      const url = new URL(href, location.origin);
-      if (url.origin !== location.origin) return;
-      event.preventDefault();
-      this.navigate(`${url.pathname}${url.search}${url.hash}`);
-    }
-  }
-
   function createCoursesView({ container, api }) {
     const grid = container.querySelector("#courses-grid");
     let loading = false;
@@ -515,5 +441,174 @@
     return { show, hide };
   }
 
-  window.WalleViews = { Router, createCoursesView, createCourseView };
+
+  const TEMPLATE = `
+  <section id="courses-view" class="page-view" hidden>
+    <div class="courses-page">
+      <div class="courses-head">
+        <div>
+          <h1>学习空间</h1>
+          <p>每个课程包包含学习计划、Markdown 课节和交互画布。进入课程后，右侧就是当前主对话。</p>
+        </div>
+        <div class="courses-ish"><a href="/" data-route>返回对话</a></div>
+      </div>
+      <div id="courses-grid" class="courses-grid"></div>
+    </div>
+  </section>
+  <section id="course-view" class="page-view" hidden>
+    <div class="course-page">
+      <div class="course-head">
+        <div class="course-breadcrumb">
+          <a href="/courses" data-route>全部课程</a>
+          <span>/</span>
+          <h1 id="course-title">课程</h1>
+        </div>
+        <a id="export-link" class="ghost" href="#">导出课程</a>
+      </div>
+      <div class="course-layout">
+        <aside class="course-sidebar">
+          <div id="course-goal" class="course-goal"></div>
+          <button id="continue-learning" class="continue-learning" type="button">开始学习</button>
+          <div id="plan-meta" class="nav-head">学习计划</div>
+          <nav id="lesson-nav" class="lesson-nav"></nav>
+        </aside>
+        <main class="course-reader">
+          <div id="reader-head" class="reader-head"></div>
+          <article id="content" class="course-md"></article>
+          <div class="lesson-actions">
+            <button id="prev" type="button">上一课</button>
+            <button id="complete-lesson" type="button">标记完成</button>
+            <button id="next" type="button">下一课</button>
+          </div>
+        </main>
+      </div>
+    </div>
+  </section>`;
+
+  let views = null;
+
+  function ensureViews(container, ctx) {
+    if (views && views.container === container) return views;
+    container.innerHTML = TEMPLATE;
+    const coursesEl = container.querySelector("#courses-view");
+    const courseEl = container.querySelector("#course-view");
+    const coursesView = createCoursesView({ container: coursesEl, api: ctx.api });
+    const courseView = createCourseView({
+      container: courseEl,
+      api: ctx.api,
+      renderMarkdown: ctx.renderMarkdown,
+      conversation: ctx.conversation,
+      router: ctx.router,
+      onContinueLesson: (prompt) => ctx.setPrompt(prompt),
+    });
+    views = { container, coursesEl, courseEl, coursesView, courseView };
+    return views;
+  }
+
+  function match(pathname) {
+    if (pathname === "/courses" || pathname === "/courses/") {
+      return { name: "courses", path: "/courses", search: location.search };
+    }
+    const found = pathname.match(/^\/courses\/([^/]+)\/?$/);
+    if (!found) return null;
+    let courseId = found[1];
+    try {
+      courseId = decodeURIComponent(courseId);
+    } catch (err) {
+      console.error(err);
+    }
+    return {
+      name: "course",
+      courseId,
+      path: `/courses/${encodeURIComponent(courseId)}`,
+      search: location.search,
+    };
+  }
+
+  function render(route, container, ctx) {
+    const view = ensureViews(container, ctx);
+    document.body.classList.remove("view-courses", "view-course");
+    if (route.name === "courses") {
+      document.body.classList.add("view-courses");
+      document.title = "学习空间 · Walle";
+      view.courseView.hide();
+      view.coursesEl.hidden = false;
+      view.courseEl.hidden = true;
+      view.coursesView.show();
+      return true;
+    }
+    if (route.name === "course") {
+      document.body.classList.add("view-course");
+      view.coursesEl.hidden = true;
+      view.courseEl.hidden = false;
+      view.coursesView.hide();
+      view.courseView.show(route.courseId, route.search);
+      return true;
+    }
+    view.coursesView.hide();
+    view.courseView.hide();
+    return false;
+  }
+
+  function onToolResult(data, ctx) {
+    if (data.error) return false;
+    const result = data.result || {};
+    if (result.type === "course") {
+      courseCard(result, ctx);
+      return true;
+    }
+    if (result.type === "lesson") {
+      lessonCard(result, ctx);
+      return true;
+    }
+    return false;
+  }
+
+  function courseCard(data, ctx) {
+    const card = ctx.el("a", "canvas-card");
+    card.href = `/courses/${encodeURIComponent(data.course_id)}`;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    const title = ctx.el("div", "canvas-title");
+    title.append(
+      ctx.el("div", "canvas-kicker", "课程"),
+      ctx.el("div", "canvas-name", data.title || "学习空间"),
+    );
+    card.append(title, ctx.el("span", "canvas-open", "打开学习空间"));
+    ctx.log.append(card);
+    ctx.scroll();
+  }
+
+  function lessonCard(data, ctx) {
+    const card = ctx.el("a", "canvas-card");
+    card.href = `/courses/${encodeURIComponent(data.course_id)}?lesson=${encodeURIComponent(data.lesson_id)}`;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    const title = ctx.el("div", "canvas-title");
+    title.append(
+      ctx.el("div", "canvas-kicker", `第 ${data.order || "?"} 课`),
+      ctx.el("div", "canvas-name", data.title || "课节"),
+    );
+    card.append(title, ctx.el("span", "canvas-open", "打开课节"));
+    ctx.log.append(card);
+    ctx.scroll();
+  }
+
+  function canvasUrl(state) {
+    if (!state.courseId) return null;
+    return `/courses/${encodeURIComponent(state.courseId)}/canvas/${encodeURIComponent(state.id)}?v=${state.version}`;
+  }
+
+  function ownsPath(pathname) {
+    return pathname.startsWith("/courses");
+  }
+
+  window.WallePlugins.register({
+    name: "learning",
+    match,
+    render,
+    onToolResult,
+    canvasUrl,
+    ownsPath,
+  });
 })();

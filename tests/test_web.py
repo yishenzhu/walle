@@ -131,7 +131,7 @@ def test_index_serves_chat_page():
     assert response.status_code == 200
     assert "<title>Walle</title>" in response.text
     assert "/static/app/conversation.js" in response.text
-    assert "/static/app/views.js" in response.text
+    assert "/static/app/plugins.js" in response.text
     assert "工具审批" in response.text
     assert "停止" in response.text
     assert 'id="canvas-panel"' in response.text
@@ -143,23 +143,19 @@ def test_index_serves_chat_page():
     assert 'id="workspace-modal"' in response.text
     assert 'id="session-list"' in response.text
     assert 'id="agent-mode"' in response.text
-    assert 'id="courses-view"' in response.text
-    assert 'id="course-view"' in response.text
-    assert 'data-route' in response.text
+    assert 'id="plugin-nav"' in response.text
+    assert 'id="plugin-view"' in response.text
     assert "WalleConversation" in response.text
-    assert "WalleViews" in response.text
+    assert "WallePlugins" in response.text
     assert "querySession" in response.text
     assert "queryPrompt" in response.text
     assert "session_taken_over" in response.text
     assert "本页已停止重连" in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
-    assert 'href="/courses"' in response.text
-    assert 'target="_blank" rel="noopener">学习</a>' not in response.text
-    assert "function courseCard" in response.text
+    assert 'href="/courses"' not in response.text
     assert "tool-history" in response.text
     assert "tool_calls" in response.text
-    assert "打开学习空间" in response.text
     assert "开始对话" in response.text
     assert "sin(x) 函数" in response.text
     assert "生成参数" in response.text
@@ -184,8 +180,9 @@ def test_static_markdown_assets_are_served():
     assert "DOMPurify" in purify.text
     for asset in (
         "/static/app/conversation.js",
-        "/static/app/views.js",
-        "/static/app/course-view.css",
+        "/static/app/plugins.js",
+        "/plugins/learning/views.js",
+        "/plugins/learning/course-view.css",
     ):
         response = client.get(asset)
         assert response.status_code == 200, asset
@@ -197,10 +194,13 @@ def test_static_markdown_assets_are_served():
     assert "session.set_agent" in conversation
     assert "session.set_metadata" in conversation
     assert "targetSession !== state.sessionId" in conversation
-    views = client.get("/static/app/views.js").text
+    views = client.get("/plugins/learning/views.js").text
     assert "createCourseView" in views
     assert "createCoursesView" in views
-    assert "course.session_id" in views
+    assert "WallePlugins.register" in views
+    manifest = client.get("/api/web/plugins").json()["plugins"]
+    assert manifest[0]["name"] == "learning"
+    assert manifest[0]["nav"][0]["href"] == "/courses"
     katex = client.get("/static/katex/katex.min.js")
     assert katex.status_code == 200
     assert "katex" in katex.text.lower()
@@ -368,22 +368,22 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
 
     listing = client.get("/courses")
     assert listing.status_code == 200
-    assert "学习空间" in listing.text
-    assert 'id="courses-view"' in listing.text
-    assert "/static/app/views.js" in listing.text
+    assert 'id="plugin-view"' in listing.text
+    assert "/static/app/plugins.js" in listing.text
 
     page = client.get(f"/courses/{course['id']}")
     assert page.status_code == 200
-    assert 'id="lesson-nav"' in page.text
-    assert 'id="course-view"' in page.text
-    assert 'id="course-title"' in page.text
-    assert 'id="export-link"' in page.text
-    assert 'id="plan-meta"' in page.text
-    assert 'id="continue-learning"' in page.text
-    assert 'id="complete-lesson"' in page.text
-    assert 'id="qa-log"' not in page.text
-    assert "WalleViews.createCourseView" in page.text
-    assert "WalleConversation" in page.text
+    assert 'id="plugin-view"' in page.text
+    views = client.get("/plugins/learning/views.js").text
+    assert 'id="lesson-nav"' in views
+    assert 'id="course-view"' in views
+    assert 'id="course-title"' in views
+    assert 'id="export-link"' in views
+    assert 'id="plan-meta"' in views
+    assert 'id="continue-learning"' in views
+    assert 'id="complete-lesson"' in views
+    assert 'id="qa-log"' not in views
+    assert "WallePlugins.register" in views
 
     courses = client.get("/api/courses").json()["courses"]
     assert courses[0]["id"] == course["id"]

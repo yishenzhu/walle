@@ -407,16 +407,25 @@ PLUGIN = learning_plugin
 WEB_PLUGINS = ["walle.learning.web:PLUGIN"]
 ```
 
-Web 插件注入 `WebService`，自己挂路由：
+Web 插件注入 `WebService`，自己挂路由、静态资源和 UI 清单：
 
 ```python
 @plugin(name="learning-web", inject=(WebService,))
 async def learning_web(ctx, config):
     web = ctx.get(WebService)
     web.include_router(create_router(web.shell, web.static_dir))
+    web.mount_static("/plugins/learning", static)
+    web.register_ui({
+        "name": "learning",
+        "nav": [{"label": "学习", "href": "/courses"}],
+        "styles": ["/plugins/learning/course-view.css"],
+        "scripts": ["/plugins/learning/views.js"],
+    })
 ```
 
-Web 通道只注册 `WebService` 实现并加载发现到的 Web 插件，不认识具体领域插件。
+Shell 启动时拉取 `/api/web/plugins`，注入导航并加载插件脚本；插件脚本通过
+`WallePlugins.register({ match, render, onToolResult, canvasUrl })` 注册路由、
+页面、工具结果卡和画布 URL。Web 通道只提供宿主能力，不认识具体领域插件。
 
 ### 添加 Skill
 
@@ -592,8 +601,8 @@ walle/
 │   └── web/                   #   Web 通道（WebSocket ↔ SessionServer）
 │       ├── app.py             #     FastAPI 应用与桥接（对话/画布；注册 WebService）
 │       ├── plugins.py         #     Web 插件发现（WEB_PLUGINS，惰性导入）
-│       ├── index.html         #     Shell：对话 + 学习空间视图 + 画布
-│       ├── static/app/        #     conversation.js / views.js / course-view.css
+│       ├── index.html         #     Shell：通用导航/插件视图 + 对话 + 画布
+│       ├── static/app/        #     conversation.js / plugins.js（通用插件宿主）
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与插件声明
@@ -619,7 +628,8 @@ walle/
 │   ├── plugin.py              #   课程工具 + 动态提示段 + PLUGIN / WEB_PLUGINS
 │   ├── tools.py               #   课程包工具（create_course / write_lesson / course_canvas / read_course）
 │   ├── store.py               #   课程包文件存储（course.json / lessons / canvas）
-│   ├── web.py                 #   课程 Web 插件（注入 WebService 挂路由）
+│   ├── web.py                 #   课程 Web 插件（路由 / 静态资源 / UI 清单）
+│   ├── static/                #   views.js / course-view.css（学习前端插件）
 │   ├── web_export.py          #   课程包 zip 导出
 │   └── export.html            #   离线课程阅读器模板
 ├── messages/                  # 消息存储

@@ -91,6 +91,7 @@ class WebHost:
         self._app = app
         self._shell = shell
         self._static_dir = static_dir
+        self._ui: list[dict] = []
 
     @property
     def shell(self):
@@ -100,23 +101,46 @@ class WebHost:
     def static_dir(self) -> Path:
         return self._static_dir
 
+    @property
+    def ui_plugins(self) -> list[dict]:
+        return list(self._ui)
+
     def include_router(self, router) -> None:
         self._app.include_router(router)
+
+    def mount_static(self, prefix: str, directory: Path) -> None:
+        self._app.mount(
+            prefix,
+            StaticFiles(directory=directory),
+            name=f"plugin-{prefix.strip('/').replace('/', '-')}",
+        )
+
+    def register_ui(self, manifest: dict) -> None:
+        self._ui.append(manifest)
 
 
 def install_web_plugins() -> None:
     """启动 Web 插件宿主：注册 WebService，加载包内声明的 Web 插件。"""
 
     async def install() -> None:
+        web_host = WebHost(app, index, STATIC)
         host = PluginHost()
-        await host.root.register(WebService, WebHost(app, index, STATIC))
+        await host.root.register(WebService, web_host)
         await host.launch(discover_web_plugins())
         app.state.plugin_host = host
+        app.state.web_host = web_host
 
     asyncio.run(install())
 
 
 install_web_plugins()
+
+
+@app.get("/api/web/plugins")
+async def api_web_plugins() -> dict:
+    """返回 Web 插件 UI 清单，供 Shell 动态加载导航与脚本。"""
+    web_host = getattr(app.state, "web_host", None)
+    return {"plugins": web_host.ui_plugins if web_host is not None else []}
 
 
 @app.get("/canvas/{session_id}/{canvas_id}")

@@ -90,7 +90,9 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
 >
 > 领域插件在包内 `plugin.py` 声明 `PLUGIN`；Web 插件用 `WEB_PLUGINS`
 > 惰性引用（`module:attr`），由 Web 进程发现并注入 `WebService`。`WebService`
-> 是 spec 里的能力面，Web 通道只注册宿主实现，不认识具体领域插件。
+> 提供 `include_router` / `mount_static` / `register_ui`：插件自己挂路由、静态
+> 资源和 UI 清单；Shell 拉取 `/api/web/plugins` 后注入导航并加载插件脚本。
+> Web 通道只注册宿主实现，不认识具体领域插件。
 > 插件入口统一为 `apply(ctx, config)`，依赖经 `inject`/`provides` 声明。
 
 ## 3. 统一协议清单（`spec/protocol/`）

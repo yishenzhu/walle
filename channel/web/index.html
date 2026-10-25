@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Walle</title>
   <link rel="stylesheet" href="/static/katex/katex.min.css">
-  <link rel="stylesheet" href="/static/app/course-view.css">
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --panel3: #222b39;
@@ -43,6 +42,12 @@
       background: #121821; border-bottom: 1px solid var(--border);
     }
     .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .plugin-nav { display: inline-flex; align-items: center; gap: 6px; }
+    .plugin-host {
+      flex: 1 1 auto; min-width: 0; height: 100%;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .plugin-host[hidden] { display: none; }
     .status { white-space: nowrap; }
     h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
     .brand small { color: var(--faint); font-size: 11px; }
@@ -481,47 +486,7 @@
 </head>
 <body>
   <div class="shell">
-  <section id="courses-view" class="page-view" hidden>
-    <div class="courses-page">
-      <div class="courses-head">
-        <div>
-          <h1>学习空间</h1>
-          <p>每个课程包包含学习计划、Markdown 课节和交互画布。进入课程后，右侧就是当前主对话。</p>
-        </div>
-        <div class="courses-ish"><a href="/" data-route>返回对话</a></div>
-      </div>
-      <div id="courses-grid" class="courses-grid"></div>
-    </div>
-  </section>
-  <section id="course-view" class="page-view" hidden>
-    <div class="course-page">
-      <div class="course-head">
-        <div class="course-breadcrumb">
-          <a href="/courses" data-route>全部课程</a>
-          <span>/</span>
-          <h1 id="course-title">课程</h1>
-        </div>
-        <a id="export-link" class="ghost" href="#">导出课程</a>
-      </div>
-      <div class="course-layout">
-        <aside class="course-sidebar">
-          <div id="course-goal" class="course-goal"></div>
-          <button id="continue-learning" class="continue-learning" type="button">开始学习</button>
-          <div id="plan-meta" class="nav-head">学习计划</div>
-          <nav id="lesson-nav" class="lesson-nav"></nav>
-        </aside>
-        <main class="course-reader">
-          <div id="reader-head" class="reader-head"></div>
-          <article id="content" class="course-md"></article>
-          <div class="lesson-actions">
-            <button id="prev" type="button">上一课</button>
-            <button id="complete-lesson" type="button">标记完成</button>
-            <button id="next" type="button">下一课</button>
-          </div>
-        </main>
-      </div>
-    </div>
-  </section>
+  <div id="plugin-view" class="plugin-host" hidden></div>
   <div class="app">
     <header>
       <div class="brand">
@@ -529,7 +494,7 @@
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
         <button id="agent-mode" class="ghost" title="切换通用 / 学习模式">学习模式</button>
-        <a class="ghost" href="/courses" data-route>学习</a>
+        <nav id="plugin-nav" class="plugin-nav"></nav>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
@@ -610,7 +575,7 @@
   <script src="/static/katex/marked-katex.min.js"></script>
   <script src="/static/purify.min.js"></script>
   <script src="/static/app/conversation.js"></script>
-  <script src="/static/app/views.js"></script>
+  <script src="/static/app/plugins.js"></script>
   <script>
     const log = document.getElementById("log");
     const chatEmpty = document.getElementById("chat-empty");
@@ -849,40 +814,20 @@
       return `web-${raw.slice(0, 12)}`;
     }
 
-    const coursesViewEl = document.getElementById("courses-view");
-    const courseViewEl = document.getElementById("course-view");
-    const coursesView = WalleViews.createCoursesView({
-      container: coursesViewEl,
-      api,
-    });
-    const router = new WalleViews.Router({ onRoute: renderRoute });
-    const courseView = WalleViews.createCourseView({
-      container: courseViewEl,
-      api,
-      renderMarkdown,
-      conversation,
-      router,
-      onContinueLesson: (prompt) => {
-        input.value = prompt;
-        input.dispatchEvent(new Event("input"));
-        input.focus();
-      },
-    });
+    const pluginView = document.getElementById("plugin-view");
+    const router = new WallePlugins.Router({ onRoute: renderRoute });
 
     function renderRoute(route) {
-      document.body.classList.toggle("view-courses", route.name === "courses");
-      document.body.classList.toggle("view-course", route.name === "course");
-      if (route.name !== "chat" && !canvasPanel.hidden) closeCanvas();
-      coursesViewEl.hidden = route.name !== "courses";
-      courseViewEl.hidden = route.name !== "course";
-      if (route.name === "course") {
-        coursesView.hide();
-        return courseView.show(route.courseId, route.search);
+      const handled = WallePlugins.render(route, pluginView);
+      pluginView.hidden = !handled;
+      document.body.classList.toggle("view-plugin", handled);
+      if (handled) {
+        if (!canvasPanel.hidden) closeCanvas();
+        return true;
       }
-      courseView.hide();
-      if (route.name === "courses") return coursesView.show();
+      document.body.classList.remove("view-courses", "view-course");
       refreshPending();
-      return undefined;
+      return false;
     }
 
     function closeWorkspaceModal() {
@@ -1023,10 +968,7 @@
       if (pending.length) {
         approvalText.textContent = `有 ${pending.length} 个工具等待审批`;
         document.title = "⚠ 待审批 · Walle";
-      } else if (document.body.classList.contains("view-course")) {
-        const title = document.getElementById("course-title")?.textContent;
-        document.title = title ? `${title} · Walle` : "Walle";
-      } else {
+      } else if (!WallePlugins.ownsPath(location.pathname)) {
         document.title = "Walle";
       }
     }
@@ -1367,12 +1309,8 @@
       }
       finishApproval(data);
       const result = data.result || {};
-      if (!data.error && result.type === "course") {
+      if (!data.error && WallePlugins.toolResult(data)) {
         tools.delete(data.tool_call_id);
-        courseCard(result);
-      } else if (!data.error && result.type === "lesson") {
-        tools.delete(data.tool_call_id);
-        lessonCard(result);
       } else if (!data.error && isCanvasResult(result)) {
         // 保留调用状态条：即使无需审批，也要能看到 canvas 被调用
         tools.delete(data.tool_call_id);
@@ -1413,10 +1351,9 @@
     }
 
     function canvasSrc(state) {
+      const pluginUrl = WallePlugins.canvasUrl(state);
+      if (pluginUrl) return pluginUrl;
       const id = encodeURIComponent(state.id);
-      if (state.courseId) {
-        return `/courses/${encodeURIComponent(state.courseId)}/canvas/${id}?v=${state.version}`;
-      }
       const session = encodeURIComponent(state.sessionId);
       return `/canvas/${session}/${id}?v=${state.version}`;
     }
@@ -1456,36 +1393,6 @@
       log.append(card);
       scroll();
       return state;
-    }
-
-    function courseCard(data) {
-      const card = el("a", "canvas-card");
-      card.href = `/courses/${encodeURIComponent(data.course_id)}`;
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
-      const title = el("div", "canvas-title");
-      title.append(
-        el("div", "canvas-kicker", "课程"),
-        el("div", "canvas-name", data.title || "学习空间")
-      );
-      card.append(title, el("span", "canvas-open", "打开学习空间"));
-      log.append(card);
-      scroll();
-    }
-
-    function lessonCard(data) {
-      const card = el("a", "canvas-card");
-      card.href = `/courses/${encodeURIComponent(data.course_id)}?lesson=${encodeURIComponent(data.lesson_id)}`;
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
-      const title = el("div", "canvas-title");
-      title.append(
-        el("div", "canvas-kicker", `第 ${data.order || "?"} 课`),
-        el("div", "canvas-name", data.title || "课节")
-      );
-      card.append(title, el("span", "canvas-open", "打开课节"));
-      log.append(card);
-      scroll();
     }
 
     function toggleCanvas(state) {
@@ -1761,6 +1668,22 @@
       } catch (err) {
         console.error(err);
       }
+      WallePlugins.setContext({
+        api,
+        renderMarkdown,
+        conversation,
+        router,
+        input,
+        log,
+        el,
+        scroll,
+        setPrompt: (prompt) => {
+          input.value = prompt;
+          input.dispatchEvent(new Event("input"));
+          input.focus();
+        },
+      });
+      await WallePlugins.start();
       const targetSession = querySession || savedSession;
       if (targetSession) connect(cwd, targetSession, true);
       else connect(cwd, newSessionId(), false);
@@ -1772,7 +1695,7 @@
         input.focus();
       }
       // 课程深链的 ?lesson= 要保留；对话页的临时参数用完即清理。
-      if (params.toString() && !location.pathname.startsWith("/courses/")) {
+      if (params.toString() && !WallePlugins.ownsPath(location.pathname)) {
         try { history.replaceState(null, "", location.pathname); } catch (err) { console.error(err); }
       }
     }

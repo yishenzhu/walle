@@ -37,9 +37,19 @@ class ProgressUpdate(BaseModel):
 
 @plugin(name="learning-web", inject=(WebService,))
 async def learning_web(ctx, config) -> None:
-    """学习 Web 插件：把课程路由挂到宿主 Web 服务。"""
+    """学习 Web 插件：挂课程路由、静态资源与 UI 清单。"""
     web = ctx.get(WebService)
+    static = Path(__file__).with_name("static")
     web.include_router(create_router(web.shell, web.static_dir))
+    web.mount_static("/plugins/learning", static)
+    web.register_ui(
+        {
+            "name": "learning",
+            "nav": [{"label": "学习", "href": "/courses", "title": "学习空间"}],
+            "styles": ["/plugins/learning/course-view.css"],
+            "scripts": ["/plugins/learning/views.js"],
+        }
+    )
 
 
 PLUGIN = learning_web
