@@ -182,8 +182,13 @@
         frame.title = "交互演示";
         frame.loading = "lazy";
         frame.referrerPolicy = "no-referrer";
-        frame.sandbox = "allow-scripts allow-forms allow-popups allow-modals allow-downloads";
-        frame.srcdoc = data.canvases[match[1]] || "<!doctype html><html><body>演示未包含</body></html>";
+        frame.sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads";
+        const canvasId = match[1];
+        if (data.canvases[canvasId]) {
+          frame.src = `canvas/${encodeURIComponent(canvasId)}.html`;
+        } else {
+          frame.srcdoc = "<!doctype html><html><body>演示未包含</body></html>";
+        }
         p.replaceWith(frame);
       }
     }

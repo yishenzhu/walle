@@ -73,7 +73,21 @@ def build_course_zip(
                 lesson.get("markdown") or "",
             )
         for canvas_id, html in bundle["canvases"].items():
-            archive.writestr(f"{CANVAS_DIR}/{canvas_id}.html", html)
+            archive.writestr(
+                f"{CANVAS_DIR}/{canvas_id}.html",
+                html.replace("/plugins/learning/", "../static/"),
+            )
+
+        learning_static = Path(__file__).parent / "static"
+        archive.write(
+            learning_static / "canvas-runtime.js",
+            "static/canvas-runtime.js",
+        )
+        vendor = learning_static / "vendor"
+        if vendor.is_dir():
+            for path in sorted(vendor.iterdir()):
+                if path.is_file():
+                    archive.write(path, f"static/vendor/{path.name}")
 
         for name in ("marked.min.js", "purify.min.js"):
             archive.write(static / name, f"static/{name}")

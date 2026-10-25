@@ -60,6 +60,9 @@ def test_build_zip_contains_offline_site(bundle):
     assert "canvas/demo.html" in names
     assert "static/marked.min.js" in names
     assert "static/purify.min.js" in names
+    assert "static/canvas-runtime.js" in names
+    assert "static/vendor/jsxgraphcore.js" in names
+    assert "static/vendor/jsxgraph.css" in names
     assert "static/katex/katex.min.js" in names
     assert "static/katex/katex.min.css" in names
     assert any(name.startswith("static/katex/fonts/") for name in names)
@@ -75,6 +78,19 @@ def test_build_zip_contains_offline_site(bundle):
     exported = json.loads(archive.read("course.json"))
     assert exported["title"] == "导出课程"
     assert "workspace" not in exported
+
+
+def test_export_rewrites_canvas_runtime_path(bundle):
+    root, course, lesson = bundle
+    canvas = root / course["id"] / "canvas" / "spec.html"
+    canvas.write_text(
+        '<script src="/plugins/learning/canvas-runtime.js"></script>',
+        encoding="utf-8",
+    )
+    payload = build_course_zip(course["id"], root, WEB_DIR / "static")
+    archive = zipfile.ZipFile(io.BytesIO(payload))
+    html = archive.read("canvas/spec.html").decode("utf-8")
+    assert html == '<script src="../static/canvas-runtime.js"></script>'
 
 
 def test_unknown_course_raises(bundle):
