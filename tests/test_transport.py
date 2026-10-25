@@ -33,11 +33,11 @@ def make_link(reader: asyncio.StreamReader, writer=None) -> JSONLineConn:
 
 async def test_recv_skips_bad_frames():
     reader = asyncio.StreamReader()
-    reader.feed_data(b'not-json\n[]\n{"type":"input","content":"hi"}\n')
+    reader.feed_data(b'not-json\n[]\n{"type":"input.create","content":"hi"}\n')
     reader.feed_eof()
 
     link = make_link(reader)
-    assert await link.recv() == {"type": "input", "content": "hi"}
+    assert await link.recv() == {"type": "input.create", "content": "hi"}
     assert await link.recv() is None
 
 

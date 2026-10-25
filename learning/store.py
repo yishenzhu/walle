@@ -49,12 +49,6 @@ def lesson_id_for(title: str) -> str:
     return f"{safe or 'lesson'}-{digest}"
 
 
-def qa_session_id(course_id: str) -> str:
-    """课程答疑会话的确定性 id：同一课程始终复用同一段对话。"""
-    digest = hashlib.sha1(f"qa:{course_id}".encode()).hexdigest()[:16]
-    return f"qa-{digest}"
-
-
 def course_dir(course_id: str, root: str | Path | None = None) -> Path:
     if not SAFE_ID.fullmatch(course_id):
         raise ValueError(f"invalid course id: {course_id}")

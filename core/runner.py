@@ -38,7 +38,7 @@ from ..spec import (
     EventBus as EventBusProtocol,
 )
 from ..spec import (
-    ToolTable as ToolTableProtocol,
+    ExtensionLayer as ExtensionLayerProtocol,
 )
 from .agent import Agent, Handoff
 from .executor import ToolExecutor
@@ -71,15 +71,13 @@ class SessionContext:
     channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    extension_runner: ToolTableProtocol | None = None  # 会话工具表（工具可动态注册）
+    extension_runner: ExtensionLayerProtocol | None = None  # 会话工具表 + 动态指令
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
     bus: EventBusProtocol | None = None  # 会话事件总线（None 时 run 内现造，仅测试用）
     history_factory: Callable[[], Messages] | None = None  # 子 agent 隔离历史来源（装配注入）
-    course_id: str | None = None  # 课程答疑上下文
-    lesson_id: str | None = None  # 当前课节
-    course_context: str | None = None  # 注入 system prompt 的课程摘要
+    metadata: dict[str, Any] = field(default_factory=dict)  # 会话元数据（扩展自定义键值）
 
 
 @dataclass
@@ -324,9 +322,9 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        if ctx.course_context:
-            messages += [SystemMessage(content=ctx.course_context)]
         if ctx.extension_runner is not None:
+            for text in ctx.extension_runner.instructions(ctx.metadata):
+                messages += [SystemMessage(content=text)]
             skill_prompt = agent.skill_prompt(ctx.extension_runner.skills)
             if skill_prompt:
                 messages += [SystemMessage(content=skill_prompt)]

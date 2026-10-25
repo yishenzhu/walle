@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ..infra.course_store import (
+from ..learning.store import (
     CANVAS_MARKER,
     COURSE_FILE,
     course_progress,
@@ -14,7 +14,6 @@ from ..infra.course_store import (
     list_courses,
     load_course,
     load_progress,
-    qa_session_id,
     read_lesson,
     update_progress,
     write_lesson,
@@ -140,12 +139,6 @@ def test_progress_roundtrip(root):
 
     with pytest.raises(ValueError):
         update_progress(course["id"], "missing", True, root=root)
-
-
-def test_qa_session_id_is_stable_and_course_specific():
-    assert qa_session_id("course-a") == qa_session_id("course-a")
-    assert qa_session_id("course-a") != qa_session_id("course-b")
-    assert qa_session_id("course-a").startswith("qa-")
 
 
 def test_course_json_is_readable(root):

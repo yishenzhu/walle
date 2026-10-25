@@ -1,7 +1,7 @@
 """统一底层契约包：领域数据（schemas）+ 能力协议（protocol）。
 
 - schemas/   纯数据模型（BaseModel / 结构性标注）：Message、Usage、SessionSpec…
-- protocol/  能力接口（Protocol）：Messages、Channel、Sessions、ToolTable…
+- protocol/  能力接口（Protocol）：Messages、Channel、Sessions、SessionInit…
 
 依赖方向唯一：protocol → schemas；两者都不引用具体实现，无成环。
 使用方统一从 spec 顶层导入，装配根向具体实现注入。
@@ -11,9 +11,11 @@ from .protocol import (
     LLM,
     Channel,
     EventBus,
+    ExtensionLayer,
     Messages,
     Projection,
     ProjectionStore,
+    SessionInit,
     Sessions,
     SessionView,
     ToolTable,
@@ -108,10 +110,12 @@ __all__ = [
     "ToolExecutionEndEvent",
     # protocol — 能力协议
     "Channel",
+    "SessionInit",
     "Sessions",
     "Messages",
     "Projection",
     "ProjectionStore",
+    "ExtensionLayer",
     "ToolTable",
     "EventBus",
     "LLM",

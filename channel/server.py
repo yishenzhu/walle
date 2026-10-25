@@ -1,10 +1,6 @@
-"""CLI 服务端：CLIConnection(连接端点) + CLIServer(监听/会话管理), JSON-line 协议。
+"""会话服务端：连接端点 + 监听/会话管理。
 
-会话由注入的 sessions 管理。CLIConnection 是该连接的 Channel 端点
-（实现 notify/call，收发 JSON-line 帧）；CLIServer 监听 / accept，握手后
-经 sessions 新建或 attach 会话，读循环的输入直接喂给该会话；
-连接断开 detach 保留（状态跨连接存活）。真正销毁走 sessions 显式 remove。
-"""
+连接只处理帧；业务解释在 SessionServer。"""
 
 import asyncio
 import logging
@@ -14,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from ...spec import (
+from ..spec import (
     DeltaEnd,
     Error,
     ModelConfig,
@@ -23,7 +19,7 @@ from ...spec import (
     Sessions,
     UserInput,
 )
-from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
+from .transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 logger = logging.getLogger(__name__)
 
@@ -31,47 +27,31 @@ logger = logging.getLogger(__name__)
 CALL_TIMEOUT = 300.0
 
 
-class CLIConnection:
-    """一个 CLI 客户端连接的 Channel 端点。
+class SessionConn:
+    """一个客户端连接的 Channel 端点。
 
-    notify 发帧给客户端；call 走 request/reply（uuid id 路由 pending
-    Future）；读循环把 input 帧交给注入的 on_input（由 CLIServer 绑定
-    本连接所属会话，消息天然属于本会话）。帧读写委托给 JSONLineConn。
-    """
+    notify/call 收发帧；input 交给上层，连接不解释业务。"""
 
     def __init__(
         self,
-        chat_id: str,
+        session_id: str,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         cwd: str | None = None,
         model: ModelConfig | None = None,
         agent: str | None = None,
-        course_id: str | None = None,
-        lesson_id: str | None = None,
         call_timeout: float | None = CALL_TIMEOUT,
         link: JSONLineConn | None = None,
     ) -> None:
-        self.chat_id = chat_id
+        self.session_id = session_id
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
         self.model = model  # 客户端模型配置（会话级 provider；None = 进程默认）
         self.agent = agent  # 客户端指定 agent 名（None = default）
-        self.course_id = course_id  # 课程答疑上下文
-        self.lesson_id = lesson_id  # 当前课节
         self._link = link or JSONLineConn(reader, writer)
         self._pending: dict[str, asyncio.Future] = {}
         self._call_timeout = call_timeout
         self._closed = False
-        self._handover = False  # 接管时保留 worker，让 run 继续
-
-    @property
-    def pending_count(self) -> int:
-        """尚未答复的服务请求数（审批 / ask_user 等）。"""
-        return sum(1 for fut in self._pending.values() if not fut.done())
-
-    def handover(self) -> None:
-        """接管标记：连接关闭时不取消正在执行的 input worker。"""
-        self._handover = True
+        self._stop = asyncio.Event()
 
     # ── 传输 ──────────────────────────────────────────
     async def send(self, msg: dict) -> None:
@@ -81,11 +61,11 @@ class CLIConnection:
     async def notify(self, notification: NotificationUnion) -> None:
         if self._closed:
             return
-        # 本连接归属的会话身份：补全 chat_id（上层构造事件时不带，由本连接注入）
+        # 本连接归属的会话身份：补全 session_id（上层构造事件时不带，由本连接注入）
         if not await self._link.try_send(
             {
                 "type": "notify",
-                "data": notification.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                "data": notification.model_copy(update={"session_id": self.session_id}).model_dump(
                     mode="json"
                 ),
             }
@@ -101,7 +81,7 @@ class CLIConnection:
                 {
                     "type": "call",
                     "id": req_id,
-                    "data": request.model_copy(update={"chat_id": self.chat_id}).model_dump(
+                    "data": request.model_copy(update={"session_id": self.session_id}).model_dump(
                         mode="json"
                     ),
                 }
@@ -126,9 +106,10 @@ class CLIConnection:
         if self._closed:
             return
         self._closed = True
+        self._stop.set()
         for fut in self._pending.values():
             if not fut.done():
-                fut.set_exception(ConnectionError("cli client disconnected"))
+                fut.set_exception(ConnectionError("channel client disconnected"))
         self._pending.clear()
         self._link.close()
 
@@ -138,92 +119,62 @@ class CLIConnection:
     # ── 读循环 ────────────────────────────────────────
     async def run(
         self,
-        on_input: Callable[[str], Awaitable[None]],
-        on_cancel: Callable[[], Awaitable[None]] | None = None,
-        on_agent: Callable[[str], Awaitable[None]] | None = None,
+        on_inbound: Callable[[dict], Awaitable[None]],
     ) -> None:
-        """读帧：input → on_input；reply → resolve；cancel → on_cancel；
-        set_agent → on_agent（会话内切换 agent，不断开连接）。
-
-        input 不直接 await on_input，而是入队由独立 worker 串行消费：读循环
-        保持活跃，agent 运行期间 reply 帧（审批 / 提问的回复）仍能被读取。
-        否则 on_input（含完整 agent run）会占住读循环，reply 无人处理，
-        双向交互工具（ask_user / 审批）会死锁——agent 等 reply，读循环等 agent。
-        """
-        queue: asyncio.Queue[str] = asyncio.Queue()
-        worker = asyncio.create_task(self._consume(on_input, queue))
+        """读帧分派；reply 内部 resolve，其余帧交给 on_inbound。"""
+        stop = asyncio.create_task(self._stop.wait())
         try:
             while not self._closed:
+                recv = asyncio.create_task(self._link.recv())
+                done, _ = await asyncio.wait(
+                    {recv, stop},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if stop in done:
+                    recv.cancel()
+                    await asyncio.gather(recv, return_exceptions=True)
+                    break
                 try:
-                    msg = await self._link.recv()
+                    msg = recv.result()
                 except FrameTooLargeError:
                     # 单行超过 MAX_FRAME：拒绝并断开，避免内存被打爆
                     await self.notify(DeltaEnd(reason="frame_too_large"))
                     break
                 if msg is None:
                     break
-                t = msg.get("type")
-                if t == "input":
-                    queue.put_nowait(msg.get("content") or "")
-                elif t == "reply":
+                if msg.get("type") == "reply":
                     self.resolve(msg.get("id", ""), msg.get("data"))
-                elif t == "cancel" and on_cancel is not None:
-                    await on_cancel()
-                elif t == "set_agent" and on_agent is not None:
-                    try:
-                        await on_agent(str(msg.get("agent") or "default"))
-                    except Exception as exc:
-                        logger.warning(f"agent switch failed: {exc}")
-                        await self.notify(
-                            Error(
-                                message=f"切换 agent 失败: {exc}",
-                                code="agent_switch_failed",
-                            )
-                        )
-        finally:
-            if not self._handover:
-                worker.cancel()
+                    continue
                 try:
-                    await worker
-                except asyncio.CancelledError:
-                    pass  # 连接断开：中断仍在处理的 input
-
-    async def _consume(
-        self,
-        on_input: Callable[[str], Awaitable[None]],
-        queue: asyncio.Queue[str],
-    ) -> None:
-        """串行消费 input 帧；单条消息处理失败仅记录并通知客户端，不影响后续消息。"""
-        while True:
-            content = await queue.get()
-            try:
-                await on_input(content)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(f"input handling failed: {exc}")
-                # 客户端在发送 input 后会等回复完成（delta_end）再提示下一行；
-                # 处理失败时必须主动通知客户端，否则其会一直等待而"卡住"。
-                try:
+                    await on_inbound(msg)
+                except Exception as exc:
+                    control = str(msg.get("type") or "").startswith(
+                        ("session.", "run.")
+                    )
+                    logger.warning(f"inbound frame failed: {exc}")
                     await self.notify(
                         Error(
-                            message=f"处理失败: {exc}",
-                            code=getattr(exc, "code", "error"),
+                            message=(
+                                f"控制帧失败: {exc}"
+                                if control
+                                else f"处理失败: {exc}"
+                            ),
+                            code=getattr(
+                                exc,
+                                "code",
+                                "control_failed" if control else "error",
+                            ),
                         )
                     )
-                except Exception:
-                    pass  # 对端已断开：无法通知，忽略
+        finally:
+            stop.cancel()
+            await asyncio.gather(stop, return_exceptions=True)
 
 
-class CLIServer:
-    """CLI 服务端：监听端口，会话由注入的 sessions 管理。
+class SessionServer:
+    """会话服务端：监听端口，按 hello 创建或 attach 会话。
 
-    握手 hello 帧：
-      - 带 attach=true + chat_id → 取已有会话 attach（resume）
-      - 否则 → sessions.create(conn) 新建会话（绑定本连接为 transport）
-    连接断开 → detach 保留会话（messages 状态跨连接存活），
-    会话留在 sessions 供重连 attach。真正销毁走 sessions 显式 remove+close。
-    """
+    连接断开只 detach；run 继续，新连接 attach 后接收后续事件。"""
 
     def __init__(
         self,
@@ -238,11 +189,11 @@ class CLIServer:
 
     # ── 生命周期 ──────────────────────────────────────
     async def start(self) -> None:
-        """开始监听，等待 CLI 客户端连接。"""
+        """开始监听，等待客户端连接。"""
         self._server = await asyncio.start_server(
             self._handle_conn, self._host, self._port, limit=MAX_FRAME
         )
-        logger.info(f"cli channel listening on {self._host}:{self._port}")
+        logger.info(f"session server listening on {self._host}:{self._port}")
 
     async def stop(self) -> None:
         if self._server is not None:
@@ -250,25 +201,21 @@ class CLIServer:
             self._server.close()
             self._server = None
 
-    async def _history_snapshot(self, session, limit: int = 20) -> list[dict]:
-        """给 attach 的客户端最近对话快照（system / tool 不展示）。"""
-        messages = await session.recent_messages(limit)
+    async def _client_history(self, session) -> list[dict]:
+        """给 attach 的客户端完整对话历史（含工具调用与结果）。"""
         return [
-            {"role": m.role, "content": m.content}
-            for m in messages
-            if m.role in ("user", "assistant") and m.content
+            message.model_dump(mode="json")
+            for message in await session.conversation_history()
         ]
 
     # ── 连接处理：握手 → 建/取会话 → 读循环 ────────────
     async def _handle_conn(self, reader, writer) -> None:
-        """每连接一个任务：握手（hello 帧）→ 新建或 attach 会话 → 读循环。
+        """每连接一个任务：握手 → 创建/attach 会话 → 读循环。
 
-        特殊帧 list：浏览会话列表后立即断开（不进入会话循环）。
-        断开时 detach 保留会话（状态跨连接存活），不销毁。
-        """
-        chat_id = ""
+        连接断开时 detach 保留会话。"""
+        session_id = ""
         session = None
-        conn: CLIConnection | None = None
+        conn: SessionConn | None = None
         link = JSONLineConn(reader, writer)
         try:
             msg = await link.recv()
@@ -310,7 +257,7 @@ class CLIServer:
                 )
                 return
 
-            chat_id = msg.get("chat_id") or f"cli-{uuid.uuid4().hex[:12]}"
+            session_id = msg.get("session_id") or f"session-{uuid.uuid4().hex[:12]}"
             attach = bool(msg.get("attach", False))
             extension_names = msg.get("extensions")  # 可选：本会话要激活的扩展名（缺省=全部）
             cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
@@ -335,28 +282,26 @@ class CLIServer:
                 except Exception:
                     logger.warning(f"ignoring invalid model config: {raw_model}")
 
-            conn = CLIConnection(
-                chat_id,
+            conn = SessionConn(
+                session_id,
                 reader,
                 writer,
                 cwd=cwd,
                 model=model,
                 agent=msg.get("agent") or None,
-                course_id=msg.get("course_id") or None,
-                lesson_id=msg.get("lesson_id") or None,
                 call_timeout=call_timeout,
                 link=link,
             )
 
             if attach:
                 # resume：取已存在会话，绑定新 transport
-                session = self._sessions.get(chat_id)
+                session = self._sessions.get(session_id)
                 if session is None:
                     await conn.send(
                         {
                             "type": "error",
                             "code": "session_not_found",
-                            "message": f"会话不存在: {chat_id}",
+                            "message": f"会话不存在: {session_id}",
                         }
                     )
                     return
@@ -364,23 +309,15 @@ class CLIServer:
                 await conn.send(
                     {
                         "type": "welcome",
-                        "chat_id": chat_id,
-                        "history": await self._history_snapshot(session),
+                        "session_id": session_id,
+                        "history": await self._client_history(session),
                     }
                 )
                 old = session.transport
                 session.attach(conn)
-                # 接管：旧连接断开。学习模式的生成 run 若无挂起交互，
-                # 允许继续跑（新连接接收后续事件），避免切页中断课程。
-                if isinstance(old, CLIConnection) and old is not conn:
-                    resumable = (
-                        session.agent_name == "learning"
-                        and old.pending_count == 0
-                    )
-                    if not resumable:
-                        await session.cancel(reason="session reattached")
-                    else:
-                        old.handover()
+                # 先补发旧 turn 的通知，再通知旧连接退出
+                await session.replay(conn)
+                if isinstance(old, SessionConn) and old is not conn:
                     await old.notify(
                         Error(
                             message="session attached elsewhere",
@@ -388,15 +325,10 @@ class CLIServer:
                         )
                     )
                     old.close()
-                    if resumable:
-                        logger.info(f"learning run continues after reattach: {chat_id}")
                 # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
                 if conn.agent:
                     session.set_agent(conn.agent)
-                # 课程页切换课节后重连：更新当前课节上下文
-                if conn.course_id is not None:
-                    session.set_course_context(conn.course_id, conn.lesson_id)
-                logger.info(f"cli client reattached: {chat_id}")
+                logger.info(f"channel client reattached: {session_id}")
             else:
                 # 新会话：sessions.create（按需激活指定扩展）
                 session = self._sessions.create(conn, extension_names)
@@ -405,27 +337,41 @@ class CLIServer:
                 await conn.send(
                     {
                         "type": "welcome",
-                        "chat_id": chat_id,
-                        "history": await self._history_snapshot(session),
+                        "session_id": session_id,
+                        "history": await self._client_history(session),
                     }
                 )
                 logger.info(
-                    f"cli client connected: {chat_id} agent={conn.agent or 'default'}"
+                    f"channel client connected: {session_id} agent={conn.agent or 'default'}"
                 )
 
-            async def on_input(content: str) -> None:
-                """本连接输入 → 本会话处理（chat_id 已绑定）。"""
-                await session.handle(UserInput(content=content, chat_id=chat_id))
+            async def on_inbound(frame: dict) -> None:
+                """解释非 reply 帧；已被接管的旧连接直接忽略。"""
+                if session.transport is not conn:
+                    return
+                kind = frame.get("type")
+                if kind == "input.create":
+                    session.submit(
+                        UserInput(
+                            content=frame.get("content") or "",
+                            session_id=session_id,
+                        )
+                    )
+                elif kind == "run.cancel":
+                    await session.cancel(reason="user cancelled")
+                elif kind == "session.set_agent":
+                    session.set_agent(str(frame.get("agent") or "default"))
+                elif kind == "session.set_metadata":
+                    values = frame.get("values")
+                    if not isinstance(values, dict):
+                        raise ValueError("session.set_metadata requires values object")
+                    session.update_metadata(values)
+                else:
+                    raise ValueError(f"unknown frame: {kind}")
 
-            async def on_cancel() -> None:
-                await session.cancel(reason="user cancelled")
-
-            async def on_agent(name: str) -> None:
-                session.set_agent(name)
-
-            await conn.run(on_input, on_cancel, on_agent)
+            await conn.run(on_inbound)
         except (OSError, asyncio.IncompleteReadError, ValueError) as exc:
-            logger.debug(f"cli conn {chat_id} closed: {exc}")
+            logger.debug(f"session conn {session_id} closed: {exc}")
         finally:
             if conn is not None:
                 conn.close()
@@ -433,8 +379,8 @@ class CLIServer:
                 link.close()
             if session is not None:
                 try:
-                    # 按连接身份 detach：旧连接不会误伤新连接
+                    # 按连接身份 detach：已被接管时不动新连接
                     session.detach(conn)
                 except Exception as exc:
-                    logger.warning(f"session {chat_id} detach failed: {exc}")
+                    logger.warning(f"session {session_id} detach failed: {exc}")
             await link.wait_closed()

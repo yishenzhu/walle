@@ -1,7 +1,7 @@
 """JSON-line 帧传输：CLI server/client 与 Web bridge 共用的唯一实现。
 
 只负责帧边界、JSON 编解码、写超时、读帧上限与幂等关闭。请求/回复关联、
-会话身份、输入调度等协议语义留在 CLIConnection——传输层不认识业务消息。
+会话身份、输入调度等协议语义留在 SessionConn——传输层不认识业务消息。
 """
 
 from __future__ import annotations

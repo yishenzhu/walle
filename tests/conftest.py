@@ -136,8 +136,7 @@ class FakeSession:
     history: Any = None
     extension_runner: Any = None
     bus: Any = None
-    course_id: str | None = None
-    lesson_id: str | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 def make_session(
@@ -148,8 +147,7 @@ def make_session(
     history=None,
     extension_runner=None,
     bus=None,
-    course_id=None,
-    lesson_id=None,
+    metadata=None,
 ) -> FakeSession:
     """构造测试用会话视图（tool_context 注入它）。"""
     return FakeSession(
@@ -159,6 +157,5 @@ def make_session(
         history=history,
         extension_runner=extension_runner,
         bus=bus,
-        course_id=course_id,
-        lesson_id=lesson_id,
+        metadata=metadata if metadata is not None else {},
     )

@@ -18,7 +18,7 @@ walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时
    |---|---|---|---|
    | 能力/操作 | 可被调用方依赖的操作契约 | `spec/protocol/`（Protocol） | 本身是协议 |
    | 领域数据 | 跨边界流动的**值类型**（无后端行为：`Message`/`Usage`/`Job`…） | `spec/schemas/` | ✅ 应当引用 |
-   | 具体实现 | 有状态/后端的实现类（`SQLiteMessages`/`CLIServer`…） | 各自模块 | ❌ 禁止引用 |
+   | 具体实现 | 有状态/后端的实现类（`SQLiteMessages`/`SessionServer`…） | 各自模块 | ❌ 禁止引用 |
 
    判定：协议方法/返回里出现的是"数据怎么流过"→ 数据模型，合法；出现的是
    "哪个实现来做"→ 越界。`Message` 是领域数据模型，故
@@ -63,7 +63,8 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 | 消息实现 | `messages/` | InMemory / SQLite / Projected（Messages 协议实现）+ 装配工厂 | `infra`, `spec` |
 | 执行引擎 | `core/` | Runner / ToolExecutor / Agent；Session 与会话装配根 SessionManager | `conf`, `infra`, `messages`, `spec` |
 | 工具/扩展 | `tools/` | 内置工具、mcp、skill、approval、sandbox（扩展声明） | `conf`, `infra`, `spec` |
-| 传输通道 | `channel/` | CLI server/client，实现 `Channel`/会话接入 | `spec` |
+| 可选领域包 | `learning/` | 学习扩展：课程工具、动态课程指令、课程包存储 | `infra`, `spec` |
+| 传输通道 | `channel/` | 与通道无关的 SessionServer + Web 通道，实现 `Channel`/会话接入 | `spec` |
 | **装配根** | `main.py` | 唯一组装进程级具体实现（provider / 扩展表 / 会话管理器） | 全部 |
 
 > 依赖方向总则：**协议面最底、装配根最顶；一切跨层引用都要指向协议面，而非
@@ -74,9 +75,19 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 > 存储；`core` 的其余模块（runner / executor / agent）不得依赖具体注入件——
 > 该规则由 `tests/test_layering.py` 强制。
 >
-> `channel/transport.py` 是 CLI server/client 与 Web bridge 共用的 JSON-line
-> 帧实现（编解码 / 超时 / 帧上限 / 幂等关闭）；`CLIConnection` 只保留
-> Channel 语义（notify / call / pending / input worker）。
+> `channel/transport.py` 是会话服务端与 Web bridge 共用的 JSON-line
+> 帧实现（编解码 / 超时 / 帧上限 / 幂等关闭）；`SessionConn` 只保留
+> Channel 语义（notify / call / pending）。
+>
+> 除 `reply` 外的帧统一走 `on_inbound(frame)`，类型按命名空间区分：
+> `input.create` / `session.set_agent` / `session.set_metadata` / `run.cancel`。
+> 传输层不识别 agent、course 等业务，由 `SessionServer` 解释。
+> hello 只负责会话身份/传输配置；扩展上下文通过 `session.set_metadata` 更新。
+> `on_inbound` 会被 await；`input.create` 必须提交后立即返回，run task 由 `Session` 持有。
+>
+> 领域插件在包内 `plugin.py` 声明 `PLUGIN = ExtensionSpec(...)`：`main.py`
+> 自动加载 agent 工厂，Web 启动时自动调用其 `web` 安装器挂路由。Web 通道
+> 本身只保留通用对话/画布路由，不 import 具体领域包。
 
 ## 3. 统一协议清单（`spec/protocol/`）
 
@@ -84,8 +95,10 @@ core      ──▶ conf, infra, messages, spec               （含装配根 Se
 
 ### 通道与交互（`channel.py`）
 - `Channel`（notify 广播 / call 点对点）—— 服务端与传输层的唯一稳定契约。
-- `Sessions`（通道可见的会话能力：get / create / list / close）
+- `Sessions`（通道可见的会话能力：get / create / list / 浏览 / close）
   —— channel 只依赖它，不依赖 core 实现类；register/remove 属管理器内部管理。
+- `SessionInit`（创建会话所需的最小输入面：session_id / cwd / model / agent）
+  —— `SessionConn` 与 `SessionSpec` 都可满足，spec 不反向依赖 channel。
 
 ### 历史存储（`messages.py`）
 - `Messages`（get/add/clear/pop/query/search/count/close）
@@ -126,12 +139,21 @@ SessionManager.create(conn)                 # 装配根
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
     ├─ _jobs           dict[str, Job]  # 后台作业表（唯一事实源）
-    └─ _transport      Channel|None    # 连接端点（attach/detach 切换）
+    ├─ _metadata       dict[str, Any]  # 客户端/扩展元数据（核心不解释键名）
+    ├─ _transport      Channel|None    # 连接端点（attach/detach 切换）
+    └─ _pending        list[Notification] # 当前 turn 的断连补发缓冲
         context ──────▶ property：现造 SessionContext 视图（对外访问统一入口）
 ```
 
 各零件持有**同一 `_bus` 引用**：Runner / ExtensionRunner / `tool_context` /
 CommandContext 共用会话唯一总线。**一个会话只有一条事件总线。**
+
+run task 由 Session 持有；transport 断开只影响事件投递，不取消 run。
+新连接 attach 后先收历史，再补发当前 turn 的通知。
+
+扩展除工具/技能/事件外，还可注册**动态指令**：每次模型调用前按
+`Session.metadata` 返回一段文本，由 Runner 追加为 system 消息。学习扩展的
+课程上下文即由此注入，核心不感知 course/lesson。
 
 ## 5. 各上下文边界
 
@@ -153,6 +175,8 @@ CommandContext 共用会话唯一总线。**一个会话只有一条事件总线
   命令各自经 ContextVar / CommandContext 取。
 - **jobs**：唯一事实源 `Session._jobs`（工具写 pending → runner 拉起 →
   job_result 读）。
+- **metadata**：唯一事实源 `Session._metadata`；客户端经
+  `session.set_metadata` 合并，核心不解释键名，扩展在动态指令里读取。
 - **工具表**：事实源在 ExtensionRunner（activate / define_tool 动态注册实时反映
   到下一轮）；Agent 不持有工具源。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时

@@ -12,14 +12,11 @@ walle 控制台
   up | start          后台启动 agent + Web + 可观测性
   down | stop [目标]  停止全部；目标: agent / web / obs / all
   restart [目标]      重启全部或单个服务（默认 all）
-  status              查看服务状态与会话列表
+  status              查看服务状态
 
 对话:
   agent               前台启动 agent（默认同时启动可观测性）
-  cli [参数...]       确保 agent 后启动 CLI 客户端
   web [参数...]       确保 agent 后前台启动 Web（支持 --host / --port）
-  attach <会话ID>     恢复已有会话
-  list                列出会话
   open                在浏览器打开 Web
 
 日志 / 运维:
@@ -38,14 +35,13 @@ walle 控制台
 示例:
   ./scripts/run.sh up                     # 一次性后台起全套
   ./scripts/run.sh web --port 8081        # 前台起 Web（自定义端口）
-  ./scripts/run.sh cli --agent learning   # CLI 新会话使用 learning agent
   ./scripts/run.sh logs agent -f          # 跟踪 agent 日志
   ./scripts/run.sh restart web            # 按上次 host/port 重启 Web
   ./scripts/run.sh test -k course         # 只跑课程相关测试
 
 兼容旧参数:
   --no-obs  --obs-only  --stop  --stop-agent  --stop-web  --stop-obs
-  --test  --cli  --web  --attach <id>  --status  --help
+  --test  --web  --status  --help
 EOF
 }
 
@@ -139,29 +135,8 @@ cmd_web() {
     run_web_foreground "$@"
 }
 
-cmd_cli() {
-    ensure_agent_bg
-    step "启动 CLI 交互客户端 ..."
-    exec_py -m walle.channel.cli "$@"
-}
-
-cmd_attach() {
-    [ $# -ge 1 ] && [ -n "$1" ] || die "attach 需要会话 ID，如: ./scripts/run.sh attach cli-xxx"
-    require_agent
-    step "连接会话 $1 ..."
-    exec_py -m walle.channel.cli --attach "$1"
-}
-
-cmd_list() {
-    list_sessions
-}
-
 cmd_status() {
     show_status
-    if port_in_use "$AGENT_PORT"; then
-        echo
-        list_sessions
-    fi
 }
 
 cmd_open() {
@@ -330,8 +305,7 @@ cmd_doctor() {
 legacy_main() {
     local no_obs=false obs_only=false
     local stop_agent_flag=false stop_web_flag=false stop_obs_flag=false stop_all_flag=false
-    local test_only=false status_flag=false attach_flag=false
-    local attach_id=""
+    local test_only=false status_flag=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -343,16 +317,6 @@ legacy_main() {
             --stop-obs) stop_obs_flag=true ;;
             --test) test_only=true ;;
             --status) status_flag=true ;;
-            --attach)
-                attach_flag=true
-                shift
-                attach_id="${1:-}"
-                ;;
-            --cli)
-                shift
-                cmd_cli "$@"
-                return
-                ;;
             --web)
                 shift
                 cmd_web "$@"
@@ -379,10 +343,6 @@ legacy_main() {
         [ "$stop_agent_flag" = true ] && stop_agent
         [ "$stop_web_flag" = true ] && stop_web
         [ "$stop_obs_flag" = true ] && stop_obs
-        return
-    fi
-    if [ "$attach_flag" = true ]; then
-        cmd_attach "$attach_id"
         return
     fi
     if [ "$status_flag" = true ]; then

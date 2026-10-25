@@ -26,9 +26,12 @@ from .extension import (
     ExtensionManager,
     ExtensionMount,
     ExtensionRunner,
+    ExtensionSpec,
     ExtensionState,
     HookVerdict,
+    InstructionsProvider,
     Skill,
+    discover_extension_specs,
 )
 from .logger import LogConfig, setup_logger
 from .metrics import (
@@ -70,15 +73,19 @@ __all__ = [
     # extension — 扩展加载/激活
     "Command",
     "CommandContext",
+    "ContextProvider",
     "Extension",
     "ExtensionAPI",
     "ExtensionFactory",
     "ExtensionMount",
     "ExtensionManager",
     "ExtensionRunner",
+    "ExtensionSpec",
     "ExtensionState",
     "HookVerdict",
+    "InstructionsProvider",
     "Skill",
+    "discover_extension_specs",
     # logger / telemetry / metrics — 可观测性
     "setup_logger",
     "LogConfig",

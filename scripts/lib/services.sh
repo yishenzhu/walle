@@ -62,10 +62,6 @@ stop_agent() {
     stop_pids "agent 服务端" $(agent_pids)
 }
 
-require_agent() {
-    port_in_use "$AGENT_PORT" \
-        || die "agent 服务端未在运行，请先执行: ./scripts/run.sh up"
-}
 
 # ── Web ───────────────────────────────────────────────
 
@@ -178,10 +174,4 @@ show_status() {
     fi
 
     obs_status
-}
-
-list_sessions() {
-    require_agent
-    step "运行中的会话 ..."
-    run_py -m walle.channel.cli --list
 }

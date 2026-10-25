@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import Any
 
 from ..conf import ToolConfig
 from ..infra import (
@@ -30,7 +31,6 @@ from ..infra import (
     MessageEndEvent,
     OpenAIProvider,
 )
-from ..infra.course_store import load_course, read_lesson
 from ..messages import (
     build_ephemeral_history,
     build_history,
@@ -42,12 +42,16 @@ from ..spec import (
     Channel,
     Delta,
     DeltaEnd,
+    Error,
     Job,
     Message,
     Messages,
-    SessionSpec,
+    NotificationUnion,
+    RequestUnion,
+    SessionInit,
     ToolCallPrepareEvent,
     ToolPrepare,
+    TurnEndEvent,
     UserInput,
 )
 from .agent import Agent
@@ -66,8 +70,8 @@ class SessionClosedError(RuntimeError):
 class Session:
     """单会话运行时：自持 bus / agent 循环 / 扩展激活。
 
-    transport 由 attach() 注入（通常为某连接的 CLIConnection），作为会话的
-    channel 端点直接使用（chat_id 补全在连接内完成）。能力与状态统一经
+    transport 由 attach() 注入（通常为某连接的 SessionConn），作为会话的
+    channel 端点直接使用（session_id 补全在连接内完成）。能力与状态统一经
     self.context（SessionContext）访问。
     """
 
@@ -82,12 +86,10 @@ class Session:
         cwd: str | None = None,
         created_at: float | None = None,
         agent: str | None = None,
-        course_id: str | None = None,
-        lesson_id: str | None = None,
     ) -> None:
         self.id = session_id
-        self._course_id = course_id
-        self._lesson_id = lesson_id
+        # 会话元数据：核心不解释键名，由扩展按需读写
+        self._metadata: dict[str, Any] = {}
         # 创建时间内聚在 Session（管理器/连接仅读取展示）
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
@@ -107,6 +109,7 @@ class Session:
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
         self._bus.on(ToolCallPrepareEvent, self._on_tool_prepare)
+        self._bus.on(TurnEndEvent, self._on_turn_end)
 
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
         # 管理器缓存已加载的 Agent 实例，供 handoff/subagent 按名查表构造工具。
@@ -119,6 +122,12 @@ class Session:
         self._jobs: dict[str, Job] = {}
         # transport：连接端点（attach/detach 切换），唯一 channel 事实源
         self._transport: Channel | None = transport
+        self._attached = asyncio.Event()
+        if transport is not None:
+            self._attached.set()
+        # 当前 turn 的通知缓冲：断连期间保留，重连后补发
+        self._pending: list[NotificationUnion] = []
+        self._replaying = False
         # 单写者：一个会话同时只跑一个 run；忙时直接拒绝，不排队
         self._state = "idle"  # idle / running / cancelling / closed
         self._run_task: asyncio.Task | None = None
@@ -132,7 +141,7 @@ class Session:
         """
         return SessionContext(
             provider=self._provider,
-            channel=self._transport,
+            channel=self,
             history=self._history,
             session_id=self.id,
             jobs=self._jobs,
@@ -141,44 +150,21 @@ class Session:
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
             history_factory=build_ephemeral_history,  # 子 agent 隔离历史
-            course_id=self._course_id,
-            lesson_id=self._lesson_id,
-            course_context=self._course_context(),
+            metadata=self._metadata,
         )
 
-    def set_course_context(self, course_id: str | None, lesson_id: str | None) -> None:
-        """更新课程答疑上下文（课程页切换课节时调用）。"""
-        self._course_id = course_id
-        self._lesson_id = lesson_id
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """会话元数据（只读视图；写入走 update_metadata）。"""
+        return dict(self._metadata)
 
-    def _course_context(self) -> str | None:
-        if not self._course_id:
-            return None
-        course = load_course(self._course_id)
-        if course is None:
-            return f"Course context: {self._course_id} (course not found)"
-        lines = [f"Course: {course.get('title') or self._course_id}"]
-        if course.get("goal"):
-            lines.append(f"Goal: {course['goal']}")
-        lessons = course.get("lessons") or []
-        lines.append("Lessons:")
-        for item in lessons:
-            marker = " (current)" if item.get("id") == self._lesson_id else ""
-            lines.append(
-                f"- {item.get('order') or '?'}. {item.get('title')} "
-                f"[{item.get('id')}]{marker}"
-            )
-        if self._lesson_id:
-            lesson = read_lesson(self._course_id, self._lesson_id)
-            if lesson is not None:
-                lines.append(
-                    f"Current lesson: {lesson.get('title')} "
-                    f"[{self._lesson_id}]; use read_course to read it."
-                )
-        lines.append(
-            "Answer as the course tutor. Use read_course for lesson details."
-        )
-        return "\n".join(lines)
+    def update_metadata(self, values: dict[str, Any]) -> None:
+        """合并会话元数据；值为 None 表示删除该键。"""
+        for key, value in values.items():
+            if value is None:
+                self._metadata.pop(key, None)
+            else:
+                self._metadata[key] = value
 
     def _build_agent(self, name: str | None = None) -> Agent:
         """按名加载 agent 并缓存（工具不经 agent——运行时由扩展 runner 提供）。"""
@@ -204,11 +190,11 @@ class Session:
     def transport(self) -> Channel | None:
         return self._transport
 
-    async def recent_messages(self, limit: int = 20) -> list[Message]:
-        """最近 limit 条原始消息（attach 时给客户端做历史快照）。"""
+    async def conversation_history(self) -> list[Message]:
+        """客户端可见的完整对话历史（含工具调用与结果，不含 system）。"""
         total = await self._history.count()
-        start = max(0, total - limit)
-        return await self._history.query(offset=start, limit=limit)
+        messages = await self._history.query(offset=0, limit=total)
+        return [m for m in messages if m.role != "system"]
 
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（重新加载 frontmatter）；缺省用 default。
@@ -217,15 +203,54 @@ class Session:
         """
         self._agent = self._build_agent(name)
 
-    async def _on_delta(self, evt: MessageDeltaEvent) -> None:
-        """流式增量事件 → 推给当前 transport（无 transport 则丢弃）。"""
+    async def notify(self, notification: NotificationUnion) -> None:
+        """缓冲当前 turn 的通知并推给当前 transport。"""
+        self._pending.append(notification)
+        if self._replaying:
+            return
         if self._transport is not None:
-            await self._transport.notify(Delta(delta=evt.delta))
+            await self._transport.notify(notification)
+
+    async def call(self, request: RequestUnion) -> Any:
+        """向当前连接发起交互；断连时等待重连，连接失败则重试。"""
+        while True:
+            if self._state == "closed":
+                raise SessionClosedError(f"session '{self.id}' is closed")
+            transport = self._transport
+            if transport is not None:
+                try:
+                    return await transport.call(request)
+                except ConnectionError:
+                    if self._state == "closed":
+                        raise
+                    if self._transport is transport:
+                        self._attached.clear()
+            await self._attached.wait()
+
+    async def replay(self, transport: Channel) -> None:
+        """把当前 turn 尚未确认的通知补发给新连接。"""
+        pending, self._pending = self._pending, []
+        self._replaying = True
+        try:
+            for notification in pending:
+                await transport.notify(notification)
+        finally:
+            self._replaying = False
+            rest, self._pending = self._pending, []
+            for notification in rest:
+                await transport.notify(notification)
+
+    async def _on_delta(self, evt: MessageDeltaEvent) -> None:
+        """流式增量事件 → 当前连接；断连期间进入缓冲。"""
+        await self.notify(Delta(delta=evt.delta))
 
     async def _on_tool_prepare(self, evt: ToolCallPrepareEvent) -> None:
         """模型开始生成工具参数 → 先告诉客户端，工具尚未执行。"""
-        if self._transport is not None:
-            await self._transport.notify(ToolPrepare(tool_name=evt.tool_name))
+        await self.notify(ToolPrepare(tool_name=evt.tool_name))
+
+    async def _on_turn_end(self, evt: TurnEndEvent) -> None:
+        """一个 turn 已落库，清掉该 turn 的实时通知缓冲。"""
+        self._pending.clear()
 
     async def _on_message_end(self, evt: MessageEndEvent) -> None:
         """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。
@@ -234,25 +259,25 @@ class Session:
         因此无论 output 是否为空都必须推送 DeltaEnd——否则客户端会一直等待
         结束信号（Web 停在"生成中"、CLI 不再出现提示符）。
         """
-        if self._transport is None:
-            return
-        await self._transport.notify(DeltaEnd(reason=evt.reason))
+        await self.notify(DeltaEnd(reason=evt.reason))
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
         if self._state == "closed":
             raise SessionClosedError(f"session '{self.id}' is closed")
         self._transport = transport
+        self._attached.set()
 
     def detach(self, transport: Channel | None = None) -> bool:
         """解除 transport；给定旧端点时只解除当前端点，防止误伤新连接。"""
         if transport is not None and transport is not self._transport:
             return False
         self._transport = None
+        self._attached.clear()
         return True
 
-    async def handle(self, user_input: UserInput) -> None:
-        """提交并等待一次 run；忙时抛 SessionBusyError，不排队。"""
+    def submit(self, user_input: UserInput) -> asyncio.Task:
+        """提交一次 run 并立即返回；忙时同步抛 SessionBusyError。"""
         if self._state == "closed":
             raise SessionClosedError(f"session '{self.id}' is closed")
         if self._transport is None:
@@ -261,19 +286,49 @@ class Session:
             raise SessionBusyError(f"session '{self.id}' is busy ({self._state})")
 
         content = user_input.content or ""
+        self._pending.clear()
         self._state = "running"
         self._cancel_reason = None
-        task = asyncio.create_task(self._execute(content))
+        task = asyncio.create_task(self._run(content))
         self._run_task = task
+        return task
+
+    async def _run(self, content: str) -> None:
+        """执行一次 run；异常回报当前 transport，结束后恢复 idle。"""
+        try:
+            await self._execute(content)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._report_error(exc)
+        finally:
+            self._pending.clear()
+            if self._run_task is asyncio.current_task():
+                self._run_task = None
+            if self._state != "closed":
+                self._state = "idle"
+
+    async def _report_error(self, exc: Exception) -> None:
+        """把 run 异常发给当前连接；断连期间进入缓冲。"""
+        try:
+            await self.notify(
+                Error(
+                    message=f"处理失败: {exc}",
+                    code=getattr(exc, "code", "error"),
+                )
+            )
+        except Exception:
+            pass
+
+    async def handle(self, user_input: UserInput) -> None:
+        """提交并等待一次 run；忙时抛 SessionBusyError，不排队。"""
+        task = self.submit(user_input)
         try:
             await task
         finally:
             if not task.done():
-                task.cancel()  # 连接断开取消 worker 时，连同当前 run 一起收掉
-            if self._run_task is task:
-                self._run_task = None
-            if self._state != "closed":
-                self._state = "idle"
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def _execute(self, content: str) -> None:
         try:
@@ -282,7 +337,7 @@ class Session:
             if await self._extension_runner.dispatch(
                 content,
                 CommandContext(
-                    channel=self._transport,
+                    channel=self,
                     bus=self._bus,
                     messages=self._history,
                     provider=self._provider,
@@ -327,6 +382,8 @@ class Session:
             return
         await self.cancel(reason="session closed")
         self._state = "closed"
+        self._attached.set()
+        self._pending.clear()
         pending = [
             j.task
             for j in self._jobs.values()
@@ -367,7 +424,7 @@ class SessionManager:
 
     def create(
         self,
-        conn: SessionSpec,
+        conn: SessionInit,
         extension_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。
@@ -389,11 +446,11 @@ class SessionManager:
             else self._provider
         )
         session = Session(
-            session_id=conn.chat_id,
+            session_id=conn.session_id,
             history=build_history(
                 self._storage,
                 self._path,
-                conn.chat_id,
+                conn.session_id,
                 cwd=conn.cwd,
             ),
             tool_config=self._tool_config,
@@ -401,8 +458,6 @@ class SessionManager:
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
             agent=conn.agent,  # 客户端指定 agent（None = default）
-            course_id=getattr(conn, "course_id", None),
-            lesson_id=getattr(conn, "lesson_id", None),
         )
         session.attach(conn)
         self.register(session)

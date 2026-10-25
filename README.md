@@ -20,9 +20,9 @@
 | 🛡️ **工具治理** | 审批即扩展：conf 规则（allow/deny/ask）由 `Approval` 扩展订阅工具执行事件执行，ASK 经会话通道人工确认；可按工具名 + 参数粒度控制 |
 | 🔒 **OS 级沙箱** | 可选 bwrap 沙箱扩展：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
-| 💬 **CLI 多会话** | JSON-line 协议多客户端并发会话，流式/非流式回复，连接断开保留状态可重连 |
+| 💬 **Web 通道** | JSON-line 会话服务端 + WebSocket 桥接；多客户端并发、流式回复，断开重连保留状态 |
 | 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
-| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；阅读页内置持久答疑与 tutor 模式 |
+| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；课程页可直接提问，答疑继续生成该课程的原对话 |
 | 🔌 **插件化扩展** | 会话级扩展激活：工具 / 技能 / 命令 / 事件钩子都是扩展声明；`.agent/extensions/` 目录即插即用，可同名覆盖内置 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
 
@@ -43,7 +43,7 @@ flowchart TD
     E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
     A["Agent<br/>定义 · tool_filter · 技能白名单"]
     T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
-    Ch["Channel<br/>notify / call<br/>CLI / Web 多会话"]
+    Ch["Channel<br/>notify / call<br/>Web 多会话"]
 
     Main --> ExtManager
     ExtManager -->|Extension 声明池| SessionManager
@@ -70,7 +70,7 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant C as Channel(CLI/Web)
+    participant C as Channel(Web)
     participant S as Session
     participant R as Runner
     participant B as Bus(会话事件)
@@ -108,12 +108,12 @@ sequenceDiagram
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
-| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、进程默认 provider、CLI 服务端 |
+| 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions/SessionInit）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
+| 入口·装配根 | `main.py` | 唯一组装进程级具体实现：扩展池（builtin/sandbox/mcp/skill/approval/用户扩展）、进程默认 provider、会话服务端 |
 | 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、扩展加载/激活器 |
 | 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
 | 工具/扩展声明 | `tools/` | 内置工具（builtin/）、mcp、skill、approval、sandbox、define_tool —— 均作为扩展声明，依赖协议面 |
-| 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ CLI 多会话服务端 + Web 工作区桥接，实现 Channel 协议 |
+| 交互通道 | `channel/` | JSON-line 帧传输（`transport.py`）+ 与通道无关的会话服务端（`server.py`）+ Web 工作区；新增通道复用 Channel 协议即可 |
 | 消息存储 | `messages/` | File/SQLite/InMemory/Projected 的 Messages 协议实现 + 装配工厂（build_history） |
 | 数据模型 | `spec/schemas/` | 消息、判别联合事件（通知/服务）、Token 用量、后台作业模型 |
 | 配置 | `conf/` | Pydantic 配置模型 + YAML 加载 |
@@ -164,36 +164,20 @@ cp .env.example .env             # LLM API Key
 ```bash
 ./scripts/run.sh up                    # 后台启动 agent + Web + 可观测性
 ./scripts/run.sh down                  # 停止全部服务
-./scripts/run.sh status                # 服务状态 + 会话列表
+./scripts/run.sh status                # 服务状态
 ./scripts/run.sh logs agent -f         # 跟踪日志（web / obs 同理）
 ./scripts/run.sh restart web           # 重启单个服务（all / agent / web / obs）
 ./scripts/run.sh agent --no-obs        # 前台仅启动 agent
-./scripts/run.sh cli --agent learning  # 确保 agent 运行后开 CLI 客户端
 ./scripts/run.sh web --port 8081       # 前台启动 Web，参数原样透传
-./scripts/run.sh attach <id>           # 恢复（attach）已有会话
 ./scripts/run.sh obs up                # 仅启动可观测性容器
 ./scripts/run.sh test -k course        # pytest 参数透传
 ./scripts/run.sh doctor                # Python / 配置 / Docker / 端口自检
 ./scripts/run.sh help                  # 完整命令列表
 ```
 
-旧版 `--no-obs` / `--cli` / `--web` / `--stop*` / `--test` / `--attach` 参数仍兼容。
+旧版 `--no-obs` / `--web` / `--stop*` / `--test` / `--status` 参数仍兼容。
 
-启动后可用 `PYTHONPATH=.. python -m walle.channel.cli` 连接对话（JSON-line 协议多会话；
-`PYTHONPATH=..` 使仓库根作为 `walle` 包导入，`run.sh` 内部已处理）。客户端参数：
-
-```bash
-PYTHONPATH=.. python -m walle.channel.cli                    # 新建会话（默认全部扩展）
-PYTHONPATH=.. python -m walle.channel.cli --attach <id>      # 恢复已有会话
-PYTHONPATH=.. python -m walle.channel.cli --list             # 浏览会话（仅元数据）
-PYTHONPATH=.. python -m walle.channel.cli --extensions a,b   # 新会话只激活指定扩展
-PYTHONPATH=.. python -m walle.channel.cli --dir /path/proj   # 会话工作目录（bash / 沙箱 / 文件工具基准）
-PYTHONPATH=.. python -m walle.channel.cli --api-key sk-x --base-url https://api.openai.com/v1 --model gpt-4o  # 本会话模型配置
-```
-
-`--api-key/--base-url/--model` 三项齐全时，服务端为该会话新建 provider——不同连接可指向不同 OpenAI 兼容端点；缺省回退服务端 `.env` 配置。
-
-Web 工作区（可选，需先安装 `fastapi` / `uvicorn`）：
+Web 工作区（唯一交互通道，需先安装 `fastapi` / `uvicorn`）：
 
 ```bash
 ./scripts/run.sh web              # 服务端未运行时自动后台启动 + Web 通道（前台）
@@ -202,18 +186,18 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 ```
 
 - **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
-- **课程阅读页**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，右侧常驻课程答疑；可上一课/下一课并记住上次课节。
+- **学习空间**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，右侧直接提问。课程和答疑延续生成该课程的原对话，进入课程自动回到原会话，不另起上下文；切换课节时课程上下文自动跟随。
 - **学习模式**：顶栏「学习模式」在当前连接内直接切换 agent（学习用 `learning`，通用回 `default`），不断开、不丢历史；空状态提示与快捷问题同步切换，新会话沿用当前模式。
-- **服务重启恢复**：attach 失败时 Web 用同一 `chat_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
-- **断线自动重连**：主页与课程答疑在异常断开后按退避间隔自动 reattach；服务重启后连接恢复，历史从文件读回。
-- **学习生成续跑**：学习模式的 run 在没有挂起审批/提问时，可由新连接接管继续；普通会话仍按接管语义取消旧 run。
+- **服务重启恢复**：attach 失败时 Web 用同一 `session_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
+- **断线自动重连**：异常断开后自动恢复；run 在服务端继续，新连接接收后续事件，服务重启后历史从文件读回。
+- **run 续跑**：连接断开不取消当前 run；新连接 attach 后继续接收流式事件，审批/提问会等待重连。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
 - **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
-- **画布内容**：按会话存放在 `data/canvas/<chat_id>/<canvas_id>.html`，通过 `/canvas/<chat_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
+- **画布内容**：按会话存放在 `data/canvas/<session_id>/<canvas_id>.html`，通过 `/canvas/<session_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
 - 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
-会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态（历史），可 `--attach <id>` 重连恢复；连接接入 → `attach` 绑定新传输。Web 端还支持按工作目录浏览历史会话并从文件恢复。真正销毁走服务端停机（`--stop`）。服务端空闲 Ctrl+C 退出。
+会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态，当前 run 继续执行；连接接入 → `attach` 绑定新传输并继续接收事件。Web 工作区可从工作目录浏览历史会话并恢复。真正销毁走服务端停机（`--stop`）。
 
 `read` / `write` / `edit` 的相对路径按会话工作目录解析，绝对路径原样使用；与 bash 和沙箱的可写基准一致。
 
@@ -382,6 +366,31 @@ async def builtin_extension(api) -> None:
 
 用户扩展（`.agent/extensions/`）后注册可同名覆盖内置工具。
 
+扩展还可以注册**动态指令**：每次模型调用前按会话 `metadata` 返回一段文本，
+由运行时追加为 system 消息（对应 PydanticAI capability instructions /
+LangChain `dynamic_prompt` 的同一类扩展点）：
+
+```python
+async def my_extension(api) -> None:
+    api.register_instructions(
+        lambda metadata: "Use metric units." if metadata.get("metric") else None
+    )
+```
+
+学习扩展的课程上下文就走这个入口，核心运行时不需要知道 course/lesson。
+
+领域插件在包内提供 `plugin.py`：
+
+```python
+PLUGIN = ExtensionSpec(
+    name="learning",
+    factory=learning_extension,  # agent 侧：工具 / 指令 / 钩子
+    web=install_web,             # Web 侧：自动挂载路由（可选，惰性导入）
+)
+```
+
+装配根与 Web 启动都会扫描包内的 `plugin.py`，因此插件加载时其路由会自动生效，Web 通道不需要硬编码具体插件。
+
 ### 添加 Skill
 
 ```bash
@@ -446,10 +455,10 @@ async def weather(city: str) -> str:
 
 ### 🖼️ Web 画布工具
 
-`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?` / `course_id?`：
+`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?`：
 
-- 普通画布写入 `data/canvas/<chat_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
-- 传 `course_id` 时写入 `data/courses/<course_id>/canvas/<canvas_id>.html`，供课程阅读页按 `{{canvas:id}}` 嵌入；
+- 普通画布写入 `data/canvas/<session_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
+- 课程画布由学习扩展提供 `course_canvas`，写入 `data/courses/<course_id>/canvas/<canvas_id>.html`；
 - 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
 - Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
 - 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
@@ -467,16 +476,16 @@ data/courses/<course_id>/
 └── canvas/<canvas>.html   # 课程内交互演示
 ```
 
-内置工具：
+学习扩展（`learning/`）提供的工具与动态指令；核心运行时只认识会话元数据，不认识 course/lesson：
 
 - `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
 - `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
-- `canvas(..., course_id=...)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
+- `course_canvas(title, html, course_id, canvas_id?)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
 - Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
-- 右侧答疑固定使用 `.agent/agents/tutor.md` 与 `qa-<hash>` 会话：当前课程/课节作为 system context 注入，切换课节会 attach 同一会话并更新上下文，历史保留；
+- 课程页右侧可直接提问：进入课程回到生成该课程的原会话，答疑延续原上下文；切换课节时课程上下文自动更新；
 - 阅读页显示“已完成 N/M · 已生成 N/M”，可标记完成/未完成并记住上次课节；“继续学习”跳到上次未完成课节；
-- 空课节提供“回到对话继续生成”，会 attach 原生成会话，并预填“按章节顺序，当前课正文和画布完成后再进入下一课”的续写提示；
+- 空课节提供“填入续写提示”，在右侧对话继续生成，按章节顺序补齐后续课节；
 - `/courses` 列表显示每门课的完成进度，点击直接回到该课的继续学习位置；
 - `/courses/<id>/export` 导出 zip 静态站点：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课程源文件，解压后可直接用浏览器打开；依赖 CDN 的画布仍需联网。
 
@@ -520,9 +529,9 @@ walle/
 ├── .github/workflows/ci.yml   # CI：ruff check + pytest（3.12 / 3.13）
 ├── spec/                      # 协议面（叶子包：数据模型 + 能力协议，不依赖任何实现）
 │   ├── protocol/              #   跨层能力协议（唯一声明面）
-│   │   ├── channel.py         #     Channel / Sessions
+│   │   ├── channel.py         #     Channel / Sessions / SessionInit
 │   │   ├── messages.py        #     Messages / Projection / ProjectionStore
-│   │   ├── runtime.py         #     ToolTable（工具表能力）
+│   │   ├── runtime.py         #     ToolTable / ExtensionLayer（工具表 + 动态指令）
 │   │   ├── events.py          #     EventBus（事件总线能力）
 │   │   ├── llm.py             #     LLM（模型能力）
 │   │   └── view.py            #     SessionView（工具可见会话面）
@@ -540,18 +549,12 @@ walle/
 │   ├── session.py             #   Session + SessionManager（会话装配根）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
-│   ├── transport.py           #   JSON-line 帧传输（CLI/Web 共用）
-│   ├── cli/                   #   CLI 多会话（JSON-line 协议）
-│   │   ├── server.py          #     服务端（CLIServer）
-│   │   ├── client.py          #     交互客户端（CLIClient）
-│   │   └── __main__.py        #     客户端入口（python -m walle.channel.cli）
-│   └── web/                   #   Web 工作区（WebSocket ↔ CLI）
-│       ├── app.py             #     FastAPI 应用与桥接（对话/画布/课程路由）
-│       ├── index.html         #     对话 + 画布页面
-│       ├── courses.html       #     课程列表
-│       ├── course.html        #     课程阅读页（md + 画布 + 答疑）
-│       ├── course_export.py   #     课程包 zip 导出
-│       ├── export.html        #     离线课程阅读器模板
+│   ├── transport.py           #   JSON-line 帧传输
+│   ├── server.py              #   与通道无关的会话服务端（SessionServer/SessionConn）
+│   └── web/                   #   Web 通道（WebSocket ↔ SessionServer）
+│       ├── app.py             #     FastAPI 应用与桥接（对话/画布；按需挂载学习路由）
+│       ├── index.html         #     Shell：对话 + 学习空间视图 + 画布
+│       ├── static/app/        #     conversation.js / views.js / course-view.css
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与扩展声明
@@ -567,12 +570,19 @@ walle/
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
 │       ├── canvas.py          #     Web 画布（HTML 落盘 + CanvasResult）
-│       ├── course.py          #     课程包（create_course / write_lesson）
 │       ├── paths.py           #     文件工具路径解析（会话 cwd）
 │       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
 │       └── extension.py       #     builtin 扩展声明
+├── learning/                  # 可选学习扩展（通用运行时之上）
+│   ├── plugin.py              #   插件清单：agent 工厂 + Web 路由安装器
+│   ├── extension.py           #   课程工具 + 动态课程指令（learning_extension）
+│   ├── tools.py               #   课程包工具（create_course / write_lesson / course_canvas / read_course）
+│   ├── store.py               #   课程包文件存储（course.json / lessons / canvas）
+│   ├── web.py                 #   课程 Web 路由（列表/阅读/进度/画布），按需挂载
+│   ├── web_export.py          #   课程包 zip 导出
+│   └── export.html            #   离线课程阅读器模板
 ├── messages/                  # 消息存储
 │   ├── file.py                #   工作目录分组的 JSONL 持久化（默认）
 │   ├── in_memory.py           #   内存实现
@@ -584,7 +594,6 @@ walle/
 │   ├── extension.py           #   ExtensionManager / ExtensionRunner / CommandContext
 │   ├── event_bus.py           #   会话事件总线（具体实现）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
-│   ├── course_store.py        #   课程包文件存储（course.json / lessons / canvas）
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化

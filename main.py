@@ -1,13 +1,18 @@
 import asyncio
 import logging
 
-from .channel.cli import CLIServer
+from .channel import SessionServer
 from .conf import Config
 from .core import (
     ExtensionManager,
     SessionManager,
 )
-from .infra import OpenAIProvider, setup_logger, setup_telemetry
+from .infra import (
+    OpenAIProvider,
+    discover_extension_specs,
+    setup_logger,
+    setup_telemetry,
+)
 from .tools import Approval, MCPManager, Sandbox
 from .tools.builtin.extension import builtin_extension
 from .tools.skill import SkillLoader
@@ -16,10 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    """启动 agent 服务端 + CLI 客户端连接通道。
+    """启动会话服务端，供 Web 等通道接入。
 
-    CLI 客户端需显式启动交互：python -m walle.channel.cli。
-    """
+    当前只提供 Web UI；其他通道可复用同一 SessionServer。"""
     conf = Config.load()
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
@@ -41,6 +45,9 @@ async def main() -> None:
     extensions.add("mcp", mcp.as_extension)  # MCP 远端工具作为扩展声明
     extensions.add("skill", SkillLoader.as_extension)  # 技能清单作为扩展声明
     extensions.add("approval", Approval(conf.tool.approval).as_extension)  # 审批作为扩展
+    # 领域插件：包内 plugin.py 声明 PLUGIN，自动加载（如 learning）
+    for spec in discover_extension_specs():
+        extensions.add(spec.name, spec.factory)
     extensions.discover(
         root=conf.extension.dir,
         enabled=conf.extension.enabled,
@@ -57,7 +64,7 @@ async def main() -> None:
         storage=conf.session.storage,
         path=conf.session.path,
     )
-    server = CLIServer(sessions=sessions)
+    server = SessionServer(sessions=sessions)
     await server.start()
 
     try:

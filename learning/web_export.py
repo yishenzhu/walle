@@ -17,7 +17,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from ...infra.course_store import (
+from .store import (
     CANVAS_DIR,
     COURSE_FILE,
     LESSONS_DIR,

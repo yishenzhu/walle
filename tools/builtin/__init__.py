@@ -1,7 +1,6 @@
 from .ask_user import ask_user
 from .bash import bash
 from .canvas import canvas
-from .course import create_course, read_course, write_lesson
 from .defined_tool import define_tool
 from .edit import edit
 from .history import history, new_window
@@ -13,9 +12,6 @@ __all__ = [
     "ask_user",
     "bash",
     "canvas",
-    "create_course",
-    "write_lesson",
-    "read_course",
     "background",
     "job_result",
     "read",

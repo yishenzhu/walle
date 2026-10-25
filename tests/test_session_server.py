@@ -1,44 +1,51 @@
-"""CLI 通道回归测试：读循环并发与审批回复验证。
+"""会话服务端/通道连接回归测试。
 
-覆盖修复：
-- CLIConnection.run 读循环不被 on_input 阻塞（agent 运行中仍能读取 reply 帧，
-  否则 ask_user / 审批等双向交互会死锁）。
-- ChannelApprover.ask 接受真实通道返回的 dict（JSON 反序列化），验证为模型。
-"""
+覆盖读循环并发、命令帧与审批回复验证。"""
 
 import asyncio
 import json
 
 import pytest
 
-from ..channel.cli import CLIConnection, CLIServer
-from ..channel.cli.server import CALL_TIMEOUT
+from ..channel import SessionConn, SessionServer
+from ..channel.server import CALL_TIMEOUT
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import SessionManager
-from ..spec import ApprovalRequest, ApprovalResponse, UserMessage
+from ..spec import (
+    ApprovalRequest,
+    ApprovalResponse,
+    AssistantMessage,
+    MessageDeltaEvent,
+    ToolMessage,
+    UserMessage,
+)
 from ..tools.approval import ChannelApprover
 
 
 async def test_conn_run_processes_reply_while_input_in_flight():
-    """读循环不被 on_input 占住：agent 运行中等待的审批 reply 必须被读到。"""
+    """读循环不被 input 占住：agent 运行中等待的审批 reply 必须被读到。"""
     results: dict = {}
 
     async def handle_client(reader, writer):
-        conn = CLIConnection("test-conn", reader, writer)
+        conn = SessionConn("test-conn", reader, writer)
 
-        async def on_input(content):
-            # 模拟 agent run：处理消息期间发起审批 call 并等待 reply
+        async def work(content):
+            # 模拟 agent run：后台发起审批 call 并等待 reply
             rsp = await conn.call(
                 ApprovalRequest(tool_name="bash", arguments={}, tool_call_id="tc1")
             )
             results["approval"] = rsp
 
+        async def on_inbound(frame):
+            if frame.get("type") == "input.create":
+                asyncio.create_task(work(frame.get("content") or ""))
+
         try:
-            await conn.run(on_input)
+            await conn.run(on_inbound)
         finally:
             # 须显式关服务端侧连接：3.12 起 server.wait_closed() 会等所有
             # 连接结束，服务端 transport 不关则 _active_count 不归零 → 挂起。
-            # （生产 CLIServer._handle_conn 同样在 finally 里关 writer）
+            # （生产 SessionServer._handle_conn 同样在 finally 里关 writer）
             writer.close()
 
     server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
@@ -46,16 +53,16 @@ async def test_conn_run_processes_reply_while_input_in_flight():
 
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
-        writer.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        writer.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
         await writer.drain()
 
-        # 服务端 agent（on_input）应发出审批 call 帧
+        # 服务端 agent（on_inbound 调度的任务）应发出审批 call 帧
         line = await asyncio.wait_for(reader.readline(), timeout=2)
         msg = json.loads(line)
         assert msg["type"] == "call"
         assert msg["data"]["type"] == "approval"
 
-        # 回 reply：修复前读循环被 on_input 占住，reply 无人读取 → on_input 永不完成
+        # 回 reply：修复前读循环被 input 处理占住，reply 无人读取 → call 永不完成
         writer.write(
             (
                 json.dumps(
@@ -78,21 +85,48 @@ async def test_conn_run_processes_reply_while_input_in_flight():
         await server.wait_closed()
 
 
-async def test_conn_run_notifies_error_on_input_failure():
-    """on_input 抛异常：串行 worker 捕获后主动向客户端发 error 帧。
+async def test_close_unblocks_run_without_peer_eof():
+    """对端仍在线时 close() 也必须结束读循环。"""
 
-    客户端在发送 input 后会等回复完成（delta_end）再提示下一行；处理失败时
-    必须通知（error 帧），否则客户端永远等不到回复信号而"卡住"。
-    """
+    class StalledLink:
+        async def recv(self):
+            await asyncio.Event().wait()
+
+        async def try_send(self, msg):
+            return True
+
+        async def send(self, msg):
+            pass
+
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def on_inbound(frame):
+        pass
+
+    conn = SessionConn("stalled", None, None, link=StalledLink())
+    task = asyncio.create_task(conn.run(on_inbound))
+    await asyncio.sleep(0)
+    conn.close()
+    await asyncio.wait_for(task, 1)
+
+
+async def test_conn_run_notifies_error_on_inbound_failure():
+    """on_inbound 抛异常：run 捕获后向客户端发 error 帧。
+
+    否则客户端等不到回复信号会一直卡住。"""
 
     async def handle_client(reader, writer):
-        conn = CLIConnection("err-conn", reader, writer)
+        conn = SessionConn("err-conn", reader, writer)
 
-        async def on_input(content):
+        async def on_inbound(frame):
             raise RuntimeError("boom")
 
         try:
-            await conn.run(on_input)
+            await conn.run(on_inbound)
         finally:
             writer.close()  # 服务端侧连接须显式关闭（见上例说明）
 
@@ -101,7 +135,7 @@ async def test_conn_run_notifies_error_on_input_failure():
 
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
-        writer.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        writer.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
         await writer.drain()
 
         line = await asyncio.wait_for(reader.readline(), timeout=2)
@@ -117,20 +151,20 @@ async def test_conn_run_notifies_error_on_input_failure():
 
 
 async def test_conn_run_processes_consecutive_inputs():
-    """input 帧串行处理：按到达顺序执行 on_input，不并发乱序。"""
+    """input 帧串行处理：按到达顺序交给 on_inbound，不并发乱序。"""
     seen: list[str] = []
     done = asyncio.Event()
 
     async def handle_client(reader, writer):
-        conn = CLIConnection("test-conn2", reader, writer)
+        conn = SessionConn("test-conn2", reader, writer)
 
-        async def on_input(content):
-            seen.append(content)
+        async def on_inbound(frame):
+            seen.append(frame.get("content") or "")
             if len(seen) == 2:
                 done.set()
 
         try:
-            await conn.run(on_input)
+            await conn.run(on_inbound)
         finally:
             writer.close()  # 服务端侧连接须显式关闭（见上例说明）
 
@@ -141,7 +175,7 @@ async def test_conn_run_processes_consecutive_inputs():
     try:
         for content in ("first", "second"):
             writer.write(
-                (json.dumps({"type": "input", "content": content}) + "\n").encode()
+                (json.dumps({"type": "input.create", "content": content}) + "\n").encode()
             )
             await writer.drain()
         await asyncio.wait_for(done.wait(), timeout=2)
@@ -154,25 +188,31 @@ async def test_conn_run_processes_consecutive_inputs():
 
 
 async def test_conn_run_switches_agent_without_disconnect():
-    """set_agent 帧：同一条连接内切换 agent，后续 input 仍正常处理。"""
+    """session.* 帧：同一条连接内切换 agent/课程上下文，后续 input 仍正常处理。"""
     switched: list[str] = []
+    courses: list[tuple[str, str]] = []
     inputs: list[str] = []
     switched_done = asyncio.Event()
+    course_done = asyncio.Event()
     input_done = asyncio.Event()
 
     async def handle_client(reader, writer):
-        conn = CLIConnection("switch-conn", reader, writer)
+        conn = SessionConn("switch-conn", reader, writer)
 
-        async def on_input(content):
-            inputs.append(content)
-            input_done.set()
-
-        async def on_agent(name):
-            switched.append(name)
-            switched_done.set()
+        async def on_inbound(frame):
+            kind = frame.get("type")
+            if kind == "input.create":
+                inputs.append(frame.get("content") or "")
+                input_done.set()
+            elif kind == "session.set_agent":
+                switched.append(str(frame.get("agent") or ""))
+                switched_done.set()
+            elif kind == "session.set_metadata":
+                courses.append(frame.get("values") or {})
+                course_done.set()
 
         try:
-            await conn.run(on_input, None, on_agent)
+            await conn.run(on_inbound)
         finally:
             writer.close()
 
@@ -182,13 +222,33 @@ async def test_conn_run_switches_agent_without_disconnect():
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
         writer.write(
-            (json.dumps({"type": "set_agent", "agent": "learning"}) + "\n").encode()
+            (
+                json.dumps(
+                    {"type": "session.set_agent", "agent": "learning"}
+                )
+                + "\n"
+            ).encode()
         )
         await writer.drain()
         await asyncio.wait_for(switched_done.wait(), timeout=2)
         assert switched == ["learning"]
 
-        writer.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "type": "session.set_metadata",
+                        "values": {"course_id": "course-a", "lesson_id": "lesson-a"},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await writer.drain()
+        await asyncio.wait_for(course_done.wait(), timeout=2)
+        assert courses == [{"course_id": "course-a", "lesson_id": "lesson-a"}]
+
+        writer.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
         await writer.drain()
         await asyncio.wait_for(input_done.wait(), timeout=2)
         assert inputs == ["hi"]
@@ -248,7 +308,7 @@ async def test_channel_approver_passthrough_model_reply():
 
 
 class ServerHarness:
-    """测试用 CLIServer 服务端：起真实端口，自带 manager（注入构造参数）。"""
+    """测试用 SessionServer 服务端：起真实端口，自带 manager（注入构造参数）。"""
 
     def __init__(self, db_path: str, storage: str = "memory", path: str | None = None):
         self.manager = SessionManager(
@@ -258,7 +318,7 @@ class ServerHarness:
             storage=storage,
             path=path or db_path,
         )
-        self.server = CLIServer(sessions=self.manager)
+        self.server = SessionServer(sessions=self.manager)
 
     async def start(self):
         # 用端口 0 让内核分配空闲端口
@@ -293,14 +353,14 @@ async def _read_line(reader):
     return json.loads(line)
 
 
-async def test_cli_attach_reattaches_existing_session(tmp_path):
-    """attach 帧：同 chat_id 重连恢复到 manager 中的会话（resume）。"""
+async def test_attach_reattaches_existing_session(tmp_path):
+    """attach 帧：同 session_id 重连恢复到 manager 中的会话（resume）。"""
     server = ServerHarness(str(tmp_path / "s.db"))
     manager = server.manager
     port = await server.start()
     try:
         # 首次连接：新建会话
-        r1, w1 = await _connect(port, {"type": "hello", "chat_id": "session-1"})
+        r1, w1 = await _connect(port, {"type": "hello", "session_id": "session-1"})
         await _read_line(r1)  # welcome
         assert manager.get("session-1") is not None
         await manager.get("session-1")._history.add([UserMessage(content="before")])
@@ -315,7 +375,7 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
 
         # 重连：attach 同一会话，attached 恢复
         r2, w2 = await _connect(
-            port, {"type": "hello", "chat_id": "session-1", "attach": True}
+            port, {"type": "hello", "session_id": "session-1", "attach": True}
         )
         welcome = await _read_line(r2)
         assert welcome["history"] == [{"role": "user", "content": "before"}]
@@ -329,13 +389,65 @@ async def test_cli_attach_reattaches_existing_session(tmp_path):
         await manager.close()
 
 
-async def test_cli_disconnect_detaches_not_closes(tmp_path):
+async def test_history_snapshot_includes_tool_messages(tmp_path):
+    """attach 历史包含 assistant tool_calls 与 tool 输出。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
+    port = await server.start()
+    calls = [
+        {
+            "id": "tc1",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"cmd":"ls"}'},
+        }
+    ]
+    r1 = w1 = r2 = w2 = None
+    try:
+        r1, w1 = await _connect(
+            port, {"type": "hello", "session_id": "history-tools"}
+        )
+        await _read_line(r1)  # welcome
+        session = manager.get("history-tools")
+        await session._history.add(
+            [
+                UserMessage(content="run"),
+                AssistantMessage(content=None, tool_calls=calls),
+                ToolMessage(content="out", tool_call_id="tc1"),
+            ]
+        )
+        w1.close()
+        await w1.wait_closed()
+        for _ in range(100):
+            if not session.attached:
+                break
+            await asyncio.sleep(0.02)
+
+        r2, w2 = await _connect(
+            port,
+            {"type": "hello", "session_id": "history-tools", "attach": True},
+        )
+        welcome = await _read_line(r2)
+        assert welcome["history"] == [
+            {"role": "user", "content": "run"},
+            {"role": "assistant", "content": None, "tool_calls": calls},
+            {"role": "tool", "content": "out", "tool_call_id": "tc1"},
+        ]
+    finally:
+        for writer in (w1, w2):
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        await server.stop()
+        await manager.close()
+
+
+async def test_disconnect_detaches_not_closes(tmp_path):
     """连接断开 → 会话 detach 保留（不销毁），manager 中仍存在。"""
     server = ServerHarness(str(tmp_path / "s.db"))
     manager = server.manager
     port = await server.start()
     try:
-        r, w = await _connect(port, {"type": "hello", "chat_id": "session-2"})
+        r, w = await _connect(port, {"type": "hello", "session_id": "session-2"})
         await _read_line(r)  # welcome
         session = manager.get("session-2")
         assert session is not None
@@ -360,14 +472,119 @@ async def test_cli_disconnect_detaches_not_closes(tmp_path):
         await manager.close()
 
 
-async def test_cli_attach_unknown_session_errors(tmp_path):
+async def test_disconnect_keeps_active_run(tmp_path):
+    """连接断开不取消 run；会话保留并继续执行。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
+    port = await server.start()
+    try:
+        r, w = await _connect(port, {"type": "hello", "session_id": "session-3"})
+        await _read_line(r)  # welcome
+        session = manager.get("session-3")
+        started = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def slow_run(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            finished.set()
+
+        session._agent_runner.run = slow_run  # type: ignore[method-assign]
+        w.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
+        await w.drain()
+        await asyncio.wait_for(started.wait(), 1)
+
+        w.close()
+        await w.wait_closed()
+        for _ in range(100):
+            if not session.attached:
+                break
+            await asyncio.sleep(0.02)
+        assert session.attached is False
+        assert session.state == "running"
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), 2)
+        for _ in range(100):
+            if session.state == "idle":
+                break
+            await asyncio.sleep(0.02)
+        assert session.state == "idle"
+        assert manager.get("session-3") is session
+    finally:
+        await server.stop()
+        await manager.close()
+
+
+async def test_reconnect_replays_current_turn_events(tmp_path):
+    """断连期间产生的当前 turn 事件，重连后补发。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    manager = server.manager
+    port = await server.start()
+    r1 = w1 = r2 = w2 = None
+    try:
+        r1, w1 = await _connect(port, {"type": "hello", "session_id": "replay"})
+        await _read_line(r1)  # welcome
+        session = manager.get("replay")
+        started = asyncio.Event()
+        release = asyncio.Event()
+        emitted = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def stream_run(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            await session._bus.emit(MessageDeltaEvent(delta="hello"))
+            emitted.set()
+            await finish.wait()
+
+        session._agent_runner.run = stream_run  # type: ignore[method-assign]
+        w1.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
+        await w1.drain()
+        await asyncio.wait_for(started.wait(), 1)
+
+        w1.close()
+        await w1.wait_closed()
+        for _ in range(100):
+            if not session.attached:
+                break
+            await asyncio.sleep(0.02)
+        release.set()
+        await asyncio.wait_for(emitted.wait(), 1)
+
+        r2, w2 = await _connect(
+            port, {"type": "hello", "session_id": "replay", "attach": True}
+        )
+        assert (await _read_line(r2))["type"] == "welcome"
+        replay = await asyncio.wait_for(_read_line(r2), 2)
+        assert replay["type"] == "notify"
+        assert replay["data"]["type"] == "delta"
+        assert replay["data"]["delta"] == "hello"
+
+        finish.set()
+        for _ in range(100):
+            if session.state == "idle":
+                break
+            await asyncio.sleep(0.02)
+        assert session.state == "idle"
+    finally:
+        for writer in (w1, w2):
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+        await server.stop()
+        await manager.close()
+
+
+async def test_attach_unknown_session_errors(tmp_path):
     """attach 不存在的会话 → 服务端回 error 帧。"""
     server = ServerHarness(str(tmp_path / "s.db"))
     manager = server.manager
     port = await server.start()
     try:
         r, w = await _connect(
-            port, {"type": "hello", "chat_id": "ghost", "attach": True}
+            port, {"type": "hello", "session_id": "ghost", "attach": True}
         )
         msg = await _read_line(r)
         assert msg["type"] == "error"
@@ -379,16 +596,16 @@ async def test_cli_attach_unknown_session_errors(tmp_path):
         await manager.close()
 
 
-async def test_cli_list_frame_returns_sessions(tmp_path):
+async def test_list_frame_returns_sessions(tmp_path):
     """list 帧：返回 manager 中全部会话（含 attached 状态）。"""
     server = ServerHarness(str(tmp_path / "s.db"))
     manager = server.manager
     port = await server.start()
     try:
         # 建两个会话，一个断开
-        r1, w1 = await _connect(port, {"type": "hello", "chat_id": "a"})
+        r1, w1 = await _connect(port, {"type": "hello", "session_id": "a"})
         await _read_line(r1)
-        r2, w2 = await _connect(port, {"type": "hello", "chat_id": "b"})
+        r2, w2 = await _connect(port, {"type": "hello", "session_id": "b"})
         await _read_line(r2)
         w1.close()
         await w1.wait_closed()
@@ -412,7 +629,7 @@ async def test_cli_list_frame_returns_sessions(tmp_path):
         await manager.close()
 
 
-async def test_cli_lists_workspaces_and_history_sessions(tmp_path):
+async def test_lists_workspaces_and_history_sessions(tmp_path):
     """浏览帧：工作目录和目录下的历史会话来自文件存储。"""
     sessions = tmp_path / "sessions"
     project = tmp_path / "project"
@@ -433,7 +650,7 @@ async def test_cli_lists_workspaces_and_history_sessions(tmp_path):
 
         r2, w2 = await _connect(
             port,
-            {"type": "hello", "chat_id": "file-session", "cwd": str(project)},
+            {"type": "hello", "session_id": "file-session", "cwd": str(project)},
         )
         welcome = await _read_line(r2)
         assert welcome["type"] == "welcome"
@@ -486,14 +703,14 @@ async def test_hello_call_timeout_override(tmp_path):
     port = await server.start()
     try:
         r1, w1 = await _connect(
-            port, {"type": "hello", "chat_id": "no-timeout", "call_timeout": None}
+            port, {"type": "hello", "session_id": "no-timeout", "call_timeout": None}
         )
         await _read_line(r1)  # welcome
         assert manager.get("no-timeout").transport._call_timeout is None
         w1.close()
         await w1.wait_closed()
 
-        r2, w2 = await _connect(port, {"type": "hello", "chat_id": "default"})
+        r2, w2 = await _connect(port, {"type": "hello", "session_id": "default"})
         await _read_line(r2)
         assert manager.get("default").transport._call_timeout == CALL_TIMEOUT
         w2.close()
@@ -501,3 +718,59 @@ async def test_hello_call_timeout_override(tmp_path):
     finally:
         await server.stop()
         await manager.close()
+
+
+async def test_unknown_frame_reports_error(tmp_path):
+    """未知 session.* 帧由上层拒绝，连接保持可用。"""
+    server = ServerHarness(str(tmp_path / "s.db"))
+    port = await server.start()
+    try:
+        reader, writer = await _connect(
+            port, {"type": "hello", "session_id": "unknown-frame"}
+        )
+        await _read_line(reader)  # welcome
+        writer.write(
+            (json.dumps({"type": "session.unknown"}) + "\n").encode()
+        )
+        await writer.drain()
+        msg = await asyncio.wait_for(_read_line(reader), 2)
+        assert msg["type"] == "notify"
+        assert msg["data"]["type"] == "error"
+        assert msg["data"]["code"] == "control_failed"
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await server.stop()
+        await server.manager.close()
+
+
+async def test_run_cancel_is_routed_to_inbound():
+    """run.cancel 和其他控制帧统一走 on_inbound。"""
+    seen: list[str] = []
+    done = asyncio.Event()
+
+    async def handle_client(reader, writer):
+        conn = SessionConn("cancel-conn", reader, writer)
+
+        async def on_inbound(frame):
+            seen.append(str(frame.get("type")))
+            done.set()
+
+        try:
+            await conn.run(on_inbound)
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write((json.dumps({"type": "run.cancel"}) + "\n").encode())
+        await writer.drain()
+        await asyncio.wait_for(done.wait(), 2)
+        assert seen == ["run.cancel"]
+    finally:
+        writer.close()
+        await writer.wait_closed()
+        server.close()
+        await server.wait_closed()

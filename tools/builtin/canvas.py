@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ...infra import tool_context
-from ...infra.course_store import canvas_dir, load_course
 
 CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -23,24 +22,15 @@ class CanvasResult(BaseModel):
     canvas_id: str
     title: str
     version: int
-    course_id: str | None = None
 
 
-async def canvas(
+def write_canvas(
     title: str,
     html: str,
-    canvas_id: str | None = None,
-    course_id: str | None = None,
+    canvas_id: str | None,
+    root: Path,
 ) -> CanvasResult | str:
-    """当用户要画图、示意图、公式推导、动画或可交互演示时，用本工具渲染 HTML 画布。
-
-    html 必须是完整 HTML 页面，可内联 CSS/JS，也可引用外部 CDN。同标题默认复用同一画布；
-    更新已有画布时传回上次返回的 canvas_id。传 course_id 时画布归入课程包，可在课节
-    Markdown 中用 `{{canvas:<canvas_id>}}` 嵌入。画布只在聊天中显示入口卡，由用户点击打开。
-    """
-    ctx = tool_context.get()
-    if course_id is None and (ctx is None or not ctx.session_id):
-        return "Error: canvas 不可用（当前会话没有会话标识）"
+    """把一页 HTML 写入指定画布目录（通用 canvas 与领域扩展共用）。"""
     title = (title or "").strip() or "画布"
     if not html or not html.strip():
         return "Error: html 不能为空"
@@ -51,23 +41,30 @@ async def canvas(
     elif not SAFE_ID.fullmatch(canvas_id):
         return "Error: canvas_id 只能包含字母、数字、- 和 _（1-64 位）"
 
-    if course_id is not None:
-        if load_course(course_id) is None:
-            return f"Error: course 不存在: {course_id}"
-        root = canvas_dir(course_id)
-    else:
-        key = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session_id)[:64] or "default"
-        root = CANVAS_ROOT / key
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{canvas_id}.html"
     temp = root / f".{canvas_id}.{uuid.uuid4().hex}.tmp"
     temp.write_text(html, encoding="utf-8")
     temp.replace(path)
-
-    version = time.time_ns()
     return CanvasResult(
         canvas_id=canvas_id,
         title=title,
-        version=version,
-        course_id=course_id,
+        version=time.time_ns(),
     )
+
+
+async def canvas(
+    title: str,
+    html: str,
+    canvas_id: str | None = None,
+) -> CanvasResult | str:
+    """当用户要画图、示意图、公式推导、动画或可交互演示时，用本工具渲染 HTML 画布。
+
+    html 必须是完整 HTML 页面，可内联 CSS/JS，也可引用外部 CDN。同标题默认复用同一画布；
+    更新已有画布时传回上次返回的 canvas_id。画布只在聊天中显示入口卡，由用户点击打开。
+    """
+    ctx = tool_context.get()
+    if ctx is None or not ctx.session_id:
+        return "Error: canvas 不可用（当前会话没有会话标识）"
+    key = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session_id)[:64] or "default"
+    return write_canvas(title, html, canvas_id, CANVAS_ROOT / key)

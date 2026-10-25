@@ -34,12 +34,12 @@ packages = [
     "walle.spec.protocol",
     "walle.spec.schemas",
     "walle.infra",
+    "walle.learning",
     "walle.messages",
     "walle.core",
     "walle.tools",
     "walle.tools.builtin",
     "walle.channel",
-    "walle.channel.cli",
     "walle.channel.web",
     "walle.conf",
     "walle.eval",
@@ -52,12 +52,12 @@ walle = "."
 "walle.spec.protocol" = "spec/protocol"
 "walle.spec.schemas" = "spec/schemas"
 "walle.infra" = "infra"
+"walle.learning" = "learning"
 "walle.messages" = "messages"
 "walle.core" = "core"
 "walle.tools" = "tools"
 "walle.tools.builtin" = "tools/builtin"
 "walle.channel" = "channel"
-"walle.channel.cli" = "channel/cli"
 "walle.channel.web" = "channel/web"
 "walle.conf" = "conf"
 "walle.eval" = "eval"

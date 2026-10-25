@@ -5,10 +5,11 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from ...infra import tool_context
-from ...infra.course_store import create_course as create_course_entry
-from ...infra.course_store import load_course, read_lesson, save_course
-from ...infra.course_store import write_lesson as write_lesson_entry
+from ..infra import tool_context
+from ..tools.builtin.canvas import CanvasResult, write_canvas
+from .store import canvas_dir, load_course, read_lesson, save_course
+from .store import create_course as create_course_entry
+from .store import write_lesson as write_lesson_entry
 
 
 class CourseResult(BaseModel):
@@ -26,6 +27,10 @@ class LessonResult(BaseModel):
     title: str
     order: int
     version: int
+
+
+class CourseCanvasResult(CanvasResult):
+    course_id: str
 
 
 async def create_course(
@@ -98,6 +103,25 @@ async def write_lesson(
     )
 
 
+async def course_canvas(
+    title: str,
+    html: str,
+    course_id: str,
+    canvas_id: str | None = None,
+) -> CourseCanvasResult | str:
+    """把交互画布写入课程包，供课节 Markdown 用 {{canvas:<id>}} 嵌入。
+
+    html 必须是完整 HTML 页面，可内联 CSS/JS 或引用外部 CDN；更新已有画布时
+    传回上次返回的 canvas_id。先建画布，再调用 write_lesson 写入含占位符的课节。
+    """
+    if load_course(course_id) is None:
+        return f"Error: course 不存在: {course_id}"
+    result = write_canvas(title, html, canvas_id, canvas_dir(course_id))
+    if isinstance(result, str):
+        return result
+    return CourseCanvasResult(**result.model_dump(), course_id=course_id)
+
+
 async def read_course(
     course_id: str | None = None,
     lesson_id: str | None = None,
@@ -110,8 +134,9 @@ async def read_course(
     the course structure. Use this before answering material-specific questions.
     """
     ctx = tool_context.get()
-    cid = course_id or (ctx.course_id if ctx is not None else None)
-    lid = None if outline else lesson_id or (ctx.lesson_id if ctx is not None else None)
+    metadata = ctx.metadata if ctx is not None else {}
+    cid = course_id or metadata.get("course_id")
+    lid = None if outline else lesson_id or metadata.get("lesson_id")
     if not cid:
         return "Error: 当前会话没有课程上下文，请提供 course_id"
     course = load_course(cid)
@@ -131,7 +156,7 @@ async def read_course(
     if course.get("goal"):
         lines.append(course["goal"])
     lines.append("Lessons:")
-    current = ctx.lesson_id if ctx is not None else None
+    current = metadata.get("lesson_id")
     for item in course.get("lessons") or []:
         marker = " (current)" if item.get("id") == current else ""
         lines.append(

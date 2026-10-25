@@ -5,7 +5,7 @@ SessionContext 具体类。刻意不含 provider / agents / depth（属引擎内
 session_id 仅用于按会话归属落盘的工具（如 canvas），不暴露会话内容。
 """
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..schemas import Job
 from .channel import Channel
@@ -27,5 +27,4 @@ class SessionView(Protocol):
     history: Messages
     extension_runner: ToolTable | None
     bus: EventBus | None
-    course_id: str | None
-    lesson_id: str | None
+    metadata: dict[str, Any]

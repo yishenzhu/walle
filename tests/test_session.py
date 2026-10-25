@@ -14,7 +14,7 @@ from ..messages import (
     SQLiteMessages,
     build_history,
 )
-from ..spec import ModelConfig, UserMessage
+from ..spec import ModelConfig, Sessions, UserMessage
 from .conftest import FakeChannel, FakeProvider
 
 
@@ -117,40 +117,21 @@ class TestSessionStorage:
         await s2.close()
 
 
-class TestCourseContext:
-    async def test_course_and_lesson_context_is_injected(self, tmp_path, monkeypatch):
-        from ..infra import course_store
-
-        root = tmp_path / "courses"
-        monkeypatch.setattr(
-            course_store, "courses_root", lambda path=None: root
-        )
-        course = course_store.create_course(
-            "测试课程", goal="目标", lessons=["第一课"], root=root
-        )
-        lesson = course_store.write_lesson(
-            course["id"], "第一课", "# 正文", root=root
-        )
-
+class TestSessionMetadata:
+    async def test_metadata_is_shared_with_context(self, tmp_path):
         s = Session(
-            session_id="qa-1",
-            history=build_history("memory", str(tmp_path / "s.db"), "qa-1"),
+            session_id="meta-1",
+            history=build_history("memory", str(tmp_path / "s.db"), "meta-1"),
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            course_id=course["id"],
-            lesson_id=lesson["id"],
         )
         try:
-            ctx = s.context
-            assert ctx.course_id == course["id"]
-            assert ctx.lesson_id == lesson["id"]
-            assert "测试课程" in ctx.course_context
-            assert "第一课" in ctx.course_context
-            assert "(current)" in ctx.course_context
+            s.update_metadata({"course_id": "c1", "lesson_id": "l1"})
+            assert s.context.metadata == {"course_id": "c1", "lesson_id": "l1"}
 
-            s.set_course_context(course["id"], None)
-            assert "(current)" not in s.context.course_context
+            s.update_metadata({"lesson_id": None})
+            assert s.context.metadata == {"course_id": "c1"}
         finally:
             await s.close()
 
@@ -206,6 +187,11 @@ class TestSessionLifecycle:
 
 
 class TestSessionManager:
+    def test_satisfies_sessions_protocol(self, tmp_path):
+        """协议声明的 get/create/list/浏览/close 必须由管理器完整实现。"""
+        manager = make_manager(str(tmp_path / "s.db"))
+        assert isinstance(manager, Sessions)
+
     async def test_create_uses_central_file_storage(self, tmp_path):
         """默认 file 后端：会话落在 path，而不是工作目录。"""
         sessions = tmp_path / "sessions"
@@ -218,7 +204,7 @@ class TestSessionManager:
         )
 
         class Conn:
-            chat_id = "file-1"
+            session_id = "file-1"
             cwd = str(project)
             model = None
             agent = None
@@ -348,8 +334,8 @@ class TestSessionModelConfig:
     """客户端随握手提供模型配置 → 会话级 provider（可指向不同端点）。"""
 
     class Conn:
-        def __init__(self, chat_id, model=None):
-            self.chat_id = chat_id
+        def __init__(self, session_id, model=None):
+            self.session_id = session_id
             self.cwd = None
             self.model = model
             self.agent = None
@@ -489,8 +475,8 @@ class TestSessionStreamForward:
         manager = await self._manager(tmp_path)
 
         class Conn:
-            def __init__(self, chat_id):
-                self.chat_id = chat_id
+            def __init__(self, session_id):
+                self.session_id = session_id
                 self.cwd = None
                 self.model = None
                 self.agent = None
@@ -550,7 +536,7 @@ class TestSessionStreamForward:
         )
 
         class Conn:
-            chat_id = "mcp-1"
+            session_id = "mcp-1"
             cwd = None
             model = None
             agent = None

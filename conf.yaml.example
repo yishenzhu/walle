@@ -26,6 +26,7 @@ tool:
       - [allow, edit(path=.agent/note.md)]  # 工作笔记 note.md 自动放行
       - [allow, ask_user]             # 提问工具自动放行
       - [allow, canvas]               # 画布 HTML 在沙箱 iframe 内渲染，自动放行
+      - [allow, course_canvas]        # 课程画布写入 data/courses
       - [allow, create_course]        # 课程包写入 data/courses
       - [allow, write_lesson]         # 课节 md 写入 data/courses
       - [allow, read_course]          # 课程答疑只读

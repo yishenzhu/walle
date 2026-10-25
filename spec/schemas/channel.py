@@ -1,15 +1,6 @@
-"""通道载荷：Channel 协议 notify / call 两个原语的消息模型。
+"""通道载荷：notify（广播无返回）与 call（点对点有返回）。
 
-- 通知（Notification）：广播，无返回；对应 JSON-RPC 2.0 的无 id 消息。
-- 请求（Request）：点对点，有返回；对应带 id 的 Request/Response。
-
-命名约定：载荷按语义命名，类别由 Channel 方法表达，如
-`channel.notify(Delta(...))`、`channel.call(ApprovalRequest(...))`。判别联合
-（NotificationUnion / RequestUnion）按 `type` 字段区分。
-
-会话建立的创建载荷（SessionSpec / ModelConfig）与交互返回（UserInput /
-ApprovalResponse）同属通道契约，故一并置于本模块。
-"""
+载荷按语义命名，类别由 Channel 方法表达；判别联合按 type 区分。"""
 
 from typing import Annotated, Any, Literal
 
@@ -19,10 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelConfig(BaseModel):
-    """模型接入配置：一个 OpenAI 兼容端点 + 模型名（客户端随握手提供）。
+    """模型接入配置：OpenAI 兼容端点 + 模型名。
 
-    三项齐全才生效；缺省回退进程默认 provider。不同连接可指向不同端点。
-    """
+    三项齐全才生效；缺省回退进程默认 provider。"""
 
     api_key: str
     base_url: str
@@ -30,23 +20,19 @@ class ModelConfig(BaseModel):
 
 
 class SessionSpec(BaseModel):
-    """新建会话的规格：会话身份（chat_id）、工作目录（cwd）、模型配置与 agent 名。
+    """新建会话规格：session_id、cwd、模型配置与 agent 名。
 
-    model 由客户端随握手提供——不同连接可指向不同端点；缺省（None）回退默认。
-    agent 为 agent 名（对应 .agent/agents/<name>.md）；缺省 None = default。
-    """
+    model 缺省时回退进程默认 provider；agent 缺省为 default。"""
 
-    chat_id: str
+    session_id: str
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
     model: ModelConfig | None  # 模型接入配置（None = 用默认）
     agent: str | None = None  # agent 名（None = default）；创建会话时按名加载
-    course_id: str | None = None  # 课程答疑上下文（None = 普通会话）
-    lesson_id: str | None = None  # 当前课节（随课程页切换更新）
 
 
 class UserInput(BaseModel):
     content: str | None = None  # None = 无输入 / 退出信号（Ctrl+C / EOF）
-    chat_id: str = ""  # 来源会话
+    session_id: str = ""  # 来源会话
 
 
 class ApprovalResponse(BaseModel):
@@ -60,7 +46,7 @@ class ApprovalResponse(BaseModel):
 class Notification(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
-    chat_id: str = ""  # 目标会话（路由字段）
+    session_id: str = ""  # 目标会话（路由字段）
 
 
 class Delta(Notification):
@@ -123,7 +109,7 @@ NotificationUnion = Annotated[
 class Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str
-    chat_id: str = ""  # 目标会话（路由字段）
+    session_id: str = ""  # 目标会话（路由字段）
 
 
 class Inquiry(Request):

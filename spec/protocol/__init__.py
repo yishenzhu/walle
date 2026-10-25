@@ -4,16 +4,18 @@
 core 中，由装配根注入。使用方统一从本包导入协议，不 import 具体实现类。
 """
 
-from .channel import Channel, Sessions
+from .channel import Channel, SessionInit, Sessions
 from .events import EventBus
 from .llm import LLM
 from .messages import Messages, Projection, ProjectionStore
-from .runtime import ToolTable
+from .runtime import ExtensionLayer, ToolTable
 from .view import SessionView
 
 __all__ = [
     "Channel",
+    "SessionInit",
     "Sessions",
+    "ExtensionLayer",
     "ToolTable",
     "Messages",
     "Projection",

@@ -5,12 +5,19 @@ import json
 
 import pytest
 
-from ..channel.cli import CLIConnection, CLIServer
-from ..channel.cli.server import MAX_FRAME
+from ..channel import SessionConn, SessionServer
+from ..channel.server import MAX_FRAME
 from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Session, SessionBusyError, SessionManager
 from ..messages import build_history
-from ..spec import ApprovalRequest, DeltaEnd, MessageEndEvent, UserInput
+from ..spec import (
+    ApprovalRequest,
+    Delta,
+    DeltaEnd,
+    Error,
+    MessageEndEvent,
+    UserInput,
+)
 from .conftest import FakeChannel
 
 
@@ -23,6 +30,41 @@ def make_session(session_id: str, db_path: str) -> Session:
         ),
         transport=FakeChannel(),
     )
+
+
+async def test_session_buffers_events_until_attach(tmp_path):
+    """断连期间的通知进入缓冲，重连后补发。"""
+    s = make_session("buffer", str(tmp_path / "s.db"))
+    s.detach()
+    await s.notify(Delta(delta="partial"))
+    channel = FakeChannel()
+    s.attach(channel)
+    await s.replay(channel)
+    try:
+        assert channel.events == [Delta(delta="partial")]
+        assert s.context.channel is s
+    finally:
+        await s.close()
+
+
+async def test_session_call_waits_for_attach(tmp_path):
+    """断连时的审批请求等待重连，而不是直接失败。"""
+    s = make_session("wait-call", str(tmp_path / "s.db"))
+    s.detach()
+    task = asyncio.create_task(
+        s.call(
+            ApprovalRequest(tool_name="bash", arguments={}, tool_call_id="tc1")
+        )
+    )
+    await asyncio.sleep(0)
+    assert not task.done()
+    channel = FakeChannel()
+    s.attach(channel)
+    try:
+        response = await asyncio.wait_for(task, 1)
+        assert response.approved is True
+    finally:
+        await s.close()
 
 
 async def test_handle_rejects_when_busy(tmp_path):
@@ -43,6 +85,35 @@ async def test_handle_rejects_when_busy(tmp_path):
             await s.handle(UserInput(content="two"))
         release.set()
         await first
+        assert s.state == "idle"
+    finally:
+        release.set()
+        await s.close()
+
+
+async def test_run_error_goes_to_current_transport(tmp_path):
+    """run 跨连接存活时，异常必须回报当前 transport 而不是旧连接。"""
+    s = make_session("error-route", str(tmp_path / "s.db"))
+    old = FakeChannel()
+    new = FakeChannel()
+    s.attach(old)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def boom(_content: str) -> None:
+        started.set()
+        await release.wait()
+        raise RuntimeError("boom")
+
+    s._execute = boom  # type: ignore[method-assign]
+    task = s.submit(UserInput(content="hi"))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        s.attach(new)
+        release.set()
+        await task
+        assert any(isinstance(event, Error) for event in new.events)
+        assert not any(isinstance(event, Error) for event in old.events)
         assert s.state == "idle"
     finally:
         release.set()
@@ -95,8 +166,8 @@ async def test_detach_ignores_stale_transport(tmp_path):
         await s.close()
 
 
-async def test_attach_takeover_cancels_old_run(tmp_path):
-    """新连接接管：旧 run 取消，终态发给新连接。"""
+async def test_attach_takeover_keeps_old_run(tmp_path):
+    """新连接接管：旧 run 继续跑，新连接接收后续事件。"""
     manager = SessionManager(
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
@@ -104,7 +175,7 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
-    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    server = SessionServer(sessions=manager, host="127.0.0.1", port=0)
     await server.start()
     port = server._server.sockets[0].getsockname()[1]
 
@@ -117,35 +188,42 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
     async def read_frame(reader):
         return json.loads(await asyncio.wait_for(reader.readline(), 2))
 
-    r1, w1 = await connect({"type": "hello", "chat_id": "takeover"})
+    r1, w1 = await connect({"type": "hello", "session_id": "takeover"})
     r2 = w2 = None
     try:
         await read_frame(r1)  # welcome
         session = manager.get("takeover")
         started = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
 
         async def slow_run(*_args, **_kwargs):
             started.set()
-            await asyncio.sleep(10)
+            await release.wait()
+            finished.set()
 
         session._agent_runner.run = slow_run  # type: ignore[method-assign]
-        w1.write((json.dumps({"type": "input", "content": "hi"}) + "\n").encode())
+        w1.write((json.dumps({"type": "input.create", "content": "hi"}) + "\n").encode())
         await w1.drain()
         await asyncio.wait_for(started.wait(), 1)
 
         r2, w2 = await connect(
-            {"type": "hello", "chat_id": "takeover", "attach": True}
+            {"type": "hello", "session_id": "takeover", "attach": True}
         )
         assert (await read_frame(r2))["type"] == "welcome"
 
-        reason = None
-        for _ in range(3):
-            msg = await read_frame(r2)
-            if msg.get("type") == "notify":
-                reason = msg["data"].get("reason")
-                if reason:
-                    break
-        assert reason == "session reattached"
+        old_msg = await read_frame(r1)
+        assert old_msg["type"] == "notify"
+        assert old_msg["data"]["code"] == "session_taken_over"
+        assert session.state == "running"
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), 2)
+        for _ in range(50):
+            if session.state == "idle":
+                break
+            await asyncio.sleep(0.02)
+        assert session.state == "idle"
     finally:
         for writer in (w1, w2):
             if writer is not None:
@@ -155,8 +233,8 @@ async def test_attach_takeover_cancels_old_run(tmp_path):
         await manager.close()
 
 
-async def test_attach_learning_run_continues(tmp_path):
-    """学习模式重连：无挂起交互时接管连接但不取消生成 run。"""
+async def test_attach_keeps_run(tmp_path):
+    """重连接管：旧 run 继续执行，新连接接收后续事件。"""
     manager = SessionManager(
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
@@ -164,7 +242,7 @@ async def test_attach_learning_run_continues(tmp_path):
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
-    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    server = SessionServer(sessions=manager, host="127.0.0.1", port=0)
     await server.start()
     port = server._server.sockets[0].getsockname()[1]
 
@@ -178,7 +256,7 @@ async def test_attach_learning_run_continues(tmp_path):
         return json.loads(await asyncio.wait_for(reader.readline(), 2))
 
     r1, w1 = await connect(
-        {"type": "hello", "chat_id": "learning-resume", "agent": "learning"}
+        {"type": "hello", "session_id": "learning-resume", "agent": "learning"}
     )
     r2 = w2 = None
     try:
@@ -193,14 +271,14 @@ async def test_attach_learning_run_continues(tmp_path):
             finished.set()
 
         session._agent_runner.run = slow_run  # type: ignore[method-assign]
-        w1.write((json.dumps({"type": "input", "content": "生成课程"}) + "\n").encode())
+        w1.write((json.dumps({"type": "input.create", "content": "生成课程"}) + "\n").encode())
         await w1.drain()
         await asyncio.wait_for(started.wait(), 1)
 
         r2, w2 = await connect(
             {
                 "type": "hello",
-                "chat_id": "learning-resume",
+                "session_id": "learning-resume",
                 "attach": True,
                 "agent": "learning",
             }
@@ -237,7 +315,7 @@ async def test_attach_switches_agent_and_keeps_history(tmp_path):
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
-    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    server = SessionServer(sessions=manager, host="127.0.0.1", port=0)
     await server.start()
     port = server._server.sockets[0].getsockname()[1]
 
@@ -248,7 +326,7 @@ async def test_attach_switches_agent_and_keeps_history(tmp_path):
         return reader, writer
 
     r1, w1 = await connect(
-        {"type": "hello", "chat_id": "switch-agent", "agent": "learning"}
+        {"type": "hello", "session_id": "switch-agent", "agent": "learning"}
     )
     r2 = w2 = None
     try:
@@ -260,7 +338,7 @@ async def test_attach_switches_agent_and_keeps_history(tmp_path):
         r2, w2 = await connect(
             {
                 "type": "hello",
-                "chat_id": "switch-agent",
+                "session_id": "switch-agent",
                 "attach": True,
                 "agent": "default",
             }
@@ -278,7 +356,7 @@ async def test_attach_switches_agent_and_keeps_history(tmp_path):
 
 
 async def test_server_switches_agent_on_same_connection(tmp_path):
-    """学习模式开关走 set_agent 帧：同一连接切换 agent，不触发 reattach。"""
+    """学习模式/课程切换走 session.* 帧：同一连接内切换，不触发 reattach。"""
     manager = SessionManager(
         tool_config=ToolConfig(
             approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
@@ -286,7 +364,7 @@ async def test_server_switches_agent_on_same_connection(tmp_path):
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
-    server = CLIServer(sessions=manager, host="127.0.0.1", port=0)
+    server = SessionServer(sessions=manager, host="127.0.0.1", port=0)
     await server.start()
     port = server._server.sockets[0].getsockname()[1]
 
@@ -297,7 +375,7 @@ async def test_server_switches_agent_on_same_connection(tmp_path):
         return reader, writer
 
     reader, writer = await connect(
-        {"type": "hello", "chat_id": "live-switch", "agent": "learning"}
+        {"type": "hello", "session_id": "live-switch", "agent": "learning"}
     )
     try:
         msg = json.loads(await asyncio.wait_for(reader.readline(), 2))
@@ -306,7 +384,15 @@ async def test_server_switches_agent_on_same_connection(tmp_path):
         assert session.agent_name == "learning"
 
         writer.write(
-            (json.dumps({"type": "set_agent", "agent": "default"}) + "\n").encode()
+            (
+                json.dumps(
+                    {
+                        "type": "session.set_agent",
+                        "agent": "default",
+                    }
+                )
+                + "\n"
+            ).encode()
         )
         await writer.drain()
         for _ in range(100):
@@ -314,6 +400,24 @@ async def test_server_switches_agent_on_same_connection(tmp_path):
                 break
             await asyncio.sleep(0.02)
         assert session.agent_name == "default"
+
+        writer.write(
+            (
+                json.dumps(
+                    {
+                        "type": "session.set_metadata",
+                        "values": {"course_id": "course-a", "lesson_id": "lesson-a"},
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        await writer.drain()
+        for _ in range(100):
+            if session.metadata.get("course_id") == "course-a":
+                break
+            await asyncio.sleep(0.02)
+        assert session.metadata == {"course_id": "course-a", "lesson_id": "lesson-a"}
     finally:
         writer.close()
         await writer.wait_closed()
@@ -321,15 +425,15 @@ async def test_server_switches_agent_on_same_connection(tmp_path):
         await manager.close()
 
 
-async def test_input_failure_reports_code():
+async def test_inbound_failure_reports_code():
     async def handle(reader, writer):
-        conn = CLIConnection("busy", reader, writer)
+        conn = SessionConn("busy", reader, writer)
 
-        async def on_input(_content: str) -> None:
+        async def on_inbound(_frame: dict) -> None:
             raise SessionBusyError("busy")
 
         try:
-            await conn.run(on_input)
+            await conn.run(on_inbound)
         finally:
             conn.close()
 
@@ -337,7 +441,7 @@ async def test_input_failure_reports_code():
     port = server.sockets[0].getsockname()[1]
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     try:
-        writer.write((json.dumps({"type": "input", "content": "x"}) + "\n").encode())
+        writer.write((json.dumps({"type": "input.create", "content": "x"}) + "\n").encode())
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), 2)
         msg = json.loads(line)
@@ -354,7 +458,7 @@ async def test_call_times_out_without_reply():
     done = asyncio.Event()
 
     async def handle(reader, writer):
-        conn = CLIConnection("timeout", reader, writer, call_timeout=0.05)
+        conn = SessionConn("timeout", reader, writer, call_timeout=0.05)
         try:
             with pytest.raises(TimeoutError):
                 await conn.call(
@@ -378,9 +482,13 @@ async def test_call_times_out_without_reply():
 
 async def test_oversized_frame_gets_terminal():
     async def handle(reader, writer):
-        conn = CLIConnection("big", reader, writer)
+        conn = SessionConn("big", reader, writer)
+
+        async def on_inbound(_frame: dict) -> None:
+            pass
+
         try:
-            await conn.run(lambda _: asyncio.sleep(0))
+            await conn.run(on_inbound)
         finally:
             conn.close()
 

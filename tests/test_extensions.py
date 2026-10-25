@@ -63,6 +63,53 @@ async def test_load_and_activate_registers_handlers_and_tools():
     assert any(t.name == "extension_tool" for t in runner.all_tools())
 
 
+async def test_instructions_provider_injects_system_message():
+    """扩展注册的动态指令按会话 metadata 追加 system 提示。"""
+    from ..core import Agent, Runner, SessionContext
+    from ..messages import InMemoryMessages
+    from ..spec import SystemMessage
+
+    bus = EventBus()
+    runner = ExtensionRunner(bus)
+    mgr = ExtensionManager()
+
+    async def factory(api: ExtensionAPI):
+        api.register_instructions(
+            lambda metadata: (
+                f"course={metadata['course_id']}"
+                if metadata.get("course_id")
+                else None
+            )
+        )
+
+    mgr.add("ctx", factory)
+    await mgr.load()
+    runner.activate(mgr.extensions[0])
+    assert runner.instructions({}) == []
+    assert runner.instructions({"course_id": "c1"}) == ["course=c1"]
+
+    ctx = SessionContext(
+        history=InMemoryMessages(),
+        bus=bus,
+        extension_runner=runner,
+        metadata={"course_id": "c1"},
+    )
+    messages = await Runner()._build_messages(Agent.load("default"), ctx.history, ctx)
+    assert SystemMessage(content="course=c1") in messages
+
+    runner.unload("ctx")
+    assert runner.instructions({"course_id": "c1"}) == []
+
+
+async def test_discover_extension_specs_includes_web_installer():
+    """包内 plugin.py 声明的领域扩展被自动发现，且带 Web 安装器。"""
+    from ..infra import discover_extension_specs
+
+    specs = {spec.name: spec for spec in discover_extension_specs()}
+    assert "learning" in specs
+    assert specs["learning"].web is not None
+
+
 async def test_failing_factory_is_isolated():
     mgr = ExtensionManager()
 

@@ -12,7 +12,8 @@ from urllib.parse import quote
 from fastapi.testclient import TestClient
 
 from ..channel.transport import JSONLineConn
-from ..infra.course_store import create_course, write_lesson
+from ..learning import web as learning_web
+from ..learning.store import create_course, write_lesson
 
 web = importlib.import_module("walle.channel.web.app")
 
@@ -69,7 +70,7 @@ class FakeAgent:
             self.hello = hello
             self.hello_frames.append(hello)
             if self.attach_error and hello.get("attach"):
-                # 与真实 CLIServer 一致：attach 失败后回 error 并关闭连接，
+                # 与真实 SessionServer 一致：attach 失败后回 error 并关闭连接，
                 # 客户端需要新开一条连接再 create。
                 await conn.send(
                     {
@@ -79,11 +80,11 @@ class FakeAgent:
                     }
                 )
                 return
-            await conn.send({"type": "welcome", "chat_id": hello.get("chat_id")})
+            await conn.send({"type": "welcome", "session_id": hello.get("session_id")})
             while (msg := await conn.recv()) is not None:
                 self.frames.put(msg)
                 kind = msg.get("type")
-                if kind == "input":
+                if kind == "input.create":
                     await conn.send(
                         {
                             "type": "call",
@@ -100,7 +101,7 @@ class FakeAgent:
                     await conn.send(
                         {"type": "notify", "data": {"type": "delta_end"}}
                     )
-                elif kind == "cancel":
+                elif kind == "run.cancel":
                     await conn.send(
                         {
                             "type": "notify",
@@ -129,7 +130,8 @@ def test_index_serves_chat_page():
     response = TestClient(web.app).get("/")
     assert response.status_code == 200
     assert "<title>Walle</title>" in response.text
-    assert "/ws/chat" in response.text
+    assert "/static/app/conversation.js" in response.text
+    assert "/static/app/views.js" in response.text
     assert "工具审批" in response.text
     assert "停止" in response.text
     assert 'id="canvas-panel"' in response.text
@@ -141,20 +143,22 @@ def test_index_serves_chat_page():
     assert 'id="workspace-modal"' in response.text
     assert 'id="session-list"' in response.text
     assert 'id="agent-mode"' in response.text
-    assert "const requestedAgent = agentSwitchPending || agentMode" in response.text
-    assert 'type: "set_agent"' in response.text
-    assert "if (live)" in response.text
+    assert 'id="courses-view"' in response.text
+    assert 'id="course-view"' in response.text
+    assert 'data-route' in response.text
+    assert "WalleConversation" in response.text
+    assert "WalleViews" in response.text
     assert "querySession" in response.text
     assert "queryPrompt" in response.text
-    assert "scheduleReconnect" in response.text
     assert "session_taken_over" in response.text
     assert "本页已停止重连" in response.text
-    assert "重连中" in response.text
     assert "/api/workspaces" in response.text
     assert "/api/sessions" in response.text
     assert 'href="/courses"' in response.text
     assert 'target="_blank" rel="noopener">学习</a>' not in response.text
     assert "function courseCard" in response.text
+    assert "tool-history" in response.text
+    assert "tool_calls" in response.text
     assert "打开学习空间" in response.text
     assert "开始对话" in response.text
     assert "sin(x) 函数" in response.text
@@ -178,6 +182,25 @@ def test_static_markdown_assets_are_served():
     purify = client.get("/static/purify.min.js")
     assert purify.status_code == 200
     assert "DOMPurify" in purify.text
+    for asset in (
+        "/static/app/conversation.js",
+        "/static/app/views.js",
+        "/static/app/course-view.css",
+    ):
+        response = client.get(asset)
+        assert response.status_code == 200, asset
+    conversation = client.get("/static/app/conversation.js").text
+    assert "重连中" in conversation
+    assert 'type: "input.create"' in conversation
+    assert 'type: "run.cancel"' in conversation
+    assert "sendControl" in conversation
+    assert "session.set_agent" in conversation
+    assert "session.set_metadata" in conversation
+    assert "targetSession !== state.sessionId" in conversation
+    views = client.get("/static/app/views.js").text
+    assert "createCourseView" in views
+    assert "createCoursesView" in views
+    assert "course.session_id" in views
     katex = client.get("/static/katex/katex.min.js")
     assert katex.status_code == 200
     assert "katex" in katex.text.lower()
@@ -251,24 +274,23 @@ def test_web_ws_passes_workspace_and_session(monkeypatch, tmp_path):
     try:
         url = (
             f"/ws/chat?cwd={quote(str(tmp_path))}"
-            "&session=web-existing&attach=1"
-            "&course=course-a&lesson=lesson-a&agent=tutor"
+            "&session=web-existing&attach=1&agent=tutor"
         )
         with TestClient(web.app).websocket_connect(url) as ws:
             assert ws.receive_json()["type"] == "welcome"
             assert agent.hello is not None
-            assert agent.hello["chat_id"] == "web-existing"
+            assert agent.hello["session_id"] == "web-existing"
             assert agent.hello["cwd"] == str(tmp_path.resolve())
             assert agent.hello["attach"] is True
-            assert agent.hello["course_id"] == "course-a"
-            assert agent.hello["lesson_id"] == "lesson-a"
             assert agent.hello["agent"] == "tutor"
             assert agent.hello["call_timeout"] is None
+            assert "course_id" not in agent.hello
+            assert "lesson_id" not in agent.hello
     finally:
         agent.stop()
 
 
-def test_web_ws_forwards_set_agent(monkeypatch, tmp_path):
+def test_web_ws_forwards_control_frames(monkeypatch, tmp_path):
     agent = FakeAgent()
     port = agent.start()
     monkeypatch.setattr(web, "PORT", port)
@@ -279,10 +301,22 @@ def test_web_ws_forwards_set_agent(monkeypatch, tmp_path):
         )
         with TestClient(web.app).websocket_connect(url) as ws:
             assert ws.receive_json()["type"] == "welcome"
-            ws.send_json({"type": "set_agent", "agent": "default"})
+            ws.send_json(
+                {"type": "session.set_agent", "agent": "default"}
+            )
             assert agent.frames.get(timeout=2) == {
-                "type": "set_agent",
+                "type": "session.set_agent",
                 "agent": "default",
+            }
+            ws.send_json(
+                {
+                    "type": "session.set_metadata",
+                    "values": {"course_id": "course-a", "lesson_id": "lesson-a"},
+                }
+            )
+            assert agent.frames.get(timeout=2) == {
+                "type": "session.set_metadata",
+                "values": {"course_id": "course-a", "lesson_id": "lesson-a"},
             }
     finally:
         agent.stop()
@@ -301,7 +335,7 @@ def test_web_ws_falls_back_to_create_when_session_missing(monkeypatch, tmp_path)
             assert ws.receive_json()["type"] == "welcome"
             assert [item["attach"] for item in agent.hello_frames] == [True, False]
             assert all(
-                item["chat_id"] == "web-missing" for item in agent.hello_frames
+                item["session_id"] == "web-missing" for item in agent.hello_frames
             )
     finally:
         agent.stop()
@@ -329,29 +363,27 @@ def make_course_bundle(tmp_path):
 
 def test_course_pages_and_apis(monkeypatch, tmp_path):
     root, course, lesson = make_course_bundle(tmp_path)
-    monkeypatch.setattr(web, "COURSES_ROOT", root)
+    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
     client = TestClient(web.app)
 
     listing = client.get("/courses")
     assert listing.status_code == 200
     assert "学习空间" in listing.text
-    assert "/api/courses" in listing.text
+    assert 'id="courses-view"' in listing.text
+    assert "/static/app/views.js" in listing.text
 
     page = client.get(f"/courses/{course['id']}")
     assert page.status_code == 200
     assert 'id="lesson-nav"' in page.text
-    assert 'id="qa-log"' in page.text
-    assert "session_taken_over" in page.text
-    assert "本页答疑已停止重连" in page.text
+    assert 'id="course-view"' in page.text
+    assert 'id="course-title"' in page.text
     assert 'id="export-link"' in page.text
     assert 'id="plan-meta"' in page.text
     assert 'id="continue-learning"' in page.text
     assert 'id="complete-lesson"' in page.text
-    assert "回到对话继续生成" in page.text
-    assert "scheduleChatReconnect" in page.text
-    assert "重连中" in page.text
-    assert 'params.set("agent", "tutor")' in page.text
-    assert "/api/courses" in page.text
+    assert 'id="qa-log"' not in page.text
+    assert "WalleViews.createCourseView" in page.text
+    assert "WalleConversation" in page.text
 
     courses = client.get("/api/courses").json()["courses"]
     assert courses[0]["id"] == course["id"]
@@ -364,7 +396,6 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert manifest["lessons"][0]["completed"] is False
     assert manifest["written_count"] == 1
     assert manifest["progress"]["completed_count"] == 0
-    assert manifest["qa_session_id"].startswith("qa-")
 
     updated = client.post(
         f"/api/courses/{course['id']}/progress",
@@ -416,7 +447,7 @@ def test_course_api_marks_unwritten_lessons(monkeypatch, tmp_path):
         root=root,
     )
     write_lesson(course["id"], "已写", "# 有内容", root=root)
-    monkeypatch.setattr(web, "COURSES_ROOT", root)
+    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
 
     data = TestClient(web.app).get(f"/api/courses/{course['id']}").json()
     assert [item["written"] for item in data["lessons"]] == [True, False]
@@ -435,8 +466,8 @@ def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):
             assert agent.hello is not None
             assert agent.hello["call_timeout"] is None
 
-            ws.send_json({"type": "input", "content": "run"})
-            assert wait_frame(agent, "input")["content"] == "run"
+            ws.send_json({"type": "input.create", "content": "run"})
+            assert wait_frame(agent, "input.create")["content"] == "run"
 
             call = ws.receive_json()
             assert call["type"] == "call"
@@ -450,8 +481,8 @@ def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):
             assert reply["data"] == {"approved": True}
             assert ws.receive_json()["data"]["type"] == "delta_end"
 
-            ws.send_json({"type": "cancel"})
-            wait_frame(agent, "cancel")
+            ws.send_json({"type": "run.cancel"})
+            wait_frame(agent, "run.cancel")
             tail = ws.receive_json()
             assert tail["data"] == {
                 "type": "delta_end",

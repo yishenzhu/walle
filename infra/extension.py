@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import pkgutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -30,6 +31,9 @@ class ExtensionState(StrEnum):
     FAILED = "failed"  # factory 抛异常，声明不可用
 
 
+InstructionsProvider = Callable[[dict[str, Any]], str | None]
+
+
 @dataclass
 class Extension:
     """一次扩展加载的声明：收集的 handlers / tools / skills / commands + 状态。"""
@@ -39,6 +43,7 @@ class Extension:
     tools: list[Tool] = field(default_factory=list)
     skills: dict[str, Skill] = field(default_factory=dict)
     commands: dict[str, Command] = field(default_factory=dict)
+    instructions: list[InstructionsProvider] = field(default_factory=list)
     state: ExtensionState = ExtensionState.READY
     error: str | None = None
 
@@ -107,8 +112,42 @@ class ExtensionAPI:
         """注册一个技能声明（name/description 进提示词，path 供 read 加载全文）。"""
         self._extension.skills[name] = Skill(name, description, path)
 
+    def register_instructions(self, provider: InstructionsProvider) -> None:
+        """注册动态指令提供者：每次模型调用前按会话 metadata 返回文本。"""
+        self._extension.instructions.append(provider)
+
 
 ExtensionFactory = Callable[[ExtensionAPI], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class ExtensionSpec:
+    """插件清单：agent 侧工厂 + 可选 Web 安装器（包内 plugin.py 声明）。"""
+
+    name: str
+    factory: ExtensionFactory
+    web: Callable[[Any], None] | None = None
+
+
+def discover_extension_specs(package: str | None = None) -> list[ExtensionSpec]:
+    """扫描包内 <subpackage>/plugin.py 的 PLUGIN 声明（自动加载插件）。"""
+    root = package or __package__.split(".")[0]
+    base = importlib.import_module(root)
+    specs: list[ExtensionSpec] = []
+    for info in sorted(pkgutil.iter_modules(base.__path__), key=lambda i: i.name):
+        if not info.ispkg:
+            continue
+        plugin_name = f"{root}.{info.name}.plugin"
+        try:
+            if importlib.util.find_spec(plugin_name) is None:
+                continue
+        except ModuleNotFoundError:
+            continue
+        module = importlib.import_module(plugin_name)
+        spec = getattr(module, "PLUGIN", None)
+        if isinstance(spec, ExtensionSpec):
+            specs.append(spec)
+    return specs
 
 
 class ExtensionManager:
@@ -228,6 +267,7 @@ class ExtensionRunner:
         self._tools: list[Tool] = []  # 会话工具表（扩展激活落点）
         self._skills: dict[str, Skill] = {}  # 会话技能表（渐进式披露清单）
         self._commands: dict[str, Command] = {}
+        self._instructions: list[InstructionsProvider] = []  # 动态指令提供者
         self._mounts: dict[str, ExtensionMount] = {}  # 扩展名 → 本会话挂载
 
     # ── 工具表（add/remove/query，实现 ToolTable 能力面）────
@@ -269,6 +309,9 @@ class ExtensionRunner:
                 for name, cmd in extension.commands.items():
                     self._commands[name] = cmd
                     mount.commands.append(name)
+                for provider in extension.instructions:
+                    self._instructions.append(provider)
+                    mount.instructions.append(provider)
             except Exception:
                 self._rollback(mount)
                 raise
@@ -295,6 +338,9 @@ class ExtensionRunner:
         for name in mount.commands:
             if name in self._commands:
                 del self._commands[name]
+        for provider in mount.instructions:
+            if provider in self._instructions:
+                self._instructions.remove(provider)
 
     async def dispatch(
         self, text: str, ctx: CommandContext | None = None
@@ -322,6 +368,11 @@ class ExtensionRunner:
         """本会话可用技能（name→Skill），供 system prompt 拼技能清单。"""
         return dict(self._skills)
 
+    def instructions(self, metadata: dict[str, Any]) -> list[str]:
+        """按会话 metadata 收集扩展动态指令（空结果跳过）。"""
+        prompts = [provider(metadata) for provider in self._instructions]
+        return [prompt for prompt in prompts if prompt]
+
     @property
     def active_extensions(self) -> set[str]:
         return set(self._mounts)
@@ -335,6 +386,7 @@ class ExtensionMount:
     skills: list[str] = field(default_factory=list)
     handlers: list[tuple[type, Handler]] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
+    instructions: list[InstructionsProvider] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

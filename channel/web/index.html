@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Walle</title>
   <link rel="stylesheet" href="/static/katex/katex.min.css">
+  <link rel="stylesheet" href="/static/app/course-view.css">
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --panel3: #222b39;
@@ -322,6 +323,20 @@
       background: var(--danger-soft); border: 1px solid #5d2a2a; border-radius: 8px;
       padding: 6px 10px; white-space: pre-wrap; word-break: break-word;
     }
+    .tool-history {
+      align-self: flex-start; max-width: 88%; width: 100%;
+      border: 1px solid var(--border); background: #121821;
+      border-radius: 10px; padding: 8px 11px;
+      font-size: 12px; color: var(--muted);
+    }
+    .tool-history summary {
+      cursor: pointer; color: #c9d6e4; font-family: var(--mono);
+    }
+    .tool-history pre {
+      margin: 8px 0 0; max-height: 240px; overflow: auto;
+      white-space: pre-wrap; word-break: break-word;
+      color: var(--muted); font: 12px/1.55 var(--mono);
+    }
 
     /* ── 待审批提示条 ─────────────────────────────── */
     .approval-bar {
@@ -466,6 +481,47 @@
 </head>
 <body>
   <div class="shell">
+  <section id="courses-view" class="page-view" hidden>
+    <div class="courses-page">
+      <div class="courses-head">
+        <div>
+          <h1>学习空间</h1>
+          <p>每个课程包包含学习计划、Markdown 课节和交互画布。进入课程后，右侧就是当前主对话。</p>
+        </div>
+        <div class="courses-ish"><a href="/" data-route>返回对话</a></div>
+      </div>
+      <div id="courses-grid" class="courses-grid"></div>
+    </div>
+  </section>
+  <section id="course-view" class="page-view" hidden>
+    <div class="course-page">
+      <div class="course-head">
+        <div class="course-breadcrumb">
+          <a href="/courses" data-route>全部课程</a>
+          <span>/</span>
+          <h1 id="course-title">课程</h1>
+        </div>
+        <a id="export-link" class="ghost" href="#">导出课程</a>
+      </div>
+      <div class="course-layout">
+        <aside class="course-sidebar">
+          <div id="course-goal" class="course-goal"></div>
+          <button id="continue-learning" class="continue-learning" type="button">开始学习</button>
+          <div id="plan-meta" class="nav-head">学习计划</div>
+          <nav id="lesson-nav" class="lesson-nav"></nav>
+        </aside>
+        <main class="course-reader">
+          <div id="reader-head" class="reader-head"></div>
+          <article id="content" class="course-md"></article>
+          <div class="lesson-actions">
+            <button id="prev" type="button">上一课</button>
+            <button id="complete-lesson" type="button">标记完成</button>
+            <button id="next" type="button">下一课</button>
+          </div>
+        </main>
+      </div>
+    </div>
+  </section>
   <div class="app">
     <header>
       <div class="brand">
@@ -473,7 +529,7 @@
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
         <button id="agent-mode" class="ghost" title="切换通用 / 学习模式">学习模式</button>
-        <a class="ghost" href="/courses">学习</a>
+        <a class="ghost" href="/courses" data-route>学习</a>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
@@ -553,6 +609,8 @@
   <script src="/static/katex/katex.min.js"></script>
   <script src="/static/katex/marked-katex.min.js"></script>
   <script src="/static/purify.min.js"></script>
+  <script src="/static/app/conversation.js"></script>
+  <script src="/static/app/views.js"></script>
   <script>
     const log = document.getElementById("log");
     const chatEmpty = document.getElementById("chat-empty");
@@ -568,15 +626,8 @@
       );
     }
 
-    let ws = null;
     let busy = false;
     let current = null;
-    let reconnectTimer = null;
-    let reconnectAttempts = 0;
-    let suppressReconnect = false;
-    let sessionTakenOver = false;
-    let agentSwitchPending = null;
-    let connectionTarget = null;
     // tool_call_id → { card, pill, hint, actions, allow, deny, decision }
     const approvals = new Map();
     const tools = new Map();
@@ -604,6 +655,23 @@
     const sessionList = document.getElementById("session-list");
     const workspaceState = { cwd: "", active: "", defaultCwd: "" };
     let agentMode = localStorage.getItem("walle.agent") === "learning" ? "learning" : "";
+    const conversationStore = new WalleConversation.ConversationStore({ agentMode });
+    const conversation = new WalleConversation.ConversationController({
+      store: conversationStore,
+      onMessage: handle,
+      onStatus: (text, cls) => setStatus(text, cls),
+      onOpen: () => updateComposer(),
+      onBeforeConnect: () => resetChat(),
+      onSessionChange: (cwd, sessionId) => {
+        workspaceState.cwd = cwd || "";
+        workspaceState.active = sessionId;
+        if (cwd) {
+          setWorkspaceLabel(cwd);
+          localStorage.setItem("walle.cwd", cwd);
+        }
+        localStorage.setItem("walle.session", sessionId);
+      },
+    });
     const emptyStrong = chatEmpty.querySelector("strong");
     const emptyCopy = chatEmpty.querySelector("p");
     const emptyHints = [...chatEmpty.querySelectorAll(".hint")];
@@ -613,7 +681,7 @@
       ["4 周计划", "帮我制定一个 4 周的学习计划"],
       ["从零学线代", "从零开始学线性代数"],
     ];
-    // canvas_id → { id, chatId, title, version, card, name }
+    // canvas_id → { id, sessionId, title, version, card, name }
     const canvases = new Map();
     let shownCanvas = null;
     let latestCanvas = null;
@@ -694,12 +762,8 @@
       });
       // 当前连接可用时直接切 agent，不断开、不重建会话；
       // 若恰好断线，下一次重连带上待切换的 agent。
-      if (live) {
-        const targetAgent = agentMode || "default";
-        if (!sendFrame({ type: "set_agent", agent: targetAgent })) {
-          agentSwitchPending = targetAgent;
-        }
-      }
+      if (live) conversation.setMode(agentMode);
+      else conversationStore.set({ agentMode });
     }
 
     function resetChat() {
@@ -719,13 +783,51 @@
       updateComposer();
     }
 
+    function historyToolName(call) {
+      const fn = call && call.function ? call.function : call || {};
+      return fn.name || call?.name || "tool";
+    }
+
+    function historyToolArgs(call) {
+      const fn = call && call.function ? call.function : call || {};
+      return fn.arguments || call?.arguments || "";
+    }
+
+    function addHistoryTool(call, output) {
+      if (chatEmpty) chatEmpty.hidden = true;
+      const details = el("details", "tool-history");
+      details.append(el("summary", "", `工具 · ${historyToolName(call)}`));
+      const args = historyToolArgs(call);
+      if (args) details.append(el("pre", "", String(args)));
+      if (output !== undefined && output !== null) {
+        details.append(el("pre", "", String(output)));
+      }
+      log.append(details);
+      return details;
+    }
+
     function renderHistory(items) {
+      const calls = new Map();
       for (const item of items || []) {
-        if (item.role !== "user" && item.role !== "assistant") continue;
-        const view = add(item.role, item.content || "");
         if (item.role === "assistant") {
-          const html = renderMarkdown(item.content || "");
-          if (html !== null) view.bubble.innerHTML = html;
+          if ((item.content || "").trim()) {
+            const view = add("assistant", item.content || "");
+            const html = renderMarkdown(item.content || "");
+            if (html !== null) view.bubble.innerHTML = html;
+          }
+          for (const call of item.tool_calls || []) {
+            const details = addHistoryTool(call);
+            if (call.id) calls.set(call.id, details);
+          }
+        } else if (item.role === "tool") {
+          const details = calls.get(item.tool_call_id);
+          if (details) {
+            details.append(el("pre", "", item.content || ""));
+          } else {
+            addHistoryTool(null, item.content || "");
+          }
+        } else if (item.role === "user") {
+          add("user", item.content || "");
         }
       }
       scroll();
@@ -745,6 +847,42 @@
         ? crypto.randomUUID().replaceAll("-", "")
         : Math.random().toString(16).slice(2);
       return `web-${raw.slice(0, 12)}`;
+    }
+
+    const coursesViewEl = document.getElementById("courses-view");
+    const courseViewEl = document.getElementById("course-view");
+    const coursesView = WalleViews.createCoursesView({
+      container: coursesViewEl,
+      api,
+    });
+    const router = new WalleViews.Router({ onRoute: renderRoute });
+    const courseView = WalleViews.createCourseView({
+      container: courseViewEl,
+      api,
+      renderMarkdown,
+      conversation,
+      router,
+      onContinueLesson: (prompt) => {
+        input.value = prompt;
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      },
+    });
+
+    function renderRoute(route) {
+      document.body.classList.toggle("view-courses", route.name === "courses");
+      document.body.classList.toggle("view-course", route.name === "course");
+      if (route.name !== "chat" && !canvasPanel.hidden) closeCanvas();
+      coursesViewEl.hidden = route.name !== "courses";
+      courseViewEl.hidden = route.name !== "course";
+      if (route.name === "course") {
+        coursesView.hide();
+        return courseView.show(route.courseId, route.search);
+      }
+      courseView.hide();
+      if (route.name === "courses") return coursesView.show();
+      refreshPending();
+      return undefined;
     }
 
     function closeWorkspaceModal() {
@@ -885,13 +1023,16 @@
       if (pending.length) {
         approvalText.textContent = `有 ${pending.length} 个工具等待审批`;
         document.title = "⚠ 待审批 · Walle";
+      } else if (document.body.classList.contains("view-course")) {
+        const title = document.getElementById("course-title")?.textContent;
+        document.title = title ? `${title} · Walle` : "Walle";
       } else {
         document.title = "Walle";
       }
     }
 
     function updateComposer() {
-      const open = !!ws && ws.readyState === WebSocket.OPEN;
+      const open = conversation.isOpen;
       send.disabled = busy || !open;
       send.textContent = busy
         ? (pendingApprovals().length ? "等待确认" : "生成中")
@@ -902,11 +1043,7 @@
     }
 
     function sendFrame(frame) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(frame));
-        return true;
-      }
-      return false;
+      return conversation.send(frame);
     }
 
     function sendReply(id, data) {
@@ -1239,7 +1376,7 @@
       } else if (!data.error && isCanvasResult(result)) {
         // 保留调用状态条：即使无需审批，也要能看到 canvas 被调用
         tools.delete(data.tool_call_id);
-        const state = canvasCard({ ...result, chat_id: data.chat_id });
+        const state = canvasCard({ ...result, session_id: data.session_id });
         // 面板已打开时：同画布版本更新直接刷新，新画布也直接切过去
         if (!canvasPanel.hidden) openCanvas(state);
       } else if (data.error && !hasCard) {
@@ -1280,8 +1417,8 @@
       if (state.courseId) {
         return `/courses/${encodeURIComponent(state.courseId)}/canvas/${id}?v=${state.version}`;
       }
-      const chat = encodeURIComponent(state.chatId);
-      return `/canvas/${chat}/${id}?v=${state.version}`;
+      const session = encodeURIComponent(state.sessionId);
+      return `/canvas/${session}/${id}?v=${state.version}`;
     }
 
     function canvasCard(data) {
@@ -1303,7 +1440,7 @@
       card.append(title, open);
       const state = {
         id: data.canvas_id,
-        chatId: data.chat_id || "",
+        sessionId: data.session_id || "",
         courseId: data.course_id || "",
         title: data.title || "画布",
         version: data.version || 0,
@@ -1422,8 +1559,6 @@
         return;
       }
       if (msg.type === "welcome") {
-        reconnectAttempts = 0;
-        suppressReconnect = false;
         setStatus("已连接", "on");
         renderHistory(msg.history);
         updateComposer();
@@ -1432,7 +1567,7 @@
       if (msg.type === "error") {
         const text = msg.message || "连接错误";
         if (/不存在|非法|不是目录|需要 session/.test(text) && !/agent 未启动|agent 未响应/.test(text)) {
-          suppressReconnect = true;
+          conversation.suppressReconnect();
         }
         note(text, true);
         busy = false;
@@ -1446,8 +1581,7 @@
       if (data.type === "error" && data.code === "session_taken_over") {
         // 同一会话在别的标签页/窗口打开：旧连接会被服务端踢下线。
         // 此时若继续自动重连，会和新连接互相抢会话，形成无限重连。
-        suppressReconnect = true;
-        sessionTakenOver = true;
+        conversation.suppressReconnect("已在其他页面打开");
         note("会话已在其他页面打开，本页已停止重连", true);
         busy = false;
         closePending("session_taken_over");
@@ -1484,98 +1618,25 @@
       }
     }
 
-    function scheduleReconnect() {
-      if (suppressReconnect || reconnectTimer || !connectionTarget) return;
-      const delay = Math.min(1000 * (2 ** reconnectAttempts), 8000);
-      reconnectAttempts += 1;
-      setStatus("重连中…", "off");
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        if (!connectionTarget) return;
-        connect(connectionTarget.cwd, connectionTarget.sessionId, true, true);
-      }, delay);
-    }
-
-    function connect(cwd, sessionId, attach, isReconnect = false) {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (!isReconnect) {
-        reconnectAttempts = 0;
-        suppressReconnect = false;
-        sessionTakenOver = false;
-      }
+    function connect(cwd, sessionId, attach) {
       const targetSession = sessionId || newSessionId();
-      connectionTarget = { cwd: cwd || "", sessionId: targetSession };
-      if (ws) {
-        const old = ws;
-        ws = null;
-        old.onclose = null;
-        old.onerror = null;
-        try { old.close(); } catch (err) { console.error(err); }
-      }
-      resetChat();
-      workspaceState.cwd = cwd || "";
-      workspaceState.active = targetSession;
-      if (cwd) {
-        setWorkspaceLabel(cwd);
-        localStorage.setItem("walle.cwd", cwd);
-      }
-      localStorage.setItem("walle.session", targetSession);
-      const params = new URLSearchParams();
-      if (cwd) params.set("cwd", cwd);
-      params.set("session", targetSession);
-      if (attach) params.set("attach", "1");
-      // 显式指定 agent 只用于学习模式 / 断线期间待切换的情况；
-      // 普通重连不传，避免覆盖会话原有的自定义 agent。
-      const requestedAgent = agentSwitchPending || agentMode;
-      if (requestedAgent) params.set("agent", requestedAgent);
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const query = params.toString();
-      const socket = new WebSocket(
-        `${proto}://${location.host}/ws/chat${query ? `?${query}` : ""}`
-      );
-      ws = socket;
-      socket.onopen = () => {
-        agentSwitchPending = null;
-        setStatus("已连接", "on");
-        updateComposer();
-      };
-      socket.onmessage = (event) => {
-        try { handle(JSON.parse(event.data)); } catch (err) { console.error(err); }
-      };
-      socket.onclose = () => {
-        if (ws !== socket) return;
-        busy = false;
-        closePending("连接已断开");
-        updateComposer();
-        if (suppressReconnect) {
-          setStatus(sessionTakenOver ? "已在其他页面打开" : "已断开", "off");
-          return;
-        }
-        setStatus("已断开", "off");
-        scheduleReconnect();
-      };
-      socket.onerror = () => {
-        if (ws === socket) setStatus("连接错误", "off");
-      };
+      conversation.connect(cwd, targetSession, attach);
     }
 
     function submit() {
       const text = input.value.trim();
-      if (!text || busy || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!text || busy || !conversation.isOpen) return;
       add("user", text);
       input.value = "";
       input.style.height = "auto";
       current = null;
       busy = true;
       updateComposer();
-      ws.send(JSON.stringify({ type: "input", content: text }));
+      conversation.sendInput(text);
     }
 
     function cancel() {
-      if (!busy || !sendFrame({ type: "cancel" })) return;
+      if (!busy || !conversation.cancel()) return;
       stop.disabled = true;
       stop.textContent = "停止中…";
       note("正在停止当前执行…");
@@ -1703,12 +1764,15 @@
       const targetSession = querySession || savedSession;
       if (targetSession) connect(cwd, targetSession, true);
       else connect(cwd, newSessionId(), false);
+      router.start();
+      router.render();
       if (queryPrompt) {
         input.value = queryPrompt;
         input.dispatchEvent(new Event("input"));
         input.focus();
       }
-      if (params.toString()) {
+      // 课程深链的 ?lesson= 要保留；对话页的临时参数用完即清理。
+      if (params.toString() && !location.pathname.startsWith("/courses/")) {
         try { history.replaceState(null, "", location.pathname); } catch (err) { console.error(err); }
       }
     }

@@ -1,9 +1,15 @@
-"""交互通道：通道能力协议定义在协议包（protocol.channel），实现在 channel/。"""
+"""交互通道：协议在 spec，实现在 channel/。
 
-from ..spec import Channel, Sessions, SessionSpec
+当前提供 Web 通道；server.py 是通道无关的会话服务端。"""
+
+from ..spec import Channel, SessionInit, Sessions, SessionSpec
+from .server import SessionConn, SessionServer
 
 __all__ = [
     "Channel",
+    "SessionConn",
+    "SessionInit",
+    "SessionServer",
     "SessionSpec",
     "Sessions",
 ]

@@ -1,7 +1,7 @@
-"""扩展激活与工具注册能力：工具执行期动态注册面。
+"""扩展激活能力：会话工具表 + 动态指令。
 
-只声明工具表能力（注册 / 移除 / 读取），具体由会话侧扩展激活层实现。
-放在协议包最底层，避免 infra 内部相互引用成环。
+只声明能力面（工具注册/移除/读取、按 metadata 取指令），具体由会话侧
+扩展激活层实现。放在协议包最底层，避免 infra 内部相互引用成环。
 """
 
 from typing import Any, Protocol, runtime_checkable
@@ -25,3 +25,11 @@ class ToolTable(Protocol):
     @property
     def skills(self) -> dict[str, Any]:
         """当前会话可用技能（name→Skill），供拼技能清单提示词。"""
+
+
+@runtime_checkable
+class ExtensionLayer(ToolTable, Protocol):
+    """会话扩展激活层：工具表 + 动态指令（每次模型调用前取）。"""
+
+    def instructions(self, metadata: dict[str, Any]) -> list[str]:
+        """按会话 metadata 返回扩展追加的系统指令（空结果跳过）。"""

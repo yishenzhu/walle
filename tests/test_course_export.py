@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from ..channel.web.course_export import build_course_zip, course_bundle
-from ..infra.course_store import create_course, save_course, write_lesson
+from ..learning.store import create_course, save_course, write_lesson
+from ..learning.web_export import build_course_zip, course_bundle
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "channel" / "web"
 

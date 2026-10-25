@@ -1,10 +1,10 @@
-"""课程工具测试：create_course / write_lesson / canvas(course_id)。"""
+"""课程工具测试：create_course / write_lesson / course_canvas。"""
 
 import pytest
 
-from ..infra import course_store, tool_context
-from ..tools.builtin.canvas import canvas
-from ..tools.builtin.course import create_course, read_course, write_lesson
+from ..infra import tool_context
+from ..learning import course_canvas, create_course, read_course, write_lesson
+from ..learning import store as course_store
 from .conftest import make_session
 
 
@@ -50,11 +50,11 @@ async def test_course_canvas_lives_in_course_bundle(courses, context):
     result = await create_course("课程", lessons=["演示"])
     assert not isinstance(result, str)
 
-    rendered = await canvas(
+    rendered = await course_canvas(
         "波形",
         "<html><body>wave</body></html>",
+        result.course_id,
         canvas_id="wave",
-        course_id=result.course_id,
     )
     assert not isinstance(rendered, str)
     assert rendered.course_id == result.course_id
@@ -63,7 +63,7 @@ async def test_course_canvas_lives_in_course_bundle(courses, context):
 
 
 async def test_canvas_rejects_unknown_course(courses, context):
-    result = await canvas("x", "<html></html>", course_id="missing")
+    result = await course_canvas("x", "<html></html>", "missing")
     assert isinstance(result, str)
     assert "course 不存在" in result
 
@@ -88,8 +88,7 @@ async def test_read_course_uses_session_context(courses, tmp_path):
     token = tool_context.set(
         make_session(
             cwd=str(tmp_path / "workspace"),
-            course_id=created.course_id,
-            lesson_id=lesson.lesson_id,
+            metadata={"course_id": created.course_id, "lesson_id": lesson.lesson_id},
         )
     )
     try:

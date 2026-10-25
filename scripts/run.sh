@@ -37,18 +37,6 @@ case "${1:-}" in
         shift
         cmd_web "$@"
         ;;
-    cli)
-        shift
-        cmd_cli "$@"
-        ;;
-    attach)
-        shift
-        cmd_attach "$@"
-        ;;
-    list | sessions)
-        shift
-        cmd_list "$@"
-        ;;
     status)
         shift
         cmd_status "$@"
