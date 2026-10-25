@@ -17,6 +17,21 @@
       --mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
     }
     * { box-sizing: border-box; }
+    /* 主内容区隐藏滚动条，保留滚轮/触控滚动 */
+    .log, .page-view, .course-reader, .course-sidebar, .lesson-nav,
+    .call-body, .modal-card, .session-list, .workspace-recent {
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .log::-webkit-scrollbar, .page-view::-webkit-scrollbar,
+    .course-reader::-webkit-scrollbar, .course-sidebar::-webkit-scrollbar,
+    .lesson-nav::-webkit-scrollbar, .call-body::-webkit-scrollbar,
+    .modal-card::-webkit-scrollbar, .session-list::-webkit-scrollbar,
+    .workspace-recent::-webkit-scrollbar { width: 0; height: 0; display: none; }
+    /* 代码/参数区保留细暗色滚动条，避免白色默认样式 */
+    pre::-webkit-scrollbar { width: 6px; height: 6px; }
+    pre::-webkit-scrollbar-track { background: transparent; }
+    pre::-webkit-scrollbar-thumb { background: #2b3650; border-radius: 999px; }
     body {
       margin: 0; min-height: 100vh;
       background:

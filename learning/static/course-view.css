@@ -20,6 +20,8 @@ body.view-course .app {
 body.view-course.canvas-open .app { flex: 0 0 360px; }
 /* 课程内固定使用 tutor；离开课程后再恢复全局学习模式。 */
 body.view-course #agent-mode { display: none; }
+/* 课程阅读页右侧只保留对话，不再展示完整 Walle 顶栏 */
+body.view-course .app header { display: none; }
 
 /* ── 课程列表 ─────────────────────────────────────── */
 .courses-page {
