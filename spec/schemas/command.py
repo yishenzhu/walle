@@ -1,16 +1,15 @@
 """命令请求与结果：只含本次调用数据，宿主能力由 CommandContext 提供。"""
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 
 @dataclass(frozen=True)
 class CommandRequest:
-    """一次命令调用的数据：id、原始输入与取消信号。"""
+    """一次命令调用的数据：id 与原始输入。"""
 
     command_id: str
     raw_input: str
-    signal: Any | None = None
 
 
 @dataclass(frozen=True)
