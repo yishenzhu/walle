@@ -16,6 +16,11 @@ from .channel import (
     ToolStart,
     UserInput,
 )
+from .command import (
+    CommandDescriptor,
+    CommandRequest,
+    CommandResult,
+)
 from .diagnostics import (
     DiagnosticType,
     ResourceDiagnostic,
@@ -54,6 +59,10 @@ from .tools import ToolRestriction
 from .usage import Usage
 
 __all__ = [
+    # command — 命令请求/结果
+    "CommandRequest",
+    "CommandResult",
+    "CommandDescriptor",
     # message — 消息模型
     "Message",
     "UserMessage",

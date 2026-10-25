@@ -8,7 +8,6 @@ from typing import Any
 
 from ..conf import ToolConfig
 from ..infra import (
-    CommandContext,
     EventBus,
     HookVerdict,
     MessageDeltaEvent,
@@ -27,6 +26,7 @@ from ..plugin import Context, Plugin, PluginHost
 from ..spec import (
     LLM,
     Channel,
+    CommandService,
     Delta,
     DeltaEnd,
     Error,
@@ -38,6 +38,7 @@ from ..spec import (
     PromptService,
     RequestUnion,
     SessionInit,
+    SessionView,
     SkillService,
     ToolCallPrepareEvent,
     ToolExecutionStartEvent,
@@ -47,6 +48,7 @@ from ..spec import (
     UserInput,
 )
 from .agent import Agent
+from .commands import Commands
 from .executor import ToolExecutor
 from .plugins import SessionPromptService, SessionSkillService, SessionToolService
 from .runner import Runner, RunOptions, SessionContext
@@ -88,6 +90,7 @@ class Session:
         self._host: PluginHost | None = None
         self._plugin_ctx: Context | None = None
         self._prompt: PromptService | None = None
+        self._commands: Commands | None = None
 
         # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
         self._bus = EventBus()  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
@@ -134,6 +137,10 @@ class Session:
         host = PluginHost()
         self._host = host
         self._plugin_ctx = host.root
+        self._commands = Commands()
+        await host.root.register(CommandService, self._commands)
+        await host.root.register(Channel, self)
+        await host.root.register(SessionView, self.context)
         await host.root.register(
             ToolService, SessionToolService(self._plugin_runner, self._tool_config)
         )
@@ -360,16 +367,15 @@ class Session:
         try:
             # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
             # （messages/provider），命令 handler 按需自取。
-            if await self._plugin_runner.dispatch(
-                content,
-                CommandContext(
-                    channel=self,
-                    bus=self._bus,
-                    messages=self._history,
-                    provider=self._provider,
-                ),
-            ):
-                return
+            if self._commands is not None and self._plugin_ctx is not None:
+                result = await self._commands.execute(content, self._plugin_ctx)
+                if result is not None:
+                    if result.text:
+                        await self.notify(Delta(delta=result.text))
+                    await self.notify(
+                        DeltaEnd(reason=None if result.kind == "success" else result.kind)
+                    )
+                    return
             await self._agent_runner.run(
                 self._agent,
                 content,

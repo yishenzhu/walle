@@ -257,27 +257,28 @@ class TestSessionManager:
 
 class TestSessionCommandDispatch:
     async def test_command_reply_bypasses_runner(self, tmp_path):
-        """斜杠命令命中：回复经 channel 推送，不经 agent/runner。"""
-        from ..core import PluginAPI, PluginManager
-        from ..spec import UserInput
+        """斜杠命令命中：handler 经 Channel 推送，不经 agent/runner。"""
+        from ..plugin import plugin
+        from ..spec import (
+            Channel,
+            Command,
+            CommandResult,
+            CommandService,
+            Delta,
+            UserInput,
+        )
 
         ch = FakeChannel()
-        # 构造一个注册了 /ping 命令的插件声明，激活进会话
-        loader = PluginManager()
 
-        async def load_cli(api: PluginAPI):
-            from ..spec import Delta, DeltaEnd
+        @plugin(name="cli", inject=(CommandService,))
+        async def cli(ctx, config):
+            async def ping(request, cctx):
+                await cctx.get(Channel).notify(Delta(delta="pong"))
+                return CommandResult()
 
-            async def ping(args: str, ctx):
-                # 推送由命令自己决定：经 channel notify Delta 回复流
-                await ctx.channel.notify(Delta(delta="pong"))
-                await ctx.channel.notify(DeltaEnd())
-
-            api.register_command("ping", "ping", ping)
-
-        loader.add("cli", load_cli)
-        await loader.load()
-        plugin = loader.plugins[0]
+            ctx.get(CommandService).register(
+                Command(name="ping", description="ping", handler=ping)
+            )
 
         s = Session(
             session_id="cmd-1",
@@ -285,34 +286,33 @@ class TestSessionCommandDispatch:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            declarations=[plugin],
+            plugins=[cli],
             transport=ch,
         )
+        try:
+            await s.start()
+            await s.handle(UserInput(content="/ping"))
+            types = [type(e).__name__ for e in ch.events]
+            assert types == ["Delta", "DeltaEnd"]
+            assert ch.events[0].delta == "pong"
+        finally:
+            await s.close()
 
-        # 命中命令：无 provider 也正常（不经 runner），回复被推送
-        await s.handle(UserInput(content="/ping"))
-        types = [type(e).__name__ for e in ch.events]
-        assert types == ["Delta", "DeltaEnd"]  # 只有回复推送，无 agent 输出
-        assert ch.events[0].delta == "pong"
-
-        await s.close()
-
-    async def test_silent_command_no_push(self, tmp_path):
-        """静默命令（handler 返回 None）：命中但无任何推送。"""
-        from ..core import PluginAPI, PluginManager
-        from ..spec import UserInput
+    async def test_silent_command_ends_turn(self, tmp_path):
+        """静默命令只发送 DeltaEnd，不产生回复文本。"""
+        from ..plugin import plugin
+        from ..spec import Command, CommandResult, CommandService, UserInput
 
         ch = FakeChannel()
-        loader = PluginManager()
 
-        async def load_cli(api: PluginAPI):
-            async def noop(args: str, ctx):
-                return None  # 不调用 ctx → 静默执行
+        @plugin(name="cli", inject=(CommandService,))
+        async def cli(ctx, config):
+            async def noop(request, cctx):
+                return CommandResult()
 
-            api.register_command("noop", "noop", noop)
-
-        loader.add("cli", load_cli)
-        await loader.load()
+            ctx.get(CommandService).register(
+                Command(name="noop", description="noop", handler=noop)
+            )
 
         s = Session(
             session_id="cmd-2",
@@ -320,12 +320,13 @@ class TestSessionCommandDispatch:
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            declarations=[loader.plugins[0]],
+            plugins=[cli],
             transport=ch,
         )
         try:
+            await s.start()
             await s.handle(UserInput(content="/noop"))
-            assert ch.events == []  # 无推送
+            assert [type(e).__name__ for e in ch.events] == ["DeltaEnd"]
         finally:
             await s.close()
 

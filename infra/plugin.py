@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from ..conf import resolve_path
-from ..spec import Channel, DiagnosticType, Messages, ResourceDiagnostic
+from ..spec import DiagnosticType, ResourceDiagnostic
 from .event_bus import EventBus, Handler
-from .provider import OpenAIProvider
 from .tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -29,13 +28,12 @@ InstructionsProvider = Callable[[dict[str, Any]], str | None]
 
 @dataclass
 class PluginDeclaration:
-    """一次插件加载的声明：收集的 handlers / tools / skills / commands + 状态。"""
+    """一次插件加载的声明：收集的 handlers / tools / skills + 状态。"""
 
     name: str
     handlers: dict[type, list[Handler]] = field(default_factory=dict)
     tools: list[Tool] = field(default_factory=list)
     skills: dict[str, Skill] = field(default_factory=dict)
-    commands: dict[str, Command] = field(default_factory=dict)
     instructions: list[InstructionsProvider] = field(default_factory=list)
     state: PluginState = PluginState.READY
     error: str | None = None
@@ -48,25 +46,6 @@ class Skill:
     name: str
     description: str
     path: str  # SKILL.md 完整路径
-
-
-@dataclass
-class CommandContext:
-    """命令执行上下文：暴露会话底层能力，用法由命令自己决定。"""
-
-    channel: Channel | None
-    bus: EventBus
-    messages: Messages | None = None  # 会话历史（可投影视图）
-    provider: OpenAIProvider | None = None  # 模型接入
-
-
-@dataclass(frozen=True)
-class Command:
-    """斜杠命令：用户输入 /<name> [args] 时不经 agent，直达处理器。"""
-
-    name: str
-    description: str
-    handler: Callable[[str, CommandContext | None], Awaitable[None]]
 
 
 class PluginAPI:
@@ -82,10 +61,6 @@ class PluginAPI:
     def register_tool(self, tool: Tool) -> None:
         """注册一个工具（activate 时统一写入 manager）。"""
         self._plugin.tools.append(tool)
-
-    def register_command(self, name: str, description: str, handler) -> None:
-        """注册斜杠命令 /<name>（handler 收 args 字符串，返回回复文本）。"""
-        self._plugin.commands[name] = Command(name, description, handler)
 
     def register_skill(self, name: str, description: str, path: str) -> None:
         """注册一个技能声明（name/description 进提示词，path 供 read 加载全文）。"""
@@ -196,7 +171,6 @@ class PluginRunner:
         self._bus = bus
         self._tools: list[Tool] = []  # 会话工具表（插件激活落点）
         self._skills: dict[str, Skill] = {}  # 会话技能表（渐进式披露清单）
-        self._commands: dict[str, Command] = {}
         self._instructions: list[InstructionsProvider] = []  # 动态指令提供者
         self._mounts: dict[str, PluginMount] = {}  # 插件名 → 本会话挂载
 
@@ -236,9 +210,6 @@ class PluginRunner:
                     for handler in handlers:
                         self._bus.on(event_type, handler)
                         mount.handlers.append((event_type, handler))
-                for name, cmd in plugin.commands.items():
-                    self._commands[name] = cmd
-                    mount.commands.append(name)
                 for provider in plugin.instructions:
                     self._instructions.append(provider)
                     mount.instructions.append(provider)
@@ -248,7 +219,7 @@ class PluginRunner:
             self._mounts[plugin.name] = mount
 
     def unload(self, name: str) -> None:
-        """摘除某插件在本会话的挂载（工具/事件/命令）。"""
+        """摘除某插件在本会话的挂载（工具/事件）。"""
         mount = self._mounts.pop(name, None)
         if mount is None:
             return
@@ -265,29 +236,9 @@ class PluginRunner:
                 del self._skills[name]
         for event_type, handler in mount.handlers:
             self._bus.off(event_type, handler)
-        for name in mount.commands:
-            if name in self._commands:
-                del self._commands[name]
         for provider in mount.instructions:
             if provider in self._instructions:
                 self._instructions.remove(provider)
-
-    async def dispatch(
-        self, text: str, ctx: CommandContext | None = None
-    ) -> bool:
-        """分发本会话斜杠命令：命中返回 True，未命中返回 False（回退 agent）。"""
-        if not text.startswith("/"):
-            return False
-        name, _, args = text[1:].partition(" ")
-        cmd = self._commands.get(name)
-        if cmd is None:
-            return False
-        await cmd.handler(args.strip(), ctx)
-        return True
-
-    @property
-    def commands(self) -> dict[str, Command]:
-        return dict(self._commands)
 
     def register_skill(self, name: str, description: str, path: str) -> Callable[[], None]:
         """注册一个技能声明（供 SkillService 适配层调用）；返回注销函数。"""
@@ -323,7 +274,6 @@ class PluginMount:
     tools: list[Tool] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     handlers: list[tuple[type, Handler]] = field(default_factory=list)
-    commands: list[str] = field(default_factory=list)
     instructions: list[InstructionsProvider] = field(default_factory=list)
 
 

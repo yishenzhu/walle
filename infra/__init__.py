@@ -26,8 +26,6 @@ from .metrics import (
     TOOL_ERRORS,
 )
 from .plugin import (
-    Command,
-    CommandContext,
     HookVerdict,
     InstructionsProvider,
     PluginAPI,
@@ -69,8 +67,6 @@ __all__ = [
     "SessionView",
     "tool_context",
     # plugin — 插件加载/激活
-    "Command",
-    "CommandContext",
     "PluginAPI",
     "PluginDeclaration",
     "PluginFactory",

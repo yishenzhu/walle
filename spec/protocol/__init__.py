@@ -1,6 +1,7 @@
 """跨层能力协议面：底层声明、各层实现、装配注入。"""
 
 from .channel import Channel, SessionInit, Sessions
+from .command import Command, CommandContext, CommandHandler, CommandService
 from .events import EventBus
 from .llm import LLM
 from .messages import Messages, Projection, ProjectionStore
@@ -19,6 +20,10 @@ from .web import WebService
 
 __all__ = [
     "Channel",
+    "Command",
+    "CommandContext",
+    "CommandHandler",
+    "CommandService",
     "SessionInit",
     "Sessions",
     "PluginLayer",

@@ -1,5 +1,4 @@
 from ..infra import (
-    Command,
     DiagnosticType,
     EventBus,
     Handler,
@@ -13,6 +12,7 @@ from ..infra import (
     ResourceDiagnostic,
 )
 from .agent import Agent, Handoff
+from .commands import Commands
 from .executor import ToolExecutor
 from .runner import (
     Runner,
@@ -44,7 +44,7 @@ __all__ = [
     "SessionClosedError",
     "SessionManager",
     # 插件面（自 infra 转发，core 对外统一出口）
-    "Command",
+    "Commands",
     "DiagnosticType",
     "EventBus",
     "PluginAPI",
