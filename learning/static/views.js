@@ -284,7 +284,7 @@
       empty.append(el("strong", "", "这一课还没有正文"));
       empty.append(
         document.createTextNode(
-          "课程生成可能在写入课节前中断。在右侧对话框继续，Walle 会按章节顺序补写。",
+          "课程生成可能在写入课节前中断。点击下方会切换到学习模式，发送提示即可继续生成。",
         ),
       );
       const button = el("button", "continue-link", "填入续写提示");
@@ -499,7 +499,10 @@
       renderMarkdown: ctx.renderMarkdown,
       conversation: ctx.conversation,
       router: ctx.router,
-      onContinueLesson: (prompt) => ctx.setPrompt(prompt),
+      onContinueLesson: (prompt) => {
+        ctx.setPrompt(prompt);
+        ctx.conversation.setAgent("learning");
+      },
     });
     views = { container, coursesEl, courseEl, coursesView, courseView };
     return views;

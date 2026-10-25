@@ -123,6 +123,7 @@
       this.suppressStatus = "已断开";
       this.pendingAgent = null;
       this.pendingCourse = null;
+      this.courseAgent = null;
       this.connection = new SessionConn({
         buildUrl: (target) => this.buildUrl(target),
         onOpen: () => this.handleOpen(),
@@ -150,7 +151,7 @@
 
     desiredAgent() {
       const state = this.store.get();
-      if (state.courseId) return "tutor";
+      if (state.courseId) return this.courseAgent || "tutor";
       return this.pendingAgent || state.agentMode || "";
     }
 
@@ -185,6 +186,7 @@
       const pendingAgent = this.pendingAgent;
       this.pendingAgent = null;
       this.pendingCourse = null;
+      this.courseAgent = null;
       this.onOpen();
       this.onStatus("已连接", "on");
       if (pendingAgent) {
@@ -256,19 +258,26 @@
       return this.send({ type: "run.cancel" });
     }
 
-    setMode(mode) {
-      this.store.set({ agentMode: mode || "" });
-      const agent = this.store.get().courseId
-        ? "tutor"
-        : mode || DEFAULT_AGENT;
-      if (!this.sendControl("session.set_agent", { agent })) {
-        this.pendingAgent = agent;
+    setAgent(agent) {
+      this.courseAgent = agent || null;
+      const target = agent || DEFAULT_AGENT;
+      if (!this.sendControl("session.set_agent", { agent: target })) {
+        this.pendingAgent = target;
       } else {
         this.pendingAgent = null;
       }
     }
 
+    setMode(mode) {
+      this.store.set({ agentMode: mode || "" });
+      const agent = this.store.get().courseId
+        ? "tutor"
+        : mode || DEFAULT_AGENT;
+      this.setAgent(agent);
+    }
+
     enterCourse(courseId, lessonId, sessionId = "", cwd = "") {
+      this.courseAgent = "tutor";
       this.store.set({ courseId: courseId || "", lessonId: lessonId || "" });
       const state = this.store.get();
       const targetSession = sessionId || state.sessionId;
@@ -295,6 +304,7 @@
     }
 
     exitCourse() {
+      this.courseAgent = null;
       this.store.set({ courseId: "", lessonId: "" });
       this.applyCourse();
       const agent = this.store.get().agentMode || DEFAULT_AGENT;
