@@ -2,6 +2,7 @@
 
 from .protocol import (
     LLM,
+    AgentService,
     AssembleContext,
     Channel,
     Command,
@@ -126,6 +127,7 @@ __all__ = [
     "ToolResultEvent",
     "ToolRestriction",
     # protocol — 能力协议
+    "AgentService",
     "Channel",
     "Command",
     "CommandContext",

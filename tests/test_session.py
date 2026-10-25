@@ -260,6 +260,7 @@ class TestSessionCommandDispatch:
         """斜杠命令命中：handler 经 Channel 推送，不经 agent/runner。"""
         from ..plugin import plugin
         from ..spec import (
+            AgentService,
             Channel,
             Command,
             CommandResult,
@@ -273,6 +274,7 @@ class TestSessionCommandDispatch:
         @plugin(name="cli", inject=(CommandService,))
         async def cli(ctx, config):
             async def ping(request, cctx):
+                assert cctx.get(AgentService).current.name == "default"
                 await cctx.get(Channel).notify(Delta(delta="pong"))
                 return CommandResult()
 

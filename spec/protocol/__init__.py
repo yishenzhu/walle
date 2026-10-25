@@ -1,5 +1,6 @@
 """跨层能力协议面：底层声明、各层实现、装配注入。"""
 
+from .agent import AgentService
 from .channel import Channel, SessionInit, Sessions
 from .command import Command, CommandContext, CommandHandler, CommandService
 from .events import EventBus
@@ -19,6 +20,7 @@ from .view import SessionView
 from .web import WebService
 
 __all__ = [
+    "AgentService",
     "Channel",
     "Command",
     "CommandContext",

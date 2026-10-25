@@ -133,3 +133,17 @@ class SessionSkillService:
             for name, skill in self._runner.skills.items()
             if matches(name, include, exclude)
         ]
+
+
+class SessionAgentService:
+    """AgentService 适配：当前 agent 与按名加载。"""
+
+    def __init__(self, session) -> None:
+        self._session = session
+
+    @property
+    def current(self):
+        return self._session.agent
+
+    def get(self, name: str):
+        return self._session.get_agent(name)

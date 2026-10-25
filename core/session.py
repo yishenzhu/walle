@@ -25,6 +25,7 @@ from ..messages import (
 from ..plugin import Context, Plugin, PluginHost
 from ..spec import (
     LLM,
+    AgentService,
     Channel,
     CommandService,
     Delta,
@@ -50,7 +51,12 @@ from ..spec import (
 from .agent import Agent
 from .commands import Commands
 from .executor import ToolExecutor
-from .plugins import SessionPromptService, SessionSkillService, SessionToolService
+from .plugins import (
+    SessionAgentService,
+    SessionPromptService,
+    SessionSkillService,
+    SessionToolService,
+)
 from .runner import Runner, RunOptions, SessionContext
 
 
@@ -140,6 +146,7 @@ class Session:
         self._commands = Commands()
         await host.root.register(CommandService, self._commands)
         await host.root.register(Channel, self)
+        await host.root.register(AgentService, SessionAgentService(self))
         await host.root.register(SessionView, self.context)
         await host.root.register(
             ToolService, SessionToolService(self._plugin_runner, self._tool_config)
@@ -236,6 +243,15 @@ class Session:
         total = await self._history.count()
         messages = await self._history.query(offset=0, limit=total)
         return [m for m in messages if m.role != "system"]
+
+    @property
+    def agent(self) -> Agent:
+        """当前 agent。"""
+        return self._agent
+
+    def get_agent(self, name: str) -> Agent:
+        """按名加载并缓存 agent。"""
+        return self._build_agent(name)
 
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（重新加载 frontmatter）；缺省用 default。"""
