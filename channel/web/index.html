@@ -7,25 +7,26 @@
   <link rel="stylesheet" href="/static/katex/katex.min.css">
   <style>
     :root {
-      --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --panel3: #222b39;
-      --border: #2c3644; --border-strong: #3d4b5f;
-      --text: #e6edf3; --muted: #8b98a8; --faint: #66717f;
-      --accent: #2f81f7; --accent-soft: #173a63;
-      --danger: #ff7b72; --danger-soft: #3b1d1f;
-      --ok: #3fb950; --ok-soft: #14301c;
-      --warn: #d29922; --warn-soft: #33270d;
+      --bg: #1e1e1e; --panel: #252526; --panel2: #2d2d30; --panel3: #37373d;
+      --border: #3c3c3c; --border-strong: #4a4a4f;
+      --text: #d4d4d4; --muted: #a3a3a3; --faint: #7d7d7d;
+      --accent: #d8b98a; --accent-soft: #2a241a; --accent-ink: #ecd9b8;
+      --danger: #d98b8b; --danger-soft: #2e1c1c;
+      --ok: #8fbf9f; --ok-soft: #18261d;
+      --warn: #d8b98a; --warn-soft: #2a241a;
       --mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+      --serif: "Source Serif 4", "Iowan Old Style", "Palatino Linotype",
+        "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", Georgia, serif;
     }
     * { box-sizing: border-box; }
     /* 主内容区隐藏滚动条，保留滚轮/触控滚动 */
-    .log, .page-view, .course-reader, .course-sidebar, .lesson-nav,
-    .call-body, .modal-card, .session-list, .workspace-recent {
+    .log, .page-view, .course-scroll, .call-body, .modal-card,
+    .session-list, .workspace-recent {
       scrollbar-width: none;
       -ms-overflow-style: none;
     }
     .log::-webkit-scrollbar, .page-view::-webkit-scrollbar,
-    .course-reader::-webkit-scrollbar, .course-sidebar::-webkit-scrollbar,
-    .lesson-nav::-webkit-scrollbar, .call-body::-webkit-scrollbar,
+    .course-scroll::-webkit-scrollbar, .call-body::-webkit-scrollbar,
     .modal-card::-webkit-scrollbar, .session-list::-webkit-scrollbar,
     .workspace-recent::-webkit-scrollbar { width: 0; height: 0; display: none; }
     /* 代码/参数区保留细暗色滚动条，避免白色默认样式 */
@@ -34,11 +35,11 @@
     pre::-webkit-scrollbar-thumb { background: #2b3650; border-radius: 999px; }
     body {
       margin: 0; min-height: 100vh;
-      background:
-        radial-gradient(1100px 500px at 15% -10%, #17233a 0%, transparent 60%),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
-      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-family: Inter, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei",
+        system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
     .shell {
       width: 100%; max-width: 1680px; margin: 0 auto; height: 100vh;
@@ -401,11 +402,21 @@
       border-radius: 14px; overflow: hidden;
     }
 
-    /* 6px 拖拽分隔条：无可见竖线，只保留拖拽热区 */
+    /* 6px 拖拽分隔条：1px 细线，悬停/拖动时高亮 */
     .splitter {
+      position: relative;
       flex: 0 0 6px; align-self: stretch;
       cursor: col-resize; touch-action: none;
     }
+    .splitter::after {
+      content: ""; position: absolute;
+      top: 0; bottom: 0; left: 2px; width: 1px;
+      background: var(--border);
+      transition: background .15s ease;
+    }
+    .splitter:hover::after,
+    .splitter:focus-visible::after,
+    body.resizing .splitter::after { background: var(--accent); }
     .splitter[hidden] { display: none; }
     body.resizing { cursor: col-resize; user-select: none; }
     body.resizing iframe { pointer-events: none; }
@@ -479,6 +490,152 @@
     .stop.running { color: var(--warn); border-color: #5a4718; }
     .stop[hidden] { display: none; }
 
+    /* ── 视觉整理：中性底色 + 克制强调色 ───────────── */
+    .shell { max-width: none; padding: 0; }
+    .app {
+      width: min(100%, 920px); max-width: 920px; min-width: 0;
+      background: var(--panel); border: 0;
+      border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+      border-radius: 0;
+    }
+    body.canvas-open .app { border-right: 0; }
+    header {
+      min-height: 48px; padding: 0 18px;
+      background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    h1 { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+    .brand small { display: none; }
+    .status { font-size: 11px; color: var(--faint); }
+    .dot { width: 6px; height: 6px; }
+    .dot.on { box-shadow: none; }
+    #canvas-latest, #workspace-button, #agent-mode { font-size: 11.5px; }
+    .log { padding: 24px 28px; gap: 18px; }
+    .msg { max-width: 100%; gap: 12px; }
+    .msg.assistant { width: 100%; }
+    .who {
+      width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%;
+      background: var(--panel2); border: 1px solid var(--border);
+      color: var(--faint); font-size: 10px;
+    }
+    .msg.user .who { background: var(--panel3); color: var(--muted); }
+    .bubble {
+      padding: 0; border: 0; border-radius: 0; background: transparent;
+      font-size: 14px; line-height: 1.7; min-width: 0; flex: 1 1 auto;
+    }
+    .msg.user { max-width: 78%; }
+    .msg.user .bubble {
+      flex: 0 1 auto; padding: 9px 13px; border-radius: 10px;
+      background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    }
+    .msg .bubble, .md { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+    .md .katex-display, .md pre, .md table { max-width: 100%; overflow-x: auto; }
+    .md img { max-width: 100%; height: auto; }
+    .note { font-size: 11px; color: var(--faint); }
+    .chat-empty { max-width: 460px; gap: 12px; }
+    .chat-empty .empty-mark {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--panel2); border: 1px solid var(--border);
+      color: var(--accent); font-size: 15px; font-weight: 600;
+    }
+    .chat-empty strong { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+    .chat-empty p { font-size: 12.5px; color: var(--muted); }
+    .hints { gap: 6px; }
+    .hint {
+      border-radius: 6px; background: transparent; border: 1px solid var(--border);
+      color: var(--muted); font-size: 11.5px; padding: 5px 9px;
+    }
+    .hint:hover:not(:disabled) { background: var(--panel2); border-color: var(--border-strong); }
+    a.ghost {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--muted); border-radius: 6px; padding: 4px 9px; font-size: 11.5px;
+    }
+    a.ghost:hover { background: var(--panel2); border-color: var(--border-strong); color: var(--text); }
+    button {
+      border-radius: 6px; background: var(--text); color: var(--bg);
+      padding: 7px 13px; font-size: 12.5px; font-weight: 500;
+    }
+    button:hover:not(:disabled) { filter: none; background: #fff; }
+    button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    button.ghost:hover:not(:disabled) { background: var(--panel2); color: var(--text); border-color: var(--border-strong); }
+    button.primary { background: var(--text); color: var(--bg); }
+    button.panel-tab:hover:not(:disabled) { background: var(--panel2); color: var(--text); }
+    button.panel-tab.active:hover:not(:disabled) { background: var(--panel3); color: var(--text); }
+    button.danger { background: transparent; color: var(--danger); border: 1px solid #4a2a2a; }
+    button.danger:hover:not(:disabled) { background: var(--danger-soft); }
+    #send { background: var(--text); color: var(--bg); }
+    #send:disabled { background: var(--panel3); color: var(--faint); }
+    .composer {
+      margin: 0 20px 20px; padding: 8px 10px;
+      background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+    }
+    textarea { font-size: 13px; }
+    .call {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: none;
+    }
+    .call-ico {
+      border-radius: 6px; background: var(--panel3); border-color: var(--border);
+    }
+    .call[data-state="allowed"] .call-ico { background: var(--accent-soft); border-color: #4a3a22; }
+    .call[data-state="denied"] .call-ico,
+    .call[data-state="failed"] .call-ico { background: var(--danger-soft); border-color: #4a2a2a; }
+    .call[data-state="done"] .call-ico { background: var(--ok-soft); border-color: #2a4a33; }
+    .call-foot { background: transparent; }
+    .arg { background: var(--bg); border-color: var(--border); border-radius: 6px; }
+    .pill { border-radius: 6px; background: transparent; border-color: var(--border); }
+    .pill.pending { border-color: #4a3a22; background: var(--warn-soft); }
+    .pill.running { color: var(--accent-ink); border-color: #4a3a22; background: var(--accent-soft); }
+    .pill.ok { border-color: #2a4a33; background: var(--ok-soft); }
+    .pill.denied, .pill.fail { border-color: #4a2a2a; background: var(--danger-soft); }
+    .tool-row {
+      background: transparent; border-color: var(--border);
+      border-radius: 6px; max-width: 100%;
+    }
+    .tool-row .tool-name { color: var(--text); }
+    .tool-history { background: var(--panel2); border-radius: 6px; }
+    .tool-error { border-color: #4a2a2a; border-radius: 6px; }
+    .approval-bar {
+      margin: 0 20px 10px; border-radius: 6px;
+      border-color: #4a3a22; background: var(--warn-soft); color: var(--warn);
+    }
+    .approval-bar button { color: var(--warn); border-color: #4a3a22; }
+    .canvas-card {
+      background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: none;
+    }
+    .canvas-card:hover { border-color: var(--border-strong); background: var(--panel2); }
+    .canvas-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .canvas-card .canvas-kicker { color: var(--faint); }
+    .canvas-card .canvas-name { font-size: 13px; font-weight: 600; }
+    .canvas-card .canvas-open { color: var(--accent-ink); }
+    .canvas-panel {
+      background: var(--panel); border: 0; border-radius: 0;
+    }
+    .canvas-head { background: var(--panel); border-bottom: 1px solid var(--border); }
+    .canvas-head .canvas-kicker { color: var(--faint); }
+    #canvas-name { font-size: 12.5px; }
+    .canvas-panel iframe { background: var(--bg); }
+    .canvas-empty { background: transparent; }
+    .canvas-empty-card {
+      border-radius: 10px; border-color: var(--border);
+      background: var(--panel2); box-shadow: none;
+    }
+    .canvas-empty code { color: var(--accent-ink); }
+    .modal-card {
+      background: var(--panel); border: 1px solid var(--border-strong);
+      border-radius: 10px;
+    }
+    .session-item {
+      background: var(--panel2); border-color: var(--border); border-radius: 6px;
+    }
+    .session-item.active { border-color: var(--accent); }
+    .md a { color: var(--accent-ink); }
+    .md code { background: var(--bg); border-color: var(--border); border-radius: 4px; }
+    .md pre { background: var(--bg); border-color: var(--border); border-radius: 6px; }
+    .md blockquote { border-left-color: var(--accent); }
+    .md th { background: var(--panel2); }
+    .md .katex { font-size: 1.02em; }
+
     @media (max-width: 860px) {
       .shell { padding: 0; gap: 0; }
       .app {
@@ -506,22 +663,22 @@
     <header>
       <div class="brand">
         <h1>Walle</h1><small>web channel</small>
-        <button id="canvas-latest" class="ghost">画布</button>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
-        <button id="agent-mode" class="ghost" title="切换通用 / 学习模式">学习模式</button>
+        <button id="canvas-latest" class="ghost">画布</button>
+        <button id="agent-mode" class="ghost" title="切换通用 / 课程模式">课程模式</button>
         <nav id="plugin-nav" class="plugin-nav"></nav>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">连接中…</span></div>
     </header>
     <main id="log" class="log">
       <div id="chat-empty" class="chat-empty">
-        <div class="empty-mark">✦</div>
+        <div class="empty-mark">W</div>
         <strong>开始对话</strong>
         <p>直接提问，或让 Walle 在右侧画布中画图、推公式、做动效。</p>
         <div class="hints">
-          <button class="hint" data-prompt="解释一下 Transformer 的注意力机制">解释概念</button>
-          <button class="hint" data-prompt="帮我写一个 Python 脚本">写段代码</button>
-          <button class="hint" data-prompt="把这个任务拆成几个步骤">拆解任务</button>
+          <button class="hint" data-prompt="解释一下 Transformer 的注意力机制">解释一个概念</button>
+          <button class="hint" data-prompt="帮我写一个 Python 脚本">写一段代码</button>
+          <button class="hint" data-prompt="把这个任务拆成几个步骤">拆解一个任务</button>
         </div>
       </div>
     </main>
@@ -687,7 +844,7 @@
     function add(role, text) {
       if (chatEmpty) chatEmpty.hidden = true;
       const row = el("div", "msg " + role);
-      const who = el("div", "who", role === "user" ? "你" : "AI");
+      const who = el("div", "who", role === "user" ? "你" : "W");
       const bubble = el("div", "bubble" + (role === "assistant" ? " md" : ""), text || "");
       row.append(who, bubble);
       log.append(row);
@@ -721,17 +878,17 @@
       localStorage.setItem("walle.agent", agentMode || "default");
       const on = agentMode === "learning";
       agentModeButton.classList.toggle("on", on);
-      agentModeButton.textContent = on ? "学习模式 · 开" : "学习模式";
+      agentModeButton.textContent = on ? "课程模式 · 开" : "课程模式";
       agentModeButton.title = on
-        ? "已开启学习模式：当前会话由学习导师处理"
-        : "切换通用 / 学习模式";
+        ? "已开启课程模式：当前会话由课程生成 agent 处理"
+        : "切换通用 / 课程模式";
       input.placeholder = on
-        ? "想学什么？我来制定学习计划和资料…"
+        ? "想做什么课？我来制定计划、写课节…"
         : "问点什么… Enter 发送，Shift+Enter 换行";
-      if (emptyStrong) emptyStrong.textContent = on ? "开始学习" : "开始对话";
+      if (emptyStrong) emptyStrong.textContent = on ? "生成一门课" : "开始对话";
       if (emptyCopy) {
         emptyCopy.textContent = on
-          ? "告诉我想学什么，学习导师会制定计划、写课节，并配交互画布。"
+          ? "告诉我想学什么，课程模式会制定计划、写课节，并配交互画布。"
           : "直接提问，或让 Walle 在右侧画布中画图、推公式、做动效。";
       }
       const hints = on ? learningHints : generalHints;

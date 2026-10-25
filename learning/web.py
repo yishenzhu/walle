@@ -13,7 +13,9 @@ from pydantic import BaseModel
 from ..plugin import plugin
 from ..spec import WebService
 from .store import (
+    CANVAS_MARKER,
     canvas_file,
+    canvas_title,
     course_progress,
     list_courses,
     load_course,
@@ -36,14 +38,20 @@ async def learning_web(ctx, config) -> None:
     """学习 Web 插件：挂课程路由、静态资源与 UI 清单。"""
     web = ctx.get(WebService)
     static = Path(__file__).with_name("static")
+    version = int(
+        max(
+            (static / "views.js").stat().st_mtime,
+            (static / "course-view.css").stat().st_mtime,
+        )
+    )
     web.include_router(create_router(web.shell, web.static_dir))
     web.mount_static("/plugins/learning", static)
     web.register_ui(
         {
             "name": "learning",
             "nav": [{"label": "学习", "href": "/courses", "title": "学习空间"}],
-            "styles": ["/plugins/learning/course-view.css"],
-            "scripts": ["/plugins/learning/views.js"],
+            "styles": [f"/plugins/learning/course-view.css?v={version}"],
+            "scripts": [f"/plugins/learning/views.js?v={version}"],
         }
     )
 
@@ -117,6 +125,17 @@ def create_router(
         lesson = read_lesson(course_id, lesson_id, COURSES_ROOT)
         if lesson is None:
             raise HTTPException(status_code=404)
+        canvas_ids: list[str] = []
+        for canvas_id in CANVAS_MARKER.findall(lesson.get("markdown") or ""):
+            if canvas_id not in canvas_ids:
+                canvas_ids.append(canvas_id)
+        for canvas_id in lesson.get("canvas_ids") or []:
+            if canvas_id not in canvas_ids:
+                canvas_ids.append(canvas_id)
+        lesson["canvases"] = [
+            {"id": canvas_id, "title": canvas_title(course_id, canvas_id, COURSES_ROOT)}
+            for canvas_id in canvas_ids
+        ]
         return {"course_id": course_id, "lesson": lesson}
 
     @router.get("/courses/{course_id}")

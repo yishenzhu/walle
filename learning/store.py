@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import time
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,9 @@ CANVAS_DIR = "canvas"
 PROGRESS_FILE = "progress.json"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
+CANVAS_TITLE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+HTML_TAG = re.compile(r"<[^>]+>")
 
 
 def courses_root(path: str | Path | None = None) -> Path:
@@ -63,6 +67,21 @@ def canvas_file(
     if not SAFE_ID.fullmatch(canvas_id):
         raise ValueError(f"invalid canvas id: {canvas_id}")
     return canvas_dir(course_id, root) / f"{canvas_id}.html"
+
+
+def canvas_title(
+    course_id: str, canvas_id: str, root: str | Path | None = None
+) -> str:
+    """读取画布标题，优先 h1，其次 title，最后回退 id。"""
+    try:
+        html = canvas_file(course_id, canvas_id, root).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return canvas_id
+    match = CANVAS_TITLE.search(html) or HTML_TITLE.search(html)
+    if match is None:
+        return canvas_id
+    text = unescape(HTML_TAG.sub("", match.group(1)))
+    return " ".join(text.split()) or canvas_id
 
 
 def read_json(path: Path) -> dict[str, Any] | None:

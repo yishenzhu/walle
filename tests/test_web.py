@@ -357,7 +357,10 @@ def make_course_bundle(tmp_path):
     )
     canvas = root / course["id"] / "canvas" / "demo.html"
     canvas.parent.mkdir(parents=True, exist_ok=True)
-    canvas.write_text("<html><body>demo</body></html>", encoding="utf-8")
+    canvas.write_text(
+        "<html><body><h1>演示画布</h1>demo</body></html>",
+        encoding="utf-8",
+    )
     return root, course, lesson
 
 
@@ -375,13 +378,16 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert page.status_code == 200
     assert 'id="plugin-view"' in page.text
     views = client.get("/plugins/learning/views.js").text
-    assert 'id="lesson-nav"' in views
+    assert 'id="lesson-trigger"' in views
+    assert 'id="lesson-menu"' in views
+    assert 'id="course-splitter"' in views
     assert 'id="course-view"' in views
     assert 'id="course-title"' in views
     assert 'id="export-link"' in views
-    assert 'id="plan-meta"' in views
-    assert 'id="continue-learning"' in views
+    assert 'id="panel-canvas"' in views
+    assert 'id="panel-chat"' in views
     assert 'id="complete-lesson"' in views
+    assert 'id="lesson-nav"' not in views
     assert 'id="qa-log"' not in views
     assert "WallePlugins.register" in views
 
@@ -421,10 +427,13 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
         f"/api/courses/{course['id']}/lessons/{lesson['id']}"
     ).json()
     assert content["lesson"]["markdown"].startswith("# 第一课")
+    assert content["lesson"]["canvases"] == [
+        {"id": "demo", "title": "演示画布"}
+    ]
 
     rendered = client.get(f"/courses/{course['id']}/canvas/demo")
     assert rendered.status_code == 200
-    assert rendered.text == "<html><body>demo</body></html>"
+    assert rendered.text == "<html><body><h1>演示画布</h1>demo</body></html>"
     assert rendered.headers["cache-control"] == "no-store"
 
     exported = client.get(f"/courses/{course['id']}/export")
