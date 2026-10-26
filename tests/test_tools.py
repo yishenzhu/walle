@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core import ToolTable
+from ..core import Tools
 from ..infra import Tool
 
 
@@ -54,7 +54,7 @@ class TestTool:
         assert result == 3
 
 
-class TestRunnerToolTable:
+class TestRunnerTools:
     """会话工具表：注册 / 覆盖 / 摘除 / 查询。"""
 
     @staticmethod
@@ -66,9 +66,9 @@ class TestRunnerToolTable:
 
     @pytest.fixture
     def runner(self):
-        return ToolTable()
+        return Tools()
 
-    def test_empty_tool_table(self, runner):
+    def test_empty_tools(self, runner):
         assert runner.all_tools() == []
 
     def test_register_duplicate_replaces(self, runner):

@@ -222,15 +222,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import ToolTable
+        from ..core import Tools
 
-        tool_table = ToolTable()
-        tool_table.add(
+        tools = Tools()
+        tools.add(
             make_tool("slow", "slow-done", delay=0.05),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.tool_table = tool_table
+        env.tools = tools
 
         agent = Agent(
             instruction="You are helpful.",
@@ -282,15 +282,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import ToolTable
+        from ..core import Tools
 
-        tool_table = ToolTable()
-        tool_table.add(
+        tools = Tools()
+        tools.add(
             make_tool("slow", "done-42", delay=0.1),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.tool_table = tool_table
+        env.tools = tools
 
         agent = Agent(
             instruction="You are helpful.",

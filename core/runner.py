@@ -66,7 +66,7 @@ class SessionContext:
     channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    tool_table: ToolService | None = None  # 会话工具表（每轮工具源）
+    tools: ToolService | None = None  # 会话工具表（每轮工具源）
     skills: SkillService | None = None  # 会话技能表（提示词清单）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
@@ -143,7 +143,7 @@ class Runner:
 
                 messages = await self._build_messages(agent, history, env)
                 tool_source = (
-                    env.tool_table.all_tools() if env.tool_table is not None else []
+                    env.tools.all_tools() if env.tools is not None else []
                 )
                 tools = self._build_tools(agent, tool_source, env)
 

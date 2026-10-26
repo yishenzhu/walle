@@ -8,7 +8,7 @@ from ..plugin.runtime import current_scope
 from ..spec import Skill
 
 
-class SkillTable:
+class Skills:
     """会话级技能表：同名后到者覆盖先到者。"""
 
     def __init__(self) -> None:

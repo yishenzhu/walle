@@ -483,14 +483,14 @@ class TestSessionStreamForward:
         await s1.start()
         await s2.start()
 
-        names1 = {t.name for t in s1.context.tool_table.all_tools()}
-        names2 = {t.name for t in s2.context.tool_table.all_tools()}
+        names1 = {t.name for t in s1.context.tools.all_tools()}
+        names2 = {t.name for t in s2.context.tools.all_tools()}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
         assert names2 == {"tool_a"}  # 会话 2 只有 plugin_a
 
         # 运行时隔离：各自 context / 工具表独立
         assert s1.context is not s2.context
-        assert s1.context.tool_table is not s2.context.tool_table
+        assert s1.context.tools is not s2.context.tools
 
         await manager.close()
 
@@ -508,7 +508,7 @@ class TestSessionStreamForward:
         )
         try:
             await s.start()
-            names = {t.name for t in s.context.tool_table.all_tools()}
+            names = {t.name for t in s.context.tools.all_tools()}
             assert {"bash", "read", "write"} <= names
             assert s.context.prompt is not None  # 插件 prompt 服务已接入
         finally:
@@ -587,7 +587,7 @@ class TestSessionStreamForward:
 
         s = manager.create(Conn())
         await s.start()
-        names = {t.name for t in s.context.tool_table.all_tools()}
+        names = {t.name for t in s.context.tools.all_tools()}
         assert "mcp_remote_search" in names
 
         await manager.close()

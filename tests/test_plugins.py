@@ -3,7 +3,7 @@
 import pytest
 
 from ..channel.web.plugins import discover_web_plugins
-from ..core import HookVerdict, ToolTable
+from ..core import HookVerdict, Tools
 from ..infra import AgentStartEvent, PreExecuteToolEvent, Tool
 from ..plugin import Plugin, PluginHost, discover_packages, plugin
 from ..spec import ToolService
@@ -29,7 +29,7 @@ def tool_plugin(name: str, tool_name: str) -> Plugin:
 async def test_launch_activates_and_registers():
     """依赖齐全即激活：工具落表、事件挂到共享总线。"""
     host = PluginHost()
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     seen = []
 
@@ -50,7 +50,7 @@ async def test_launch_activates_and_registers():
 async def test_later_plugin_overrides_same_tool():
     """同名工具后激活者覆盖先到者，不留旧实例。"""
     host = PluginHost()
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     second: dict = {}
 
@@ -73,7 +73,7 @@ async def test_pending_until_dependency_registered():
     entries = await host.launch([tool_plugin("needs-tools", "t")])
     assert entries[0].state.value == "pending"
 
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     assert entries[0].state.value == "active"
     assert table.has("t")
@@ -115,7 +115,7 @@ async def test_duplicate_provider_rejected():
 async def test_stop_rolls_back_subscriptions():
     """stop 逆序回滚 effect：插件订阅的事件被摘除。"""
     host = PluginHost()
-    await host.root.register(ToolService, ToolTable())
+    await host.root.register(ToolService, Tools())
 
     @plugin(name="demo", inject=(ToolService,))
     async def demo(ctx, config) -> None:
@@ -130,7 +130,7 @@ async def test_stop_rolls_back_subscriptions():
 async def test_stop_reclaims_plugin_tools():
     """插件卸载回收它注册的工具。"""
     host = PluginHost()
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     await host.launch([tool_plugin("demo", "t")])
     assert table.has("t")
@@ -140,11 +140,11 @@ async def test_stop_reclaims_plugin_tools():
 
 async def test_stop_reclaims_plugin_skills():
     """插件卸载回收它注册的技能。"""
-    from ..infra import SkillTable
+    from ..infra import Skills
     from ..spec import SkillService
 
     host = PluginHost()
-    table = SkillTable()
+    table = Skills()
     await host.root.register(SkillService, table)
 
     @plugin(name="skills", inject=(SkillService,))
@@ -162,7 +162,7 @@ async def test_builtin_plugin_registers_tools():
     from ..tools.builtin.plugin import builtin_plugin
 
     host = PluginHost()
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     try:
         await host.launch([builtin_plugin])
@@ -189,7 +189,7 @@ async def test_plugin_tool_blocked_by_hook_end_to_end():
     provider = FakeProvider()
     host = PluginHost()
     bus = host.root.bus
-    table = ToolTable()
+    table = Tools()
     await host.root.register(ToolService, table)
     blocked: dict = {}
 
@@ -222,7 +222,7 @@ async def test_plugin_tool_blocked_by_hook_end_to_end():
             provider=provider,
             channel=FakeChannel(),
             history=InMemoryMessages(),
-            tool_table=table,
+            tools=table,
             bus=bus,
         ),
     )

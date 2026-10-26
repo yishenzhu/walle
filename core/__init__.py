@@ -4,8 +4,8 @@ from ..infra import (
     Handler,
     HookVerdict,
     ResourceDiagnostic,
-    SkillTable,
-    ToolTable,
+    Skills,
+    Tools,
 )
 from .agent import Agent, Handoff
 from .commands import Commands
@@ -47,8 +47,8 @@ __all__ = [
     "Commands",
     "DiagnosticType",
     "EventBus",
-    "ToolTable",
-    "SkillTable",
+    "Tools",
+    "Skills",
     "Handler",
     "HookVerdict",
     "ResourceDiagnostic",

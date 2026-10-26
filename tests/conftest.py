@@ -130,7 +130,7 @@ class FakeSession:
     jobs: dict = field(default_factory=dict)
     cwd: str | None = None
     history: Any = None
-    tool_table: Any = None
+    tools: Any = None
     skills: Any = None
     bus: Any = None
     metadata: dict = field(default_factory=dict)
@@ -142,7 +142,7 @@ def make_session(
     jobs=None,
     cwd=None,
     history=None,
-    tool_table=None,
+    tools=None,
     bus=None,
     metadata=None,
 ) -> FakeSession:
@@ -152,7 +152,7 @@ def make_session(
         jobs=jobs if jobs is not None else {},
         cwd=cwd,
         history=history,
-        tool_table=tool_table,
+        tools=tools,
         bus=bus,
         metadata=metadata if metadata is not None else {},
     )

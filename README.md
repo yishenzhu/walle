@@ -657,9 +657,8 @@ walle/
 │   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
-│   ├── tool_table.py          #   会话工具表（ToolTable）
-│   ├── skill_table.py         #   会话技能表（SkillTable）
-│   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
+│   ├── tool.py                #   Tool 值类型 + Tools 会话工具表 + tool_context
+│   ├── skills.py              #   会话技能表（Skills）
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化

@@ -1,7 +1,7 @@
 """学习插件：课程工具 + 动态课程提示（按会话 metadata 注入）。"""
 
 from ..core.prompt import Prompts
-from ..infra import ToolTable
+from ..infra import Tools
 from ..learning import course_instructions, learning_plugin
 from ..learning import store as course_store
 from ..plugin import PluginHost
@@ -31,7 +31,7 @@ async def test_course_context_follows_meta(tmp_path, monkeypatch):
 
 async def test_learning_plugin_registers_tools_and_prompt_section():
     host = PluginHost()
-    await host.root.register(ToolService, ToolTable())
+    await host.root.register(ToolService, Tools())
     await host.root.register(PromptService, Prompts())
     try:
         await host.launch([learning_plugin])

@@ -29,11 +29,10 @@ from .metrics import (
     TOOL_ERRORS,
 )
 from .provider import OpenAIProvider
-from .skill_table import SkillTable
+from .skills import Skills
 from .sqlite_store import SQLiteStore
 from .telemetry import meter, setup_telemetry, tracer
-from .tool import Tool, tool_context
-from .tool_table import ToolTable
+from .tool import Tool, Tools, tool_context
 
 __all__ = [
     # 事件总线（实现位于 plugin.events，infra 统一出口）
@@ -62,9 +61,9 @@ __all__ = [
     "JobStatus",
     "SessionView",
     "tool_context",
-    # tool_table — 会话工具/技能表
-    "ToolTable",
-    "SkillTable",
+    # tools — 会话工具/技能表
+    "Tools",
+    "Skills",
     # logger / telemetry / metrics — 可观测性
     "setup_logger",
     "LogConfig",

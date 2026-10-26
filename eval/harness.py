@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ..core import Agent, EventBus, ToolTable
+from ..core import Agent, EventBus, Tools
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
@@ -176,17 +176,17 @@ async def run_task(
         )
     )
     # 会话工具表：初集注册进来，define_tool 等运行时动态注册也落这里
-    # （tool_table 随 env 传给工具）
+    # （tools 随 env 传给工具）
     bus = EventBus()
-    tool_table = ToolTable()
-    tool_table.add(*tool_source())
+    tools = Tools()
+    tools.add(*tool_source())
     agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        tool_table=tool_table,
+        tools=tools,
         agents=agents,
         bus=bus,
     )

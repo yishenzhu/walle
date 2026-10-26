@@ -57,13 +57,13 @@ def runner(allow_executor):
 @pytest.fixture
 def env(channel, provider):
     """默认会话环境：模型（协议面注入）+ 历史（每测试隔离）+ 会话工具表。"""
-    from ..core import ToolTable
+    from ..core import Tools
 
     return SessionContext(
         provider=provider,
         channel=channel,
         history=InMemoryMessages(),
-        tool_table=ToolTable(),
+        tools=Tools(),
         history_factory=build_ephemeral_history,
     )
 
@@ -202,7 +202,7 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        env.tool_table.add(make_echo_tool("result!"))
+        env.tools.add(make_echo_tool("result!"))
 
         result = await runner.run(agent, "use echo", env=env)
 
@@ -242,7 +242,7 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        env.tool_table.add(tool_a, tool_b)
+        env.tools.add(tool_a, tool_b)
 
         result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
@@ -282,7 +282,7 @@ class TestRunnerMaxTurns:
         provider.client.chat.completions.set_responses(*responses)
 
         agent = Agent(instruction="helpful")
-        env.tool_table.add(make_echo_tool())
+        env.tools.add(make_echo_tool())
 
         result = await runner.run(
             agent,
@@ -400,7 +400,7 @@ class TestRunnerSubagent:
             FakeCompletion(FakeMessage(content="child done")),  # 子 agent 轮
             FakeCompletion(FakeMessage(content="done")),  # 父收尾轮
         )
-        env.tool_table.add(make_echo_tool("echoed-in-child"))
+        env.tools.add(make_echo_tool("echoed-in-child"))
 
         helper = Agent(
             name="helper",
@@ -423,8 +423,8 @@ class TestRunnerSubagent:
         assert "echo" in seen[1], f"子 agent 未继承工具源: {seen[1]}"
 
     async def test_subagent_env_inherits_capabilities(self, monkeypatch):
-        """子环境继承 provider/cwd/tool_table/agents，隔离历史与 channel，深度 +1。"""
-        from ..core import ToolTable
+        """子环境继承 provider/cwd/tools/agents，隔离历史与 channel，深度 +1。"""
+        from ..core import Tools
         from ..core import runner as runner_mod
 
         captured: list[SessionContext] = []
@@ -437,12 +437,12 @@ class TestRunnerSubagent:
         monkeypatch.setattr(runner_mod, "Runner", SpyRunner)
 
         helper = Agent(name="helper", description="helper")
-        tool_table = ToolTable()
+        tools = Tools()
         parent = SessionContext(
             history=InMemoryMessages(),
             provider="fake-provider",
             channel="parent-channel",
-            tool_table=tool_table,
+            tools=tools,
             cwd="/tmp/proj",
             agents={"helper": helper},
             depth=2,
@@ -454,7 +454,7 @@ class TestRunnerSubagent:
 
         child = captured[0]
         assert child.provider == "fake-provider"
-        assert child.tool_table is tool_table
+        assert child.tools is tools
         assert child.cwd == "/tmp/proj"
         assert child.agents == {"helper": helper}
         assert child.depth == 3  # 父 depth + 1
@@ -552,7 +552,7 @@ class TestRunnerBuildTools:
         assert runner._build_tools(agent2, [tool], self._env()) == {}
 
     def test_no_tools_returns_empty(self, provider):
-        """空源（无 tool_table / 无工具）→ 空工具。"""
+        """空源（无 tools / 无工具）→ 空工具。"""
         agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
         runner = Runner()
         assert runner._build_tools(agent, [], self._env()) == {}
@@ -604,7 +604,7 @@ class TestRunnerToolHooks:
             instruction="helpful",
             tool_filter=ToolFilter(allow=["*"]),
         )
-        env.tool_table.add(make_echo_tool())
+        env.tools.add(make_echo_tool())
         result = await runner.run(agent, "use echo", env=env)
 
         # 工具被拦下 → 无输出结果，但流程继续（工具结果为空导致轮次结束）
@@ -612,7 +612,7 @@ class TestRunnerToolHooks:
         assert result.output == "done"
 
     async def test_tool_after_hook_notified(self, provider, env):
-        from ..core import EventBus, ToolTable
+        from ..core import EventBus, Tools
         from ..infra import ToolExecutionEndEvent
 
         seen: list[str] = []
@@ -643,8 +643,8 @@ class TestRunnerToolHooks:
             instruction="helpful",
             tool_filter=ToolFilter(allow=["*"]),
         )
-        env.tool_table = ToolTable()  # 工具经会话插件 runner 提供
-        env.tool_table.add(make_echo_tool())
+        env.tools = Tools()  # 工具经会话插件 runner 提供
+        env.tools.add(make_echo_tool())
         await runner.run(agent, "use echo", env=env)
 
         assert seen == ["echo"]

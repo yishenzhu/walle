@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from tau_bench.types import Action
 
 from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ...core import EventBus, ToolTable
+from ...core import EventBus, Tools
 from ...core.agent import Agent
 from ...core.runner import Runner, RunOptions, SessionContext
 from ...infra import OpenAIProvider
@@ -94,14 +94,14 @@ async def run_tau_case(
         )
     )
     bus = EventBus()
-    tool_table = ToolTable()
-    tool_table.add(*tool_source())
+    tools = Tools()
+    tools.add(*tool_source())
     walle_env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        tool_table=tool_table,
+        tools=tools,
         bus=bus,
     )
     agent = Agent(

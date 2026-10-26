@@ -112,7 +112,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
 - `ProjectionStore`（切点持久化）
 
 ### 会话视图（`view.py`）
-- `SessionView`：工具可见面（channel / jobs / cwd / history / tool_table / bus /
+- `SessionView`：工具可见面（channel / jobs / cwd / history / tools / skills / bus /
   metadata）。
   `tool_context: ContextVar[SessionView | None]` 保持；实现由装配注入，工具不依赖
   Session 具体类。刻意不含 provider / agents / depth / session_id。
@@ -142,14 +142,14 @@ SessionManager.create(conn)                 # 装配根
 ├─ build_history(storage, db, session_id)    # messages.factory：投影包装
 ├─ provider（conn.model 新建 / 沿用进程默认）  # 均为 spec.LLM
 └─ Session(session_id, history, runtime, plugins, transport, cwd)
-    ├─ _runtime        SessionRuntime  # bus / executor / tool_table / tool_config（装配注入）
+    ├─ _runtime        SessionRuntime  # bus / executor / tools / skills / tool_config（装配注入）
     ├─ _bus            EventBus        # 会话唯一事件总线（Runner / Executor / PluginHost 共用）
     ├─ _host           PluginHost      # 每会话插件运行时（start 时 launch）
     ├─ _plugins        list[Plugin]    # 本会话选中的插件声明
     ├─ _prompt         PromptService   # 插件提示段（Runner 组装 system）
     ├─ _agent_runner   Runner          # 构造注入按会话新建的 ToolExecutor
-    ├─ _tool_table     ToolTable       # 会话工具表（ToolService 落点）
-    ├─ _skill_table    SkillTable      # 会话技能表（SkillService 落点）
+    ├─ _tools          Tools           # 会话工具表（ToolService 落点）
+    ├─ _skills         Skills          # 会话技能表（SkillService 落点）
     ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
@@ -197,7 +197,7 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
   job_result 读）。
 - **metadata**：唯一事实源 `Session._metadata`；客户端经
   `session.set_metadata` 合并，核心不解释键名，插件在 PromptService 段里读取。
-- **工具表**：插件经 ToolService 注册，落到会话 `ToolTable`（define_tool
+- **工具表**：插件经 ToolService 注册，落到会话 `Tools`（define_tool
   动态注册实时反映到下一轮）；Agent 不持有工具源。插件 apply 期间注册的工具/
   技能随插件卸载回收（按实例摘除，同名被覆盖时不误删）。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时

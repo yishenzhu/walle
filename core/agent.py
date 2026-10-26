@@ -126,7 +126,7 @@ class Agent(BaseModel):
             raise ValueError("Agent must have a name and description")
 
     def as_tool(self, env):
-        """派发子 agent 的工具：隔离历史，继承 provider/tool_table/cwd/agents/bus。"""
+        """派发子 agent 的工具：隔离历史，继承 provider/tools/cwd/agents/bus。"""
         self._validate_tool_metadata()
         agent = self
 
@@ -140,7 +140,7 @@ class Agent(BaseModel):
             child = SessionContext(
                 history=env.history_factory(),  # 子 agent 独立历史，不继承父对话
                 provider=env.provider,
-                tool_table=env.tool_table,
+                tools=env.tools,
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,

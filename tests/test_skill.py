@@ -112,7 +112,7 @@ class TestAgentSkillPrompt:
 
 async def test_skill_plugin_registers_into_session(tmp_path, monkeypatch):
     """技能插件：扫描 .agent/skills/，注册到会话技能表。"""
-    from ..infra import SkillTable
+    from ..infra import Skills
     from ..plugin import PluginHost
     from ..spec import SkillService
     from ..tools import skill as skill_mod
@@ -121,7 +121,7 @@ async def test_skill_plugin_registers_into_session(tmp_path, monkeypatch):
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "review", "Review code")
 
-    table = SkillTable()
+    table = Skills()
     host = PluginHost()
     await host.root.register(SkillService, table)
     try:

@@ -18,7 +18,7 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    tool_table: ToolService | None
+    tools: ToolService | None
     skills: SkillService | None
     bus: EventBus | None
     metadata: dict[str, Any]
