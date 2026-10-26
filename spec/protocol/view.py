@@ -17,6 +17,6 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    plugin_runner: ToolTable | None
+    tool_table: ToolTable | None
     bus: EventBus | None
     metadata: dict[str, Any]

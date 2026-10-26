@@ -112,7 +112,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
 - `ProjectionStore`（切点持久化）
 
 ### 会话视图（`view.py`）
-- `SessionView`：工具可见面（channel / jobs / cwd / history / plugin_runner / bus /
+- `SessionView`：工具可见面（channel / jobs / cwd / history / tool_table / bus /
   metadata）。
   `tool_context: ContextVar[SessionView | None]` 保持；实现由装配注入，工具不依赖
   Session 具体类。刻意不含 provider / agents / depth / session_id。
@@ -124,9 +124,9 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   `AssembleContext`（agent / depth / metadata）求值。
 - `SkillService`（add / remove / list）—— 技能目录，支持 glob 筛选。
 
-### 旧式工具表能力（`runtime.py`）
-- `ToolTable`（register_tool / remove_tool / all_tools / skills）—— 会话工具表：
-  工具经 `SessionView` 拿本面动态注册，Runner 经本面取每轮工具源与技能清单。
+### 工具表能力（`runtime.py`）
+- `ToolTable`（ToolService + skills）—— 会话工具表：工具经 `SessionView` 拿本面
+  动态注册，Runner 经本面取每轮工具源与技能清单。
 
 ### 模型能力（`llm.py`）
 - `LLM`（model / set_model / create / stream）—— Runner 只依赖本面；
@@ -151,7 +151,7 @@ SessionManager.create(conn)                 # 装配根
     ├─ _plugins        list[Plugin]    # 本会话选中的插件声明
     ├─ _prompt         PromptService   # 插件提示段（Runner 组装 system）
     ├─ _agent_runner   Runner          # 构造注入按会话新建的 ToolExecutor
-    ├─ _plugin_runner  PluginRunner    # 会话工具表/技能表（ToolService 适配落点）
+    ├─ _tool_table     SessionToolTable # 会话工具表/技能表（ToolService 落点）
     ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
@@ -199,7 +199,7 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
   job_result 读）。
 - **metadata**：唯一事实源 `Session._metadata`；客户端经
   `session.set_metadata` 合并，核心不解释键名，插件在 PromptService 段里读取。
-- **工具表**：插件经 ToolService 注册，适配层落到 PluginRunner（define_tool
+- **工具表**：插件经 ToolService 注册，落到会话 `SessionToolTable`（define_tool
   动态注册实时反映到下一轮）；Agent 不持有工具源。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时
   由 SessionManager 就地新建，其余沿用进程默认。

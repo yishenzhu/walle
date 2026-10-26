@@ -40,7 +40,7 @@ from ..spec import (
     EventBus as EventBusProtocol,
 )
 from ..spec import (
-    PluginLayer as PluginLayerProtocol,
+    ToolTable as ToolTableProtocol,
 )
 from .agent import Agent, Handoff
 from .executor import ToolExecutor
@@ -67,7 +67,7 @@ class SessionContext:
     channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    plugin_runner: PluginLayerProtocol | None = None  # 会话工具表 + 动态指令
+    tool_table: ToolTableProtocol | None = None  # 会话工具表 + 技能清单
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
@@ -143,7 +143,7 @@ class Runner:
 
                 messages = await self._build_messages(agent, history, env)
                 tool_source = (
-                    env.plugin_runner.all_tools() if env.plugin_runner is not None else []
+                    env.tool_table.all_tools() if env.tool_table is not None else []
                 )
                 tools = self._build_tools(agent, tool_source, env)
 
@@ -319,10 +319,8 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        if ctx.plugin_runner is not None:
-            for text in ctx.plugin_runner.instructions(ctx.metadata):
-                messages += [SystemMessage(content=text)]
-            skill_prompt = agent.skill_prompt(ctx.plugin_runner.skills)
+        if ctx.tool_table is not None:
+            skill_prompt = agent.skill_prompt(ctx.tool_table.skills)
             if skill_prompt:
                 messages += [SystemMessage(content=skill_prompt)]
         if ctx.prompt is not None:

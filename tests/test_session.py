@@ -6,7 +6,7 @@ import pytest
 
 from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, ToolConfig
 from ..core import Session, SessionManager
-from ..infra import AgentStartEvent, MessageDeltaEvent, MessageEndEvent
+from ..infra import MessageDeltaEvent, MessageEndEvent
 from ..messages import (
     FileMessages,
     InMemoryMessages,
@@ -436,42 +436,36 @@ class TestSessionStreamForward:
             await s.close()
 
     async def _manager(self, tmp_path) -> SessionManager:
-        from ..core import PluginAPI, PluginManager
         from ..infra import Tool
+        from ..plugin import plugin
+        from ..spec import ToolService
 
-        loader = PluginManager()
-
-        async def plugin_a(api: PluginAPI):
+        @plugin(name="plugin_a", inject=(ToolService,))
+        async def plugin_a(ctx, config):
             async def fa(args):
                 return "a"
 
-            api.register_tool(
+            ctx.get(ToolService).add(
                 Tool(name="tool_a", description="a", parameters={}, fn=fa)
             )
-            api.on(AgentStartEvent, lambda evt: None)
 
-        async def plugin_b(api: PluginAPI):
+        @plugin(name="plugin_b", inject=(ToolService,))
+        async def plugin_b(ctx, config):
             async def fb(args):
                 return "b"
 
-            api.register_tool(
+            ctx.get(ToolService).add(
                 Tool(name="tool_b", description="b", parameters={}, fn=fb)
             )
 
-        loader.add("plugin_a", plugin_a)
-        loader.add("plugin_b", plugin_b)
-        await loader.load()
-        pool = [e for e in loader.plugins if e.error is None]
-
-        manager = SessionManager(
+        return SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            declarations=pool,
+            plugins=[plugin_a, plugin_b],
             storage="memory",
             path=str(tmp_path / "s.db"),
         )
-        return manager
 
     async def test_sessions_activate_different_plugins(self, tmp_path):
         """会话 1 用全部插件；会话 2 只激活 plugin_a——工具表不同、事件隔离。"""
@@ -486,17 +480,17 @@ class TestSessionStreamForward:
 
         s1 = manager.create(Conn("s1"))  # 默认：全部插件
         s2 = manager.create(Conn("s2"), plugin_names=["plugin_a"])  # 只激活 plugin_a
+        await s1.start()
+        await s2.start()
 
-        names1 = {t.name for t in s1.context.plugin_runner.all_tools()}
-        names2 = {t.name for t in s2.context.plugin_runner.all_tools()}
+        names1 = {t.name for t in s1.context.tool_table.all_tools()}
+        names2 = {t.name for t in s2.context.tool_table.all_tools()}
         assert {"tool_a", "tool_b"} <= names1  # 会话 1 有全部
         assert names2 == {"tool_a"}  # 会话 2 只有 plugin_a
 
-        # 运行时隔离：各自 context / 插件激活层独立（bus/工具表随会话）
+        # 运行时隔离：各自 context / 工具表独立
         assert s1.context is not s2.context
-        assert s1.context.plugin_runner is not s2.context.plugin_runner
-        assert s1.context.plugin_runner.active_plugins == {"plugin_a", "plugin_b"}
-        assert s2.context.plugin_runner.active_plugins == {"plugin_a"}
+        assert s1.context.tool_table is not s2.context.tool_table
 
         await manager.close()
 
@@ -514,14 +508,14 @@ class TestSessionStreamForward:
         )
         try:
             await s.start()
-            names = {t.name for t in s.context.plugin_runner.all_tools()}
+            names = {t.name for t in s.context.tool_table.all_tools()}
             assert {"bash", "read", "write"} <= names
             assert s.context.prompt is not None  # 插件 prompt 服务已接入
         finally:
             await s.close()
 
-    async def test_new_approval_plugin_blocks_legacy_executor(self, tmp_path):
-        """新插件总线经桥接生效：approval 插件能拦住旧 ToolExecutor。"""
+    async def test_new_approval_plugin_blocks_executor(self, tmp_path):
+        """approval 插件订阅预执行事件，能拦住 ToolExecutor。"""
         from ..infra import Tool, tool_context
         from ..tools.approval import native_approval
 
@@ -555,8 +549,7 @@ class TestSessionStreamForward:
             await s.close()
 
     async def test_mcp_plugin_tools_visible_in_session(self, tmp_path):
-        """MCP 工具经插件组装进会话：plugin → 插件声明 → 会话激活。"""
-        from ..core import PluginManager
+        """MCP 工具经插件组装进会话工具表。"""
         from ..infra import Tool
         from ..tools.mcp import MCPManager
 
@@ -577,17 +570,11 @@ class TestSessionStreamForward:
         mcp = MCPManager()
         mcp._clients.append(FakeMcpClient())
 
-        # main 组装路径：MCPManager 作为插件声明
-        loader = PluginManager()
-        loader.add("mcp", mcp.legacy_plugin)
-        await loader.load()
-        mcp_plugin = [e for e in loader.plugins if e.error is None]
-
         manager = SessionManager(
             tool_config=ToolConfig(
                 approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
             ),
-            declarations=mcp_plugin,
+            plugins=[mcp.plugin()],
             storage="memory",
             path=str(tmp_path / "s.db"),
         )
@@ -599,7 +586,8 @@ class TestSessionStreamForward:
             agent = None
 
         s = manager.create(Conn())
-        names = {t.name for t in s.context.plugin_runner.all_tools()}
-        assert "mcp_remote_search" in names  # MCP 工具经插件进会话工具表
+        await s.start()
+        names = {t.name for t in s.context.tool_table.all_tools()}
+        assert "mcp_remote_search" in names
 
         await manager.close()

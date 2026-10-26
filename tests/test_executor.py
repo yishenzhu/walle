@@ -28,17 +28,15 @@ def make_tool_call(id="tc1", name="echo", arguments=None):
 
 async def mount_approval(ctx, config) -> None:
     """把审批插件（按 conf 规则）激活到 ctx.bus。"""
-    from ..core import EventBus, PluginManager, PluginRunner
+    from ..core import EventBus
     from ..infra import tool_context
-    from ..tools.approval import Approval
+    from ..plugin import PluginHost
+    from ..tools.approval import native_approval
 
-    loader = PluginManager()
-    loader.add("approval", Approval(config).legacy_plugin)
-    await loader.load()
-    assert loader.plugins[0].error is None
     if ctx.bus is None:
         ctx.bus = EventBus()
-    PluginRunner(ctx.bus).activate(loader.plugins[0])
+    host = PluginHost(ctx.bus)
+    await host.launch([native_approval], {"approval": {"config": config}})
     # 模拟 runner 每轮统一注入：tool_context 由调用方设置，executor 不再自设
     tool_context.set(ctx)
 

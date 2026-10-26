@@ -596,7 +596,7 @@ walle/
 │   │   ├── prompt.py          #     PromptService（动态提示词段）
 │   │   ├── skill.py           #     SkillService（技能目录）
 │   │   ├── web.py             #     WebService（插件挂载 Web 路由）
-│   │   ├── runtime.py         #     ToolTable / PluginLayer（工具表 + 动态指令）
+│   │   ├── runtime.py         #     ToolTable（工具表 + 技能清单）
 │   │   ├── events.py          #     EventBus（事件总线能力）
 │   │   ├── llm.py             #     LLM（模型能力）
 │   │   └── view.py            #     SessionView（工具可见会话面）
@@ -659,7 +659,7 @@ walle/
 │   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
-│   ├── plugin.py              #   旧式插件兼容层（PluginManager / Runner / CommandContext）
+│   ├── tool_table.py          #   会话工具/技能表（SessionToolTable）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）

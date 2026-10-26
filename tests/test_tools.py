@@ -2,8 +2,8 @@
 
 import pytest
 
-from ..core import PluginRunner
-from ..infra import EventBus, Tool
+from ..core import SessionToolTable
+from ..infra import Tool
 
 
 class TestTool:
@@ -55,7 +55,7 @@ class TestTool:
 
 
 class TestRunnerToolTable:
-    """会话工具表由 PluginRunner 持有：注册 / 覆盖 / 摘除 / 查询。"""
+    """会话工具表：注册 / 覆盖 / 摘除 / 查询。"""
 
     @staticmethod
     def _tool(name: str) -> Tool:
@@ -66,7 +66,7 @@ class TestRunnerToolTable:
 
     @pytest.fixture
     def runner(self):
-        return PluginRunner(EventBus())
+        return SessionToolTable()
 
     def test_empty_tool_table(self, runner):
         assert runner.all_tools() == []
@@ -74,10 +74,10 @@ class TestRunnerToolTable:
     def test_register_duplicate_replaces(self, runner):
         """同名后注册者覆盖先注册者（后到者胜）。"""
         first = self._tool("x")
-        runner.register_tool(first)
+        runner.add(first)
 
         second = self._tool("x")
-        runner.register_tool(second)
+        runner.add(second)
 
         tools = [t for t in runner.all_tools() if t.name == "x"]
         assert tools == [second]  # 旧实例被替换，只剩新实例
@@ -85,19 +85,19 @@ class TestRunnerToolTable:
     def test_register_same_batch_duplicate_raises(self, runner):
         """同一批内工具名重复是编程错误（整批抛错）。"""
         with pytest.raises(ValueError, match="Duplicate tool name"):
-            runner.register_tool(self._tool("a"), self._tool("a"))
+            runner.add(self._tool("a"), self._tool("a"))
 
     def test_remove_tool(self, runner):
-        runner.register_tool(self._tool("x"))
-        runner.remove_tool("x")
+        runner.add(self._tool("x"))
+        runner.remove("x")
         assert runner.all_tools() == []
-        runner.remove_tool("x")  # 不存在则忽略
+        runner.remove("x")  # 不存在则忽略
 
     def test_all_tools_returns_registered(self, runner):
         async def custom_tool(x: str) -> str:
             """custom"""
             return x
 
-        runner.register_tool(Tool.from_function(custom_tool))
+        runner.add(Tool.from_function(custom_tool))
         names = {t.name for t in runner.all_tools()}
         assert "custom_tool" in names

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
-from ..core import Agent, EventBus, PluginRunner
+from ..core import Agent, EventBus, SessionToolTable
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
 from ..core.runner import Runner, RunOptions, SessionContext
@@ -175,18 +175,18 @@ async def run_task(
             timeout=TimeoutConfig(default=60.0),
         )
     )
-    # 会话插件 runner 持有工具表：初集注册进工具表，define_tool 等运行时
-    # 动态注册也落这里（plugin_runner 随 env 传给工具）
+    # 会话工具表：初集注册进来，define_tool 等运行时动态注册也落这里
+    # （tool_table 随 env 传给工具）
     bus = EventBus()
-    plugin_runner = PluginRunner(bus)
-    plugin_runner.register_tool(*tool_source())
+    tool_table = SessionToolTable()
+    tool_table.add(*tool_source())
     agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,
         channel=None,
         history=InMemoryMessages(),
         jobs={},
-        plugin_runner=plugin_runner,
+        tool_table=tool_table,
         agents=agents,
         bus=bus,
     )

@@ -4,7 +4,6 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..infra.plugin import PluginAPI
 from ..infra.tool import Tool, tool_context
 from ..plugin import Plugin
 from ..spec import ToolService
@@ -70,14 +69,6 @@ class Sandbox:
             apply=self._apply,
             inject=(ToolService,),
         )
-
-    async def legacy_plugin(self, api: PluginAPI) -> None:
-        """Legacy plugin API: register the sandboxed bash."""
-        if shutil.which("bwrap") is None:
-            raise RuntimeError(
-                "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"
-            )
-        api.register_tool(self._bash())
 
     async def _apply(self, ctx, config) -> None:
         """Override bash with the sandboxed version (same name; last wins)."""

@@ -90,31 +90,43 @@ class TestSandbox:
 
 class TestSandboxExt:
     def test_registers_tool_named_bash(self, monkeypatch):
-        monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: "/usr/bin/bwrap")
-
-        class FakeAPI:
-            def __init__(self):
-                self.tools = []
-
-            def register_tool(self, tool):
-                self.tools.append(tool)
-
-        api = FakeAPI()
+        monkeypatch.setattr(
+            "walle.tools.sandbox.shutil.which", lambda _: "/usr/bin/bwrap"
+        )
+        from ..infra import SessionToolTable
+        from ..plugin import PluginHost
+        from ..spec import ToolService
 
         async def run():
-            await Sandbox().legacy_plugin(api)
+            host = PluginHost()
+            table = SessionToolTable()
+            await host.root.register(ToolService, table)
+            try:
+                entries = await host.launch([Sandbox().plugin()])
+                assert entries[0].state.value == "active"
+                assert table.has("bash")
+            finally:
+                await host.dispose()
 
         asyncio.run(run())
-        assert [t.name for t in api.tools] == ["bash"]
 
-    def test_missing_bwrap_raises(self, monkeypatch):
+    def test_missing_bwrap_marks_plugin_failed(self, monkeypatch):
         monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: None)
+        from ..infra import SessionToolTable
+        from ..plugin import PluginHost
+        from ..spec import ToolService
 
         async def run():
-            await Sandbox().legacy_plugin(object())  # noqa: BLE001
+            host = PluginHost()
+            await host.root.register(ToolService, SessionToolTable())
+            entries = await host.launch([Sandbox().plugin()])
+            try:
+                assert entries[0].state.value == "failed"
+                assert "bwrap" in (entries[0].error or "")
+            finally:
+                await host.dispose()
 
-        with pytest.raises(RuntimeError):
-            asyncio.run(run())
+        asyncio.run(run())
 
 
 # ── 集成（真跑 bwrap） ───────────────────────────────

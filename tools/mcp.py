@@ -14,7 +14,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.types import TextContent
 
 from ..conf import AGENT_DIR, MCPConfig
-from ..infra import PluginAPI, Tool
+from ..infra import Tool
 from ..plugin import Plugin
 from ..spec import ToolService
 
@@ -76,12 +76,6 @@ class MCPManager:
         """关闭全部客户端。"""
         for c in self._clients:
             await c.close()
-
-    async def legacy_plugin(self, api: PluginAPI) -> None:
-        """兼容旧插件 API：把远端工具注册进旧插件声明。"""
-        for client in self._clients:
-            for tool in client.tools:
-                api.register_tool(tool)
 
     def plugin(self) -> Plugin:
         """返回 MCP 插件声明：把已连接客户端的远端工具注册进会话。"""

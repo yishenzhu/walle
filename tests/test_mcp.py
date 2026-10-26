@@ -39,9 +39,11 @@ def test_unusual_name_allowed(tmp_path):
     assert "obsidian 库" in store.load()
 
 
-def test_legacy_plugin_registers_into_api():
-    """MCPManager.legacy_plugin 把客户端工具逐个注册进插件 api。"""
-    from ..infra import Tool
+def test_plugin_registers_client_tools():
+    """MCPManager.plugin 把客户端工具注册进 ToolService。"""
+    from ..infra import SessionToolTable, Tool
+    from ..plugin import PluginHost
+    from ..spec import ToolService
 
     async def fake_fn(args):
         return "x"
@@ -55,11 +57,14 @@ def test_legacy_plugin_registers_into_api():
     manager = MCPManager()
     manager._clients.append(FakeClient())
 
-    collected: list[str] = []
+    async def run():
+        host = PluginHost()
+        table = SessionToolTable()
+        await host.root.register(ToolService, table)
+        try:
+            await host.launch([manager.plugin()])
+            assert {t.name for t in table.all_tools()} == {"mcp_a_t1", "mcp_a_t2"}
+        finally:
+            await host.dispose()
 
-    class FakeAPI:
-        def register_tool(self, tool):
-            collected.append(tool.name)
-
-    asyncio.run(manager.legacy_plugin(FakeAPI()))  # noqa: RUF006
-    assert collected == ["mcp_a_t1", "mcp_a_t2"]
+    asyncio.run(run())

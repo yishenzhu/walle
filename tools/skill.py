@@ -6,7 +6,7 @@ from pathlib import Path
 import frontmatter
 
 from ..conf import AGENT_DIR
-from ..infra import PluginAPI, Skill
+from ..infra import Skill
 from ..plugin import plugin
 from ..spec import SkillService
 
@@ -53,12 +53,6 @@ class SkillLoader:
 
         logger.info(f"skill scanned: {len(metas)} skills")
         return metas
-
-    @classmethod
-    async def legacy_plugin(cls, api: PluginAPI) -> None:
-        """兼容旧插件 API：把技能声明注册进旧插件声明。"""
-        for meta in cls.scan():
-            api.register_skill(meta.name, meta.description, meta.path)
 
 
 @plugin(name="skill", inject=(SkillService,))

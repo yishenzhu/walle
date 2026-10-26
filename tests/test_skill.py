@@ -110,27 +110,25 @@ class TestAgentSkillPrompt:
         )
 
 
-async def test_skill_legacy_plugin_registers_into_session(tmp_path, monkeypatch):
-    """技能插件：SkillLoader.legacy_plugin 扫目录注册全部技能，会话激活后 runner.skills 可注入。"""
-    from ..core import PluginManager, PluginRunner
-    from ..infra import EventBus
+async def test_skill_plugin_registers_into_session(tmp_path, monkeypatch):
+    """技能插件：扫描 .agent/skills/，注册到会话技能表。"""
+    from ..core.plugins import SessionSkillService
+    from ..infra import SessionToolTable
+    from ..plugin import PluginHost
+    from ..spec import SkillService
     from ..tools import skill as skill_mod
 
     monkeypatch.setattr(skill_mod, "AGENT_DIR", tmp_path)
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "review", "Review code")
 
-    loader = PluginManager()
-    loader.add("skills", skill_mod.SkillLoader.legacy_plugin)
-    await loader.load()
-    assert loader.plugins[0].error is None
-
-    runner = PluginRunner(EventBus())
-    runner.activate(loader.plugins[0])
-    names = set(runner.skills)
-    assert names == {"grilling", "review"}
-    assert runner.skills["grilling"].path.endswith("grilling/SKILL.md")
-
-    # 卸载插件 → 技能清单摘除
-    runner.unload("skills")
-    assert runner.skills == {}
+    table = SessionToolTable()
+    host = PluginHost()
+    await host.root.register(SkillService, SessionSkillService(table))
+    try:
+        entries = await host.launch([skill_mod.native_skill])
+        assert entries[0].state.value == "active"
+        assert set(table.skills) == {"grilling", "review"}
+        assert table.skills["grilling"].path.endswith("grilling/SKILL.md")
+    finally:
+        await host.dispose()

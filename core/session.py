@@ -13,8 +13,7 @@ from ..infra import (
     MessageDeltaEvent,
     MessageEndEvent,
     OpenAIProvider,
-    PluginDeclaration,
-    PluginRunner,
+    SessionToolTable,
 )
 from ..messages import (
     build_ephemeral_history,
@@ -49,7 +48,7 @@ from ..spec import (
 from .agent import Agent
 from .commands import Commands
 from .executor import ToolExecutor
-from .plugins import SessionAgentService, SessionSkillService, SessionToolService
+from .plugins import SessionAgentService, SessionSkillService
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
 
@@ -79,7 +78,6 @@ class Session:
         session_id: str,
         history: Messages,
         tool_config: ToolConfig | None = None,
-        declarations: list[PluginDeclaration] | None = None,
         plugins: list[Plugin] | None = None,
         transport: Channel | None = None,
         provider: LLM | None = None,
@@ -106,11 +104,7 @@ class Session:
         # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
         executor = ToolExecutor(self._tool_config)
         self._agent_runner = Runner(executor=executor)
-        self._plugin_runner = PluginRunner(
-            self._bus
-        )  # 会话级插件激活（含工具表/命令表）
-        if declarations:
-            self._plugin_runner.activate(*declarations)  # 按会话选择激活旧式声明
+        self._tool_table = SessionToolTable()  # 会话级工具/技能表
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
@@ -151,11 +145,9 @@ class Session:
         await host.root.register(Channel, self)
         await host.root.register(AgentService, SessionAgentService(self))
         await host.root.register(SessionView, self.context)
-        await host.root.register(
-            ToolService, SessionToolService(self._plugin_runner)
-        )
+        await host.root.register(ToolService, self._tool_table)
         await host.root.register(PromptService, Prompts())
-        await host.root.register(SkillService, SessionSkillService(self._plugin_runner))
+        await host.root.register(SkillService, SessionSkillService(self._tool_table))
         await host.launch(
             self._plugins,
             {
@@ -173,7 +165,7 @@ class Session:
             history=self._history,
             session_id=self.id,
             jobs=self._jobs,
-            plugin_runner=self._plugin_runner,  # 工具执行期动态注册通道
+            tool_table=self._tool_table,  # 工具执行期动态注册通道
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
@@ -435,15 +427,13 @@ class SessionManager:
     def __init__(
         self,
         tool_config: ToolConfig | None = None,
-        declarations: list[PluginDeclaration] | None = None,
         plugins: list[Plugin] | None = None,
         provider: LLM | None = None,
         storage: str = "file",
         path: str | None = None,
     ) -> None:
         self._tool_config = tool_config
-        self._declarations = declarations or []  # 旧式插件声明池（兼容）
-        self._plugins = plugins or []  # 新式插件声明池
+        self._plugins = plugins or []
         self._provider = provider
         self._storage = storage
         self._path = path
@@ -455,7 +445,6 @@ class SessionManager:
         plugin_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。"""
-        declarations = self.select_declarations(plugin_names)
         plugins = self.select_plugins(plugin_names)
         model_cfg = conn.model
         provider = (
@@ -476,7 +465,6 @@ class SessionManager:
                 cwd=conn.cwd,
             ),
             tool_config=self._tool_config,
-            declarations=declarations,
             plugins=plugins,
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
@@ -492,14 +480,6 @@ class SessionManager:
             return list(self._plugins)
         wanted = set(plugin_names)
         return [plugin for plugin in self._plugins if plugin.name in wanted]
-
-    def select_declarations(self, plugin_names: list[str] | None) -> list[PluginDeclaration]:
-        """从旧式插件声明池按名单挑选（默认全部可用声明）。"""
-        pool = [e for e in self._declarations if e.error is None]
-        if plugin_names is None:
-            return pool
-        wanted = set(plugin_names)
-        return [e for e in pool if e.name in wanted]
 
     def register(self, session: Session) -> None:
         """注册新会话。同 id 已存在则报错（重连走 attach，不重建）。"""

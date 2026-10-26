@@ -55,14 +55,14 @@ def test_load_restore(tmp_path):
 
 async def test_define_tool_registers_via_context(tmp_path, monkeypatch):
     """define_tool 工具执行时经 tool_context 的注册通道把新工具加入会话。"""
-    from ..core import PluginRunner
-    from ..infra import EventBus, tool_context
+    from ..core import SessionToolTable
+    from ..infra import tool_context
     from ..tools.builtin.defined_tool import define_tool
 
     monkeypatch.setattr("walle.tools.builtin.defined_tool.AGENT_DIR", tmp_path)
 
-    runner = PluginRunner(EventBus())
-    ctx = make_session(plugin_runner=runner)
+    runner = SessionToolTable()
+    ctx = make_session(tool_table=runner)
     token = tool_context.set(ctx)
     try:
         out = await define_tool(

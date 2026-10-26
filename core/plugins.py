@@ -4,39 +4,20 @@ from __future__ import annotations
 
 from fnmatch import fnmatch
 
-from ..infra import PluginRunner, Skill, Tool
-
-
-class SessionToolService:
-    """ToolService 适配：工具表落在会话 PluginRunner 上。"""
-
-    def __init__(self, runner: PluginRunner) -> None:
-        self._runner = runner
-
-    def add(self, *tools: Tool) -> None:
-        self._runner.register_tool(*tools)
-
-    def remove(self, name: str) -> None:
-        self._runner.remove_tool(name)
-
-    def has(self, name: str) -> bool:
-        return any(tool.name == name for tool in self._runner.all_tools())
-
-    def all_tools(self) -> list[Tool]:
-        return self._runner.all_tools()
+from ..infra import SessionToolTable, Skill
 
 
 class SessionSkillService:
-    """SkillService 适配：注册落到 PluginRunner 的技能表。"""
+    """SkillService 适配：注册落到会话工具表的技能表。"""
 
-    def __init__(self, runner: PluginRunner) -> None:
-        self._runner = runner
+    def __init__(self, table: SessionToolTable) -> None:
+        self._table = table
 
     def add(self, name: str, description: str, path: str) -> None:
-        self._runner.register_skill(name, description, path)
+        self._table.register_skill(name, description, path)
 
     def remove(self, name: str) -> None:
-        self._runner.remove_skill(name)
+        self._table.remove_skill(name)
 
     def list(
         self,
@@ -46,7 +27,7 @@ class SessionSkillService:
     ) -> list[Skill]:
         return [
             skill
-            for name, skill in self._runner.skills.items()
+            for name, skill in self._table.skills.items()
             if _matches(name, include, exclude)
         ]
 

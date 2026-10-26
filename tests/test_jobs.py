@@ -222,15 +222,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import EventBus, PluginRunner
+        from ..core import SessionToolTable
 
-        plugin_runner = PluginRunner(EventBus())
-        plugin_runner.register_tool(
+        tool_table = SessionToolTable()
+        tool_table.add(
             make_tool("slow", "slow-done", delay=0.05),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.plugin_runner = plugin_runner
+        env.tool_table = tool_table
 
         agent = Agent(
             instruction="You are helpful.",
@@ -282,15 +282,15 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import EventBus, PluginRunner
+        from ..core import SessionToolTable
 
-        plugin_runner = PluginRunner(EventBus())
-        plugin_runner.register_tool(
+        tool_table = SessionToolTable()
+        tool_table.add(
             make_tool("slow", "done-42", delay=0.1),
             Tool.from_function(background),
             Tool.from_function(job_result),
         )
-        env.plugin_runner = plugin_runner
+        env.tool_table = tool_table
 
         agent = Agent(
             instruction="You are helpful.",

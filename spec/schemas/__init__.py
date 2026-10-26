@@ -55,6 +55,8 @@ from .message import (
     ToolMessage,
     UserMessage,
 )
+from .skill import Skill
+from .tools import HookVerdict
 from .usage import Usage
 
 __all__ = [
@@ -103,6 +105,10 @@ __all__ = [
     "ToolExecutionEndEvent",
     "PreExecuteToolEvent",
     "ToolResultEvent",
+    # skill — 技能声明
+    "Skill",
+    # tools — 工具钩子表态
+    "HookVerdict",
     # job — 后台作业模型
     "Job",
     "JobStatus",

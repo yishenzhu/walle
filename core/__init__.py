@@ -3,13 +3,8 @@ from ..infra import (
     EventBus,
     Handler,
     HookVerdict,
-    PluginAPI,
-    PluginDeclaration,
-    PluginManager,
-    PluginMount,
-    PluginRunner,
-    PluginState,
     ResourceDiagnostic,
+    SessionToolTable,
 )
 from .agent import Agent, Handoff
 from .commands import Commands
@@ -49,12 +44,7 @@ __all__ = [
     "Commands",
     "DiagnosticType",
     "EventBus",
-    "PluginAPI",
-    "PluginDeclaration",
-    "PluginMount",
-    "PluginManager",
-    "PluginRunner",
-    "PluginState",
+    "SessionToolTable",
     "Handler",
     "HookVerdict",
     "ResourceDiagnostic",

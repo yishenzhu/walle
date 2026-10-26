@@ -3,6 +3,7 @@ from ..spec import (
     AgentEndEvent,
     AgentStartEvent,
     DiagnosticType,
+    HookVerdict,
     Job,
     JobStatus,
     MessageDeltaEvent,
@@ -13,6 +14,7 @@ from ..spec import (
     SessionEndEvent,
     SessionStartEvent,
     SessionView,
+    Skill,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
     TurnEndEvent,
@@ -26,22 +28,11 @@ from .metrics import (
     TOOL_DURATION,
     TOOL_ERRORS,
 )
-from .plugin import (
-    HookVerdict,
-    InstructionsProvider,
-    PluginAPI,
-    PluginDeclaration,
-    PluginFactory,
-    PluginManager,
-    PluginMount,
-    PluginRunner,
-    PluginState,
-    Skill,
-)
 from .provider import OpenAIProvider
 from .sqlite_store import SQLiteStore
 from .telemetry import meter, setup_telemetry, tracer
 from .tool import Tool, tool_context
+from .tool_table import SessionToolTable
 
 __all__ = [
     # 事件总线（实现位于 plugin.events，infra 统一出口）
@@ -58,6 +49,8 @@ __all__ = [
     "MessageDeltaEvent",
     "MessageEndEvent",
     "ToolExecutionStartEvent",
+    "Skill",
+    "HookVerdict",
     "ToolExecutionEndEvent",
     "PreExecuteToolEvent",
     "DiagnosticType",
@@ -68,17 +61,8 @@ __all__ = [
     "JobStatus",
     "SessionView",
     "tool_context",
-    # plugin — 插件加载/激活
-    "PluginAPI",
-    "PluginDeclaration",
-    "PluginFactory",
-    "PluginMount",
-    "PluginManager",
-    "PluginRunner",
-    "PluginState",
-    "HookVerdict",
-    "InstructionsProvider",
-    "Skill",
+    # tool_table — 会话工具/技能表
+    "SessionToolTable",
     # logger / telemetry / metrics — 可观测性
     "setup_logger",
     "LogConfig",
