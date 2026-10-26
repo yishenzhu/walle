@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 
 from ...conf import CANVAS_ROOT
 from ...plugin import PluginHost
-from ...spec import WebService
+from ...spec import SAFE_ID, WebService
+from ..frames import ErrorCode, Frame
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 from .plugins import discover_web_plugins
 
@@ -23,7 +24,6 @@ app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
 STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
-SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 @app.get("/")
@@ -160,7 +160,7 @@ async def canvas_page(session_id: str, canvas_id: str) -> HTMLResponse:
 
 async def _reject(ws: WebSocket, message: str) -> None:
     """握手期拒绝：回错误帧并关连接。"""
-    await ws.send_json({"type": "error", "message": message})
+    await ws.send_json({"type": Frame.ERROR, "message": message})
     await ws.close()
 
 
@@ -201,7 +201,7 @@ async def chat(
             )
         except OSError as exc:
             await ws.send_json(
-                {"type": "error", "message": f"agent 未启动：{exc}"}
+                {"type": Frame.ERROR, "message": f"agent 未启动：{exc}"}
             )
             return None
         conn = JSONLineConn(reader, writer)
@@ -216,7 +216,7 @@ async def chat(
     link = None
     try:
         hello = {
-            "type": "hello",
+            "type": Frame.HELLO,
             "session_id": session_id,
             "attach": attach,
             "cwd": str(working_dir),
@@ -236,7 +236,7 @@ async def chat(
             welcome is not None
             and attach
             and welcome.get("type") == "error"
-            and welcome.get("code") == "session_not_found"
+            and welcome.get("code") == ErrorCode.SESSION_NOT_FOUND
         ):
             link.close()
             await link.wait_closed()
@@ -247,7 +247,7 @@ async def chat(
             link, welcome = opened
 
         if welcome is None:
-            await ws.send_json({"type": "error", "message": "agent 未响应"})
+            await ws.send_json({"type": Frame.ERROR, "message": "agent 未响应"})
             return
         await ws.send_json(welcome)
         if welcome.get("type") == "error":
@@ -258,10 +258,10 @@ async def chat(
                 while (msg := await link.recv()) is not None:
                     await ws.send_json(msg)
                 await ws.send_json(
-                    {"type": "error", "message": "agent 连接已断开"}
+                    {"type": Frame.ERROR, "message": "agent 连接已断开"}
                 )
             except FrameTooLargeError:
-                await ws.send_json({"type": "error", "message": "agent 帧过大"})
+                await ws.send_json({"type": Frame.ERROR, "message": "agent 帧过大"})
 
         async def ws_to_agent() -> None:
             while True:
@@ -270,7 +270,7 @@ async def chat(
                 except (WebSocketDisconnect, RuntimeError):
                     return
                 kind = data.get("type")
-                if kind == "input.create":
+                if kind == Frame.INPUT_CREATE:
                     await link.send(
                         {
                             "type": kind,
@@ -278,7 +278,7 @@ async def chat(
                             "session_id": session_id,
                         }
                     )
-                elif kind == "reply":
+                elif kind == Frame.REPLY:
                     await link.send(
                         {
                             "type": kind,
@@ -286,13 +286,13 @@ async def chat(
                             "data": data.get("data"),
                         }
                     )
-                elif kind == "run.cancel":
+                elif kind == Frame.RUN_CANCEL:
                     await link.send({"type": kind})
-                elif kind == "session.set_agent":
+                elif kind == Frame.SESSION_SET_AGENT:
                     await link.send(
                         {"type": kind, "agent": data.get("agent") or ""}
                     )
-                elif kind == "session.set_metadata":
+                elif kind == Frame.SESSION_SET_METADATA:
                     # 校验交给 server（与直连语义一致），web 只做转发
                     await link.send({"type": kind, "values": data.get("values")})
 

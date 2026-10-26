@@ -13,7 +13,7 @@ from typing import Any
 
 from ..conf import PROJECT_ROOT
 from ..infra.jsonio import atomic_write, read_json, write_json_atomic
-from ..spec import Message, MessageAdapter
+from ..spec import SAFE_ID, Message, MessageAdapter
 from .search import keyword_hits
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,6 @@ WORKSPACE_FILE = "workspace.json"
 META_FILE = "meta.json"
 MESSAGES_FILE = "messages.jsonl"
 PROJECTION_FILE = "projection.json"
-SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def canonical_cwd(cwd: str | Path | None) -> Path:
@@ -122,7 +121,7 @@ def list_sessions(cwd: str | Path, root: str | Path | None = None) -> list[dict[
 
 def session_dir_name(session_id: str) -> str:
     """把任意会话 id 映射成安全、稳定的目录名。"""
-    if SAFE_SESSION_ID.fullmatch(session_id):
+    if SAFE_ID.fullmatch(session_id):
         return session_id
     safe = re.sub(r"[^A-Za-z0-9_-]+", "-", session_id).strip("-")[:40] or "session"
     digest = hashlib.sha1(session_id.encode("utf-8")).hexdigest()[:8]

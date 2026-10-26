@@ -18,7 +18,7 @@ MAX_FRAME = 1 << 20
 SEND_TIMEOUT = 10.0
 
 
-class FrameTooLargeError(ValueError):
+class FrameTooLargeError(Exception):
     """单帧超过读取上限（asyncio.StreamReader.readline 的 limit）。"""
 
 
@@ -30,12 +30,10 @@ class JSONLineConn:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         *,
-        max_frame: int = MAX_FRAME,
         send_timeout: float = SEND_TIMEOUT,
     ) -> None:
         self._reader = reader
         self._writer = writer
-        self._max_frame = max_frame
         self._send_timeout = send_timeout
         self._closed = False
 
@@ -61,14 +59,10 @@ class JSONLineConn:
             try:
                 line = await self._reader.readline()
             except ValueError as exc:
-                # readline 超过 StreamReader limit：拒绝并交由上层收尾
-                raise FrameTooLargeError(
-                    f"frame exceeds {self._max_frame} bytes"
-                ) from exc
+                # readline 超过 StreamReader limit（limit=MAX_FRAME）：拒绝并交由上层收尾
+                raise FrameTooLargeError(f"frame exceeds {MAX_FRAME} bytes") from exc
             if not line:
                 return None
-            if len(line) > self._max_frame:
-                raise FrameTooLargeError(f"frame exceeds {self._max_frame} bytes")
             text = line.decode(errors="replace").strip()
             if not text:
                 continue

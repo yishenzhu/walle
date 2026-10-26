@@ -41,6 +41,7 @@ from .events import (
     TurnEndEvent,
     TurnStartEvent,
 )
+from .ids import SAFE_ID
 from .job import (
     Job,
     JobDispatch,
@@ -109,6 +110,8 @@ __all__ = [
     "Skill",
     # tools — 工具钩子表态
     "HookVerdict",
+    # ids — 资源 id 约束
+    "SAFE_ID",
     # job — 后台作业模型
     "Job",
     "JobStatus",

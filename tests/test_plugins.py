@@ -127,6 +127,36 @@ async def test_stop_rolls_back_subscriptions():
     assert not host.root.bus.has(AgentStartEvent)
 
 
+async def test_stop_reclaims_plugin_tools():
+    """插件卸载回收它注册的工具。"""
+    host = PluginHost()
+    table = SessionToolTable()
+    await host.root.register(ToolService, table)
+    await host.launch([tool_plugin("demo", "t")])
+    assert table.has("t")
+    await host.stop()
+    assert not table.has("t")
+
+
+async def test_stop_reclaims_plugin_skills():
+    """插件卸载回收它注册的技能。"""
+    from ..core.plugins import SessionSkillService
+    from ..spec import SkillService
+
+    host = PluginHost()
+    table = SessionToolTable()
+    await host.root.register(SkillService, SessionSkillService(table))
+
+    @plugin(name="skills", inject=(SkillService,))
+    async def skills(ctx, config) -> None:
+        ctx.get(SkillService).add("grill", "Grill the user", "/s/SKILL.md")
+
+    await host.launch([skills])
+    assert set(table.skills) == {"grill"}
+    await host.stop()
+    assert table.skills == {}
+
+
 async def test_builtin_plugin_registers_tools():
     """内置工具插件经统一插件系统注册进会话工具表。"""
     from ..tools.builtin.plugin import builtin_plugin

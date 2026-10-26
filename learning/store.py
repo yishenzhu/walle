@@ -11,13 +11,13 @@ from typing import Any
 
 from ..conf import PROJECT_ROOT
 from ..infra.jsonio import read_json, write_json_atomic, write_text_atomic
+from ..spec import SAFE_ID
 
 DEFAULT_COURSES_PATH = "data/courses"
 COURSE_FILE = "course.json"
 LESSONS_DIR = "lessons"
 CANVAS_DIR = "canvas"
 PROGRESS_FILE = "progress.json"
-SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
 H1_TITLE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
 HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)

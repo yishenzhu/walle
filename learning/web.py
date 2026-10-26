@@ -12,10 +12,9 @@ from pydantic import BaseModel
 from ..conf import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from ..conf import PROJECT_ROOT
 from ..plugin import plugin
-from ..spec import WebService
+from ..spec import SAFE_ID, WebService
 from .store import (
     DEFAULT_COURSES_PATH,
-    SAFE_ID,
     canvas_file,
     course_progress,
     html_title,

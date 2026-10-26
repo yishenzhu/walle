@@ -26,6 +26,7 @@ from .protocol import (
     WebService,
 )
 from .schemas import (
+    SAFE_ID,
     AgentEndEvent,
     AgentStartEvent,
     ApprovalRequest,
@@ -126,6 +127,7 @@ __all__ = [
     "PreExecuteToolEvent",
     "Skill",
     "HookVerdict",
+    "SAFE_ID",
     "ToolResultEvent",
     # protocol — 能力协议
     "AgentService",

@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ..plugin import plugin
 from ..spec import (
     AssembleContext,
     PromptAssembly,
     PromptSection,
-    PromptService,
 )
 
 INSTRUCTION_SECTION = "agent:instruction"
@@ -47,9 +45,3 @@ class Prompts:
             if text:
                 sections.append(text)
         return PromptAssembly(sections=sections)
-
-
-@plugin(name="system-prompt", provides=(PromptService,))
-async def native_system_prompt(ctx, config) -> None:
-    """系统提示词组装默认实现：发布**全局** PromptService 能力。"""
-    await ctx.register(PromptService, Prompts())

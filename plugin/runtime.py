@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import ModuleType
@@ -13,6 +14,9 @@ from typing import Any
 from .events import Event, EventBus, Handler
 
 logger = logging.getLogger(__name__)
+
+# 当前正在 apply 的插件作用域：会话级服务据此登记注册归属，卸载时回收。
+current_scope: ContextVar = ContextVar("plugin_scope", default=None)
 
 
 class ServiceError(LookupError):
@@ -398,6 +402,7 @@ class PluginHost:
             handle.ctx = self._root.child()
         handle.state = PluginState.LOADING
         handle.error = None
+        token = current_scope.set(handle.ctx)
         try:
             result = handle.plugin.apply(handle.ctx, handle.config)
             if inspect.isawaitable(result):
@@ -410,6 +415,8 @@ class PluginHost:
             logger.exception("插件 %s 加载失败", handle.plugin.name)
             if handle.ctx is not None:
                 await handle.ctx.dispose()
+        finally:
+            current_scope.reset(token)
 
     async def deactivate(self, handle: PluginEntry) -> None:
         """依赖丢失：回滚 effect、ctx 置 None，回 PENDING 等重载。"""

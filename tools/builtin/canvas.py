@@ -10,8 +10,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ...conf import CANVAS_ROOT
-
-SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+from ...spec import SAFE_ID
 
 
 class CanvasResult(BaseModel):

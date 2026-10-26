@@ -17,6 +17,7 @@ from ..spec import (
     Sessions,
     UserInput,
 )
+from .frames import CONTROL_PREFIXES, ErrorCode, Frame
 from .transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ CALL_TIMEOUT = 300.0
 
 def _error_frame(code: str, message: str) -> dict:
     """错误帧：code 供客户端分支，message 供展示。"""
-    return {"type": "error", "code": code, "message": message}
+    return {"type": Frame.ERROR, "code": code, "message": message}
 
 class SessionConn:
     """一个客户端连接的 Channel 端点。"""
@@ -65,7 +66,7 @@ class SessionConn:
         # 本连接归属的会话身份：补全 session_id（上层构造事件时不带，由本连接注入）
         if not await self._link.try_send(
             {
-                "type": "notify",
+                "type": Frame.NOTIFY,
                 "data": notification.model_copy(update={"session_id": self.session_id}).model_dump(
                     mode="json"
                 ),
@@ -80,7 +81,7 @@ class SessionConn:
         try:
             await self._link.send(
                 {
-                    "type": "call",
+                    "type": Frame.CALL,
                     "id": req_id,
                     "data": request.model_copy(update={"session_id": self.session_id}).model_dump(
                         mode="json"
@@ -140,15 +141,13 @@ class SessionConn:
                     break
                 if msg is None:
                     break
-                if msg.get("type") == "reply":
+                if msg.get("type") == Frame.REPLY:
                     self.resolve(msg.get("id", ""), msg.get("data"))
                     continue
                 try:
                     await on_inbound(msg)
                 except Exception as exc:
-                    control = str(msg.get("type") or "").startswith(
-                        ("session.", "run.")
-                    )
+                    control = str(msg.get("type") or "").startswith(CONTROL_PREFIXES)
                     logger.warning(f"inbound frame failed: {exc}")
                     await self.notify(
                         Error(
@@ -200,7 +199,7 @@ class SessionServer:
     async def _welcome_frame(self, session) -> dict:
         """握手成功帧：会话 id + 最近对话快照。"""
         return {
-            "type": "welcome",
+            "type": Frame.WELCOME,
             "session_id": session.id,
             "history": await self._client_history(session),
         }
@@ -225,28 +224,28 @@ class SessionServer:
                 return
 
             # 浏览帧：返回元数据后关闭，不进入会话循环
-            if msg.get("type") == "list":
+            if msg.get("type") == Frame.LIST_ACTIVE:
                 await link.send(
-                    {"type": "list", "sessions": self._sessions.list()}
+                    {"type": Frame.ACTIVE_SESSIONS, "sessions": self._sessions.list()}
                 )
                 return
-            if msg.get("type") == "list_workspaces":
+            if msg.get("type") == Frame.LIST_WORKSPACES:
                 await link.send(
                     {
-                        "type": "workspaces",
+                        "type": Frame.WORKSPACES,
                         "current": os.getcwd(),
                         "workspaces": self._sessions.list_workspaces(),
                     }
                 )
                 return
-            if msg.get("type") == "list_sessions":
+            if msg.get("type") == Frame.LIST_SESSIONS:
                 cwd = msg.get("cwd") or ""
                 if not cwd or not Path(cwd).expanduser().is_dir():
-                    await link.send(_error_frame("invalid_cwd", f"工作目录不存在: {cwd}"))
+                    await link.send(_error_frame(ErrorCode.INVALID_CWD, f"工作目录不存在: {cwd}"))
                     return
                 await link.send(
                     {
-                        "type": "sessions",
+                        "type": Frame.SESSIONS,
                         "cwd": cwd,
                         "sessions": self._sessions.list_sessions(cwd),
                     }
@@ -294,7 +293,7 @@ class SessionServer:
                 session = self._sessions.get(session_id)
                 if session is None:
                     await conn.send(
-                        _error_frame("session_not_found", f"会话不存在: {session_id}")
+                        _error_frame(ErrorCode.SESSION_NOT_FOUND, f"会话不存在: {session_id}")
                     )
                     return
                 # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
@@ -307,7 +306,7 @@ class SessionServer:
                     await old.notify(
                         Error(
                             message="session attached elsewhere",
-                            code="session_taken_over",
+                            code=ErrorCode.SESSION_TAKEN_OVER,
                         )
                     )
                     old.close()
@@ -331,18 +330,18 @@ class SessionServer:
                 if session.transport is not conn:
                     return
                 kind = frame.get("type")
-                if kind == "input.create":
+                if kind == Frame.INPUT_CREATE:
                     session.submit(
                         UserInput(
                             content=frame.get("content") or "",
                             session_id=session_id,
                         )
                     )
-                elif kind == "run.cancel":
-                    await session.cancel(reason="user cancelled")
-                elif kind == "session.set_agent":
+                elif kind == Frame.RUN_CANCEL:
+                    await session.cancel(reason="user_cancelled")
+                elif kind == Frame.SESSION_SET_AGENT:
                     session.set_agent(str(frame.get("agent") or "default"))
-                elif kind == "session.set_metadata":
+                elif kind == Frame.SESSION_SET_METADATA:
                     values = frame.get("values")
                     if not isinstance(values, dict):
                         raise ValueError("session.set_metadata requires values object")
@@ -351,7 +350,7 @@ class SessionServer:
                     raise ValueError(f"unknown frame: {kind}")
 
             await conn.run(on_inbound)
-        except (OSError, asyncio.IncompleteReadError, ValueError) as exc:
+        except (OSError, ValueError, FrameTooLargeError) as exc:
             logger.debug(f"session conn {session_id} closed: {exc}")
         finally:
             if conn is not None:

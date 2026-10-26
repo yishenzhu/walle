@@ -612,7 +612,7 @@ async def test_list_frame_returns_sessions(tmp_path):
             await asyncio.sleep(0.02)
 
         # list 帧
-        r3, w3 = await _connect(port, {"type": "list"})
+        r3, w3 = await _connect(port, {"type": "list_active"})
         msg = await _read_line(r3)
         sessions = {s["session_id"]: s for s in msg["sessions"]}
         assert set(sessions) == {"a", "b"}

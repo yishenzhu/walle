@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -62,6 +63,27 @@ class SessionState(StrEnum):
     CLOSED = "closed"
 
 
+@dataclass
+class SessionRuntime:
+    """会话级运行时：每会话一套，由装配方构造后注入 Session。"""
+
+    bus: EventBus
+    executor: ToolExecutor
+    tool_table: SessionToolTable
+    tool_config: ToolConfig
+
+    @classmethod
+    def build(cls, tool_config: ToolConfig | None = None) -> SessionRuntime:
+        """按配置构造默认运行时（装配根与测试共用）。"""
+        config = tool_config or ToolConfig()
+        return cls(
+            bus=EventBus(),
+            executor=ToolExecutor(config),
+            tool_table=SessionToolTable(),
+            tool_config=config,
+        )
+
+
 class SessionBusyError(RuntimeError):
     code = "session_busy"
 
@@ -78,6 +100,7 @@ class Session:
         session_id: str,
         history: Messages,
         tool_config: ToolConfig | None = None,
+        runtime: SessionRuntime | None = None,
         plugins: list[Plugin] | None = None,
         transport: Channel | None = None,
         provider: LLM | None = None,
@@ -92,7 +115,10 @@ class Session:
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
         self._cwd = cwd
-        self._tool_config = tool_config or ToolConfig()
+        # 会话级运行时由装配方注入；未注入时按 tool_config 构造默认实现
+        runtime = runtime or SessionRuntime.build(tool_config)
+        self._runtime = runtime
+        self._tool_config = runtime.tool_config
         self._plugins = plugins or []
         self._host: PluginHost | None = None
         self._plugin_ctx: Context | None = None
@@ -100,11 +126,9 @@ class Session:
         self._commands: Commands | None = None
 
         # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
-        self._bus = EventBus()  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
-        # 工具执行器按会话实例化、只交给 Runner（Session 不持有）；
-        executor = ToolExecutor(self._tool_config)
-        self._agent_runner = Runner(executor=executor)
-        self._tool_table = SessionToolTable()  # 会话级工具/技能表
+        self._bus = runtime.bus  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
+        self._agent_runner = Runner(executor=runtime.executor)  # 执行器只交给 Runner
+        self._tool_table = runtime.tool_table  # 会话级工具/技能表
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
@@ -464,7 +488,7 @@ class SessionManager:
                 conn.session_id,
                 cwd=conn.cwd,
             ),
-            tool_config=self._tool_config,
+            runtime=SessionRuntime.build(self._tool_config),
             plugins=plugins,
             provider=provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
