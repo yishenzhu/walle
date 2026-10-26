@@ -1639,6 +1639,7 @@
         return;
       }
       if (msg.type === "welcome") {
+        resetChat();
         setStatus("已连接", "on");
         renderHistory(msg.history);
         updateComposer();
