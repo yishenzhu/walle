@@ -16,6 +16,7 @@ from ..learning import web as learning_web
 from ..learning.store import create_course, write_lesson
 
 web = importlib.import_module("walle.channel.web.app")
+asyncio.run(web.install_web_plugins())
 
 
 class FakeAgent:

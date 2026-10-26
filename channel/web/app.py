@@ -119,21 +119,16 @@ class WebHost:
         self._ui.append(manifest)
 
 
-def install_web_plugins() -> None:
-    """启动 Web 插件宿主：注册 WebService，加载包内声明的 Web 插件。"""
-
-    async def install() -> None:
-        web_host = WebHost(app, index, STATIC)
-        host = PluginHost()
-        await host.root.register(WebService, web_host)
-        await host.launch(discover_web_plugins())
-        app.state.plugin_host = host
-        app.state.web_host = web_host
-
-    asyncio.run(install())
-
-
-install_web_plugins()
+async def install_web_plugins() -> None:
+    """启动 Web 插件宿主：注册 WebService，加载包内声明的 Web 插件（幂等）。"""
+    if getattr(app.state, "plugin_host", None) is not None:
+        return
+    web_host = WebHost(app, index, STATIC)
+    host = PluginHost()
+    await host.root.register(WebService, web_host)
+    await host.launch(discover_web_plugins())
+    app.state.plugin_host = host
+    app.state.web_host = web_host
 
 
 @app.get("/api/web/plugins")
