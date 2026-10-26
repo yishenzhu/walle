@@ -610,6 +610,7 @@ walle/
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（查找 / 裁决 / 超时 / 通知）
+│   ├── command.py             #   CommandService 默认实现（Commands）
 │   ├── prompt.py              #   PromptService 默认实现（Prompts）
 │   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
 │   └── __init__.py            #   core 公共导出
@@ -658,7 +659,7 @@ walle/
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
 │   ├── tool.py                #   Tool 值类型 + Tools 会话工具表 + tool_context
-│   ├── skills.py              #   会话技能表（Skills）
+│   ├── skill.py               #   会话技能表（Skills）
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）
 │   ├── telemetry.py           #   OpenTelemetry 初始化

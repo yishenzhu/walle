@@ -48,7 +48,7 @@ from ..spec import (
     UserInput,
 )
 from .agent import Agent
-from .commands import Commands
+from .command import Commands
 from .executor import ToolExecutor
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext

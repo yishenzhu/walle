@@ -8,7 +8,7 @@ from ..infra import (
     Tools,
 )
 from .agent import Agent, Handoff
-from .commands import Commands
+from .command import Commands
 from .executor import ToolExecutor
 from .runner import (
     Runner,

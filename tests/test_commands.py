@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core.commands import Commands, parse_command
+from ..core.command import Commands, parse_command
 from ..spec import Command, CommandRequest, CommandResult
 
 

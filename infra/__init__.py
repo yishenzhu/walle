@@ -29,7 +29,7 @@ from .metrics import (
     TOOL_ERRORS,
 )
 from .provider import OpenAIProvider
-from .skills import Skills
+from .skill import Skills
 from .sqlite_store import SQLiteStore
 from .telemetry import meter, setup_telemetry, tracer
 from .tool import Tool, Tools, tool_context
