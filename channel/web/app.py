@@ -158,6 +158,12 @@ async def canvas_page(session_id: str, canvas_id: str) -> HTMLResponse:
     )
 
 
+async def _reject(ws: WebSocket, message: str) -> None:
+    """握手期拒绝：回错误帧并关连接。"""
+    await ws.send_json({"type": "error", "message": message})
+    await ws.close()
+
+
 @app.websocket("/ws/chat")
 async def chat(
     ws: WebSocket,
@@ -168,43 +174,44 @@ async def chat(
 ) -> None:
     await ws.accept()
     if session is not None and not SAFE_ID.fullmatch(session):
-        await ws.send_json({"type": "error", "message": "会话 id 非法"})
-        await ws.close()
+        await _reject(ws, "会话 id 非法")
         return
     if agent is not None and not SAFE_ID.fullmatch(agent):
-        await ws.send_json({"type": "error", "message": "agent 名非法"})
-        await ws.close()
+        await _reject(ws, "agent 名非法")
         return
     if attach and session is None:
-        await ws.send_json({"type": "error", "message": "恢复会话需要 session 参数"})
-        await ws.close()
+        await _reject(ws, "恢复会话需要 session 参数")
         return
     try:
         working_dir = Path(cwd).expanduser().resolve(strict=True) if cwd else Path.cwd()
     except OSError:
-        await ws.send_json(
-            {"type": "error", "message": f"工作目录不存在: {cwd or Path.cwd()}"}
-        )
-        await ws.close()
+        await _reject(ws, f"工作目录不存在: {cwd or Path.cwd()}")
         return
     if not working_dir.is_dir():
-        await ws.send_json({"type": "error", "message": f"不是目录: {working_dir}"})
-        await ws.close()
+        await _reject(ws, f"不是目录: {working_dir}")
         return
 
     session_id = session or f"web-{uuid.uuid4().hex[:12]}"
 
-    async def connect_agent(payload: dict) -> tuple[JSONLineConn, dict | None]:
-        reader, writer = await asyncio.open_connection(HOST, PORT, limit=MAX_FRAME)
+    async def open_agent(payload: dict) -> tuple[JSONLineConn, dict | None] | None:
+        """连上 agent 并发握手帧；连不上时回错误帧并返回 None。"""
+        try:
+            reader, writer = await asyncio.open_connection(
+                HOST, PORT, limit=MAX_FRAME
+            )
+        except OSError as exc:
+            await ws.send_json(
+                {"type": "error", "message": f"agent 未启动：{exc}"}
+            )
+            return None
         conn = JSONLineConn(reader, writer)
         try:
             await conn.send(payload)
-            reply = await conn.recv()
+            return conn, await conn.recv()
         except Exception:
             conn.close()
             await conn.wait_closed()
             raise
-        return conn, reply
 
     link = None
     try:
@@ -218,13 +225,10 @@ async def chat(
             # 浏览器断开会让挂起请求立即失败，页面也有停止按钮兜底。
             "call_timeout": None,
         }
-        try:
-            link, welcome = await connect_agent(hello)
-        except OSError as exc:
-            await ws.send_json(
-                {"type": "error", "message": f"agent 未启动：{exc}"}
-            )
+        opened = await open_agent(hello)
+        if opened is None:
             return
+        link, welcome = opened
 
         # 进程重启后内存里没有该会话，但磁盘上可能仍有：换一条新连接
         # 用 attach=false 新建，同 session_id 会从文件存储读回历史。
@@ -237,13 +241,10 @@ async def chat(
             link.close()
             await link.wait_closed()
             hello = {**hello, "attach": False}
-            try:
-                link, welcome = await connect_agent(hello)
-            except OSError as exc:
-                await ws.send_json(
-                    {"type": "error", "message": f"agent 未启动：{exc}"}
-                )
+            opened = await open_agent(hello)
+            if opened is None:
                 return
+            link, welcome = opened
 
         if welcome is None:
             await ws.send_json({"type": "error", "message": "agent 未响应"})
@@ -292,9 +293,8 @@ async def chat(
                         {"type": kind, "agent": data.get("agent") or ""}
                     )
                 elif kind == "session.set_metadata":
-                    values = data.get("values")
-                    if isinstance(values, dict):
-                        await link.send({"type": kind, "values": values})
+                    # 校验交给 server（与直连语义一致），web 只做转发
+                    await link.send({"type": kind, "values": data.get("values")})
 
         tasks = [
             asyncio.create_task(agent_to_ws()),

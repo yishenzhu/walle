@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 CALL_TIMEOUT = 300.0
 
 
+
+def _error_frame(code: str, message: str) -> dict:
+    """错误帧：code 供客户端分支，message 供展示。"""
+    return {"type": "error", "code": code, "message": message}
+
 class SessionConn:
     """一个客户端连接的 Channel 端点。"""
 
@@ -192,6 +197,14 @@ class SessionServer:
             self._server.close()
             self._server = None
 
+    async def _welcome_frame(self, session) -> dict:
+        """握手成功帧：会话 id + 最近对话快照。"""
+        return {
+            "type": "welcome",
+            "session_id": session.id,
+            "history": await self._client_history(session),
+        }
+
     async def _client_history(self, session) -> list[dict]:
         """给 attach 的客户端完整对话历史（含工具调用与结果）。"""
         return [
@@ -229,13 +242,7 @@ class SessionServer:
             if msg.get("type") == "list_sessions":
                 cwd = msg.get("cwd") or ""
                 if not cwd or not Path(cwd).expanduser().is_dir():
-                    await link.send(
-                        {
-                            "type": "error",
-                            "code": "invalid_cwd",
-                            "message": f"工作目录不存在: {cwd}",
-                        }
-                    )
+                    await link.send(_error_frame("invalid_cwd", f"工作目录不存在: {cwd}"))
                     return
                 await link.send(
                     {
@@ -287,21 +294,11 @@ class SessionServer:
                 session = self._sessions.get(session_id)
                 if session is None:
                     await conn.send(
-                        {
-                            "type": "error",
-                            "code": "session_not_found",
-                            "message": f"会话不存在: {session_id}",
-                        }
+                        _error_frame("session_not_found", f"会话不存在: {session_id}")
                     )
                     return
                 # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
-                await conn.send(
-                    {
-                        "type": "welcome",
-                        "session_id": session_id,
-                        "history": await self._client_history(session),
-                    }
-                )
+                await conn.send(await self._welcome_frame(session))
                 old = session.transport
                 session.attach(conn)
                 # 先补发旧 turn 的通知，再通知旧连接退出
@@ -324,13 +321,7 @@ class SessionServer:
                 await session.start()
                 # 新建也可能命中磁盘上同 id 的会话（如 Web 重启后恢复），
                 # 带上快照让客户端直接接续。
-                await conn.send(
-                    {
-                        "type": "welcome",
-                        "session_id": session_id,
-                        "history": await self._client_history(session),
-                    }
-                )
+                await conn.send(await self._welcome_frame(session))
                 logger.info(
                     f"channel client connected: {session_id} agent={conn.agent or 'default'}"
                 )
