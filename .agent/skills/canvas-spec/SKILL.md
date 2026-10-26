@@ -1,11 +1,11 @@
 ---
 name: canvas-spec
-description: Build interactive canvases with the shared JSXGraph runtime. Use for canvas or course_canvas.
+description: Build interactive canvases with the shared JSXGraph runtime. Use for the canvas tool.
 ---
 
 # Canvas spec
 
-Prefer `spec` over `html`. The spec is a JS object:
+Prefer `spec` over `html` in `canvas`. The spec is a JS object:
 
 ```js
 {
@@ -49,10 +49,10 @@ Colors: `accent`, `ok`, `blue`, `muted`, `text`, `grid2`.
 
 - Use `spec` for standard 2D math visuals: vectors, matrices, plots,
   projections, transformations, and simple animations.
-- Use `course_canvas` for course lessons; `canvas` is only for generic, session-scoped pages.
+- Use `canvas` for both course lessons and general pages. Course lessons reference the returned `canvas_id` via `{{canvas:<id>}}`.
 - Use `html` only when the spec cannot express the page.
 - Keep one concept per canvas. Use at most one canvas per lesson unless the
   lesson truly needs more.
 - Pass `canvas_id` to update an existing canvas; do not create a duplicate.
-- Call `course_canvas` before `write_lesson`, then put `{{canvas:<id>}}` on its
+- Call `canvas` before `write_lesson`, then put `{{canvas:<id>}}` on its
   own line in the lesson Markdown.

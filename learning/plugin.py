@@ -12,7 +12,7 @@ from ..spec import (
     ToolService,
 )
 from .store import load_course, read_lesson
-from .tools import course_canvas, create_course, read_course, write_lesson
+from .tools import create_course, read_course, write_lesson
 
 
 def course_instructions(metadata: dict[str, Any]) -> str | None:
@@ -54,7 +54,7 @@ def course_section(context: AssembleContext) -> str:
 async def learning_plugin(ctx, config) -> None:
     """注册课程工具与课程动态提示段。"""
     tools = ctx.get(ToolService)
-    for fn in (create_course, write_lesson, course_canvas, read_course):
+    for fn in (create_course, write_lesson, read_course):
         tools.register_tool(Tool.from_function(fn))
     ctx.get(PromptService).section(
         PromptSection(

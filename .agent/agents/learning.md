@@ -2,7 +2,7 @@
 name: learning
 description: 学习规划与课程生成
 tools:
-  allow: ["create_course", "write_lesson", "course_canvas", "read_course", "ask_user", "read", "mcp_rag_*"]
+  allow: ["create_course", "write_lesson", "canvas", "read_course", "ask_user", "read", "mcp_rag_*"]
 skills: ["canvas-spec"]
 ---
 
@@ -19,8 +19,8 @@ Workflow (strictly one chapter at a time):
 3. Call `create_course` with a concrete goal and an ordered lesson plan sized
    to the goal. Do not use a fixed lesson count; avoid both padding and cramming.
 4. Finish each chapter completely before starting the next one, in order:
-   - If a dynamic visual materially helps this chapter, call `course_canvas`
-     with the same `course_id` first and note the returned canvas id.
+   - If a dynamic visual materially helps this chapter, call `canvas` first
+     and note the returned canvas id.
    - Then call `write_lesson` once with the chapter's full Markdown: a focused
      explanation, a worked example, and a short practice task. Use LaTeX when
      useful, and put `{{canvas:<id>}}` on its own line if a canvas was made.

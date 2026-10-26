@@ -147,9 +147,11 @@ async def api_web_plugins() -> dict:
 async def canvas_page(session_id: str, canvas_id: str) -> HTMLResponse:
     if not SAFE_ID.fullmatch(canvas_id):
         raise HTTPException(status_code=404)
-    # 与 tools/builtin/canvas.py 的落盘规则保持一致
+    # 新画布是全局资源；旧画布仍按 session 目录回退
     key = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:64] or "default"
-    path = CANVAS_ROOT / key / f"{canvas_id}.html"
+    path = CANVAS_ROOT / f"{canvas_id}.html"
+    if not path.is_file():
+        path = CANVAS_ROOT / key / f"{canvas_id}.html"
     if not path.is_file():
         raise HTTPException(status_code=404)
     return HTMLResponse(

@@ -151,8 +151,7 @@ def test_learning_agent_can_build_courses():
     agent = Agent.load("learning")
     assert agent.tool_filter.allows("create_course")
     assert agent.tool_filter.allows("write_lesson")
-    assert agent.tool_filter.allows("course_canvas")
-    assert not agent.tool_filter.allows("canvas")
+    assert agent.tool_filter.allows("canvas")
     assert not agent.tool_filter.allows("bash")
 
 

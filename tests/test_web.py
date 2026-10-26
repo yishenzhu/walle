@@ -448,6 +448,27 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
     assert client.get(f"/courses/{course['id']}/canvas/missing").status_code == 404
 
 
+def test_global_canvas_routes(monkeypatch, tmp_path):
+    root, course, lesson = make_course_bundle(tmp_path)
+    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
+    global_root = tmp_path / "global-canvas"
+    global_root.mkdir()
+    (global_root / "shared.html").write_text(
+        "<html><body>shared</body></html>", encoding="utf-8"
+    )
+    monkeypatch.setattr(web, "CANVAS_ROOT", global_root)
+    monkeypatch.setattr(learning_web, "GLOBAL_CANVAS_ROOT", global_root)
+
+    client = TestClient(web.app)
+    generic = client.get("/canvas/any-session/shared")
+    assert generic.status_code == 200
+    assert generic.text == "<html><body>shared</body></html>"
+
+    course_page = client.get(f"/courses/{course['id']}/canvas/shared")
+    assert course_page.status_code == 200
+    assert course_page.text == "<html><body>shared</body></html>"
+
+
 def test_course_api_marks_unwritten_lessons(monkeypatch, tmp_path):
     root = tmp_path / "courses"
     course = create_course(

@@ -12,11 +12,12 @@ from pydantic import BaseModel
 
 from ..plugin import plugin
 from ..spec import WebService
+from ..tools.builtin.canvas import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from .store import (
     CANVAS_MARKER,
     canvas_file,
-    canvas_title,
     course_progress,
+    html_title,
     list_courses,
     load_course,
     read_lesson,
@@ -26,6 +27,17 @@ from .web_export import build_course_zip
 
 COURSES_ROOT = Path(__file__).resolve().parents[1] / "data" / "courses"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def canvas_title_for(course_id: str, canvas_id: str) -> str:
+    """Resolve a course or global canvas title by id."""
+    path = canvas_file(course_id, canvas_id, COURSES_ROOT)
+    if not path.is_file():
+        path = GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
+    try:
+        return html_title(path.read_text(encoding="utf-8"), canvas_id)
+    except OSError:
+        return canvas_id
 
 
 class ProgressUpdate(BaseModel):
@@ -133,7 +145,7 @@ def create_router(
             if canvas_id not in canvas_ids:
                 canvas_ids.append(canvas_id)
         lesson["canvases"] = [
-            {"id": canvas_id, "title": canvas_title(course_id, canvas_id, COURSES_ROOT)}
+            {"id": canvas_id, "title": canvas_title_for(course_id, canvas_id)}
             for canvas_id in canvas_ids
         ]
         return {"course_id": course_id, "lesson": lesson}
@@ -166,10 +178,12 @@ def create_router(
         )
 
     @router.get("/courses/{course_id}/canvas/{canvas_id}")
-    async def course_canvas(course_id: str, canvas_id: str) -> HTMLResponse:
+    async def canvas_page(course_id: str, canvas_id: str) -> HTMLResponse:
         if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(canvas_id):
             raise HTTPException(status_code=404)
         path = canvas_file(course_id, canvas_id, COURSES_ROOT)
+        if not path.is_file():
+            path = GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
         if not path.is_file():
             raise HTTPException(status_code=404)
         return HTMLResponse(

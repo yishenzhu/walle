@@ -196,7 +196,7 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
 - **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
 - **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
-- **画布内容**：按会话存放在 `data/canvas/<session_id>/<canvas_id>.html`，通过 `/canvas/<session_id>/<canvas_id>` 加载；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
+- **画布内容**：存放在 `data/canvas/<canvas_id>.html`，通过 `/canvas/<session_id>/<canvas_id>` 加载（旧数据回退到 session 目录）；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
 - 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
 会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态，当前 run 继续执行；连接接入 → `attach` 绑定新传输并继续接收事件。Web 工作区可从工作目录浏览历史会话并恢复。真正销毁走服务端停机（`--stop`）。
@@ -491,10 +491,10 @@ async def weather(city: str) -> str:
 
 ### 🖼️ Web 画布工具
 
-`canvas` 是内置工具，参数为 `title` / `html` / `canvas_id?`：
+`canvas` 是内置工具，参数为 `title` / `spec` / `html` / `canvas_id?`：
 
-- 普通画布写入 `data/canvas/<session_id>/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
-- 课程画布由学习插件提供 `course_canvas`，写入 `data/courses/<course_id>/canvas/<canvas_id>.html`；
+- 画布写入全局 `data/canvas/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
+- 课程课节通过 `{{canvas:<canvas_id>}}` 引用同一份全局画布；导出时按引用收集；
 - 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
 - Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
 - 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
@@ -502,21 +502,21 @@ async def weather(city: str) -> str:
 
 ### 📚 课程包
 
-课程包是一站式学习资料，目录自包含：
+课程包保存课程结构与课节；画布是全局资源，导出时按课节引用收集：
 
 ```
 data/courses/<course_id>/
 ├── course.json            # 标题、目标、课节索引（顺序/canvas_ids）
 ├── progress.json          # 学习进度（已完成课节 / 上次课节）
 ├── lessons/<lesson>.md    # 课节正文，可混排 Markdown、LaTeX、{{canvas:id}}
-└── canvas/<canvas>.html   # 课程内交互演示
+└── canvas/<canvas>.html   # 旧课程画布（可选，兼容读取；新画布在 data/canvas/）
 ```
 
 学习插件（`learning/`）提供的工具与动态指令；核心运行时只认识会话元数据，不认识 course/lesson：
 
 - `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
 - `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
-- `course_canvas(title, html, course_id, canvas_id?)`：把演示写入课程包，再在课节里用 `{{canvas:<id>}}` 嵌入；
+- `canvas(title, spec=..., html=..., canvas_id=...)`：内置工具，普通对话和课程共用；课节里用 `{{canvas:<id>}}` 引用；
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
 - Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
 - 课程页右侧可直接提问：进入课程回到生成该课程的原会话，答疑延续原上下文；切换课节时课程上下文自动更新；
@@ -626,7 +626,7 @@ walle/
 │       └── plugin.py          #     builtin 插件（向 ToolService 注册工具）
 ├── learning/                  # 可选学习插件（通用运行时之上）
 │   ├── plugin.py              #   课程工具 + 动态提示段 + PLUGIN / WEB_PLUGINS
-│   ├── tools.py               #   课程包工具（create_course / write_lesson / course_canvas / read_course）
+│   ├── tools.py               #   课程包工具（create_course / write_lesson / read_course）
 │   ├── store.py               #   课程包文件存储（course.json / lessons / canvas）
 │   ├── web.py                 #   课程 Web 插件（路由 / 静态资源 / UI 清单）
 │   ├── static/                #   views.js / course-view.css（学习前端插件）

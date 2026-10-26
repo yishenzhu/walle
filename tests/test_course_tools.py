@@ -1,9 +1,9 @@
-"""课程工具测试：create_course / write_lesson / course_canvas。"""
+"""课程工具测试：create_course / write_lesson / read_course。"""
 
 import pytest
 
 from ..infra import tool_context
-from ..learning import course_canvas, create_course, read_course, write_lesson
+from ..learning import create_course, read_course, write_lesson
 from ..learning import store as course_store
 from .conftest import make_session
 
@@ -44,45 +44,6 @@ async def test_create_course_and_write_lesson(courses, context):
     assert lesson.order == 1
     path = courses / result.course_id / "lessons" / f"{lesson.lesson_id}.md"
     assert "{{canvas:wave}}" in path.read_text(encoding="utf-8")
-
-
-async def test_course_canvas_lives_in_course_bundle(courses, context):
-    result = await create_course("课程", lessons=["演示"])
-    assert not isinstance(result, str)
-
-    rendered = await course_canvas(
-        "波形",
-        result.course_id,
-        html="<html><body>wave</body></html>",
-        canvas_id="wave",
-    )
-    assert not isinstance(rendered, str)
-    assert rendered.course_id == result.course_id
-    path = courses / result.course_id / "canvas" / "wave.html"
-    assert path.read_text(encoding="utf-8") == "<html><body>wave</body></html>"
-
-
-async def test_course_canvas_spec_wraps_runtime_page(courses, context):
-    result = await create_course("课程", lessons=["演示"])
-    assert not isinstance(result, str)
-
-    rendered = await course_canvas(
-        "向量",
-        result.course_id,
-        spec='{ title: "向量", draw(k, s) { k.arrow([0,0],[1,1], "accent"); } }',
-        canvas_id="spec-wave",
-    )
-    assert not isinstance(rendered, str)
-    path = courses / result.course_id / "canvas" / "spec-wave.html"
-    text = path.read_text(encoding="utf-8")
-    assert "window.CANVAS_SPEC =" in text
-    assert "/plugins/learning/canvas-runtime.js" in text
-
-
-async def test_canvas_rejects_unknown_course(courses, context):
-    result = await course_canvas("x", "missing", html="<html></html>")
-    assert isinstance(result, str)
-    assert "course 不存在" in result
 
 
 async def test_create_course_requires_title(courses, context):

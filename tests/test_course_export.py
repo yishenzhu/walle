@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from ..learning import web_export
 from ..learning.store import create_course, save_course, write_lesson
 from ..learning.web_export import build_course_zip, course_bundle
 
@@ -45,6 +46,22 @@ def test_bundle_is_sanitized(bundle):
     assert "session_id" not in data["course"]
     assert data["lessons"][lesson["id"]]["markdown"].startswith("# 第一课")
     assert data["canvases"]["demo"].startswith("<html>")
+
+
+def test_bundle_resolves_global_canvas(bundle, tmp_path, monkeypatch):
+    root, course, lesson = bundle
+    global_root = tmp_path / "global-canvas"
+    global_root.mkdir()
+    (global_root / "shared.html").write_text(
+        "<html><body><h1>Shared</h1></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_export, "GLOBAL_CANVAS_ROOT", global_root)
+    lesson_path = root / course["id"] / "lessons" / f"{lesson['id']}.md"
+    lesson_path.write_text("# 第一课\n\n{{canvas:shared}}\n", encoding="utf-8")
+
+    data = course_bundle(course["id"], root)
+    assert data["canvases"]["shared"].startswith("<html>")
 
 
 def test_build_zip_contains_offline_site(bundle):
@@ -87,6 +104,8 @@ def test_export_rewrites_canvas_runtime_path(bundle):
         '<script src="/plugins/learning/canvas-runtime.js"></script>',
         encoding="utf-8",
     )
+    lesson_path = root / course["id"] / "lessons" / f"{lesson['id']}.md"
+    lesson_path.write_text("# 第一课\n\n{{canvas:spec}}\n", encoding="utf-8")
     payload = build_course_zip(course["id"], root, WEB_DIR / "static")
     archive = zipfile.ZipFile(io.BytesIO(payload))
     html = archive.read("canvas/spec.html").decode("utf-8")

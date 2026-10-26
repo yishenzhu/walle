@@ -39,7 +39,7 @@ async def test_learning_plugin_registers_tools_and_prompt_section():
         assert plugin.state.value == "active"
 
         names = {tool.name for tool in host.root.get(ToolService).all_tools()}
-        assert {"create_course", "write_lesson", "course_canvas", "read_course"} <= names
+        assert {"create_course", "write_lesson", "read_course"} <= names
 
         assembly = await host.root.get(PromptService).assemble(
             AssembleContext(agent="tutor")

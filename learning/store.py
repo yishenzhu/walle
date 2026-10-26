@@ -69,19 +69,13 @@ def canvas_file(
     return canvas_dir(course_id, root) / f"{canvas_id}.html"
 
 
-def canvas_title(
-    course_id: str, canvas_id: str, root: str | Path | None = None
-) -> str:
-    """读取画布标题，优先 h1，其次 title，最后回退 id。"""
-    try:
-        html = canvas_file(course_id, canvas_id, root).read_text(encoding="utf-8")
-    except (OSError, ValueError):
-        return canvas_id
+def html_title(html: str, fallback: str) -> str:
+    """Extract a canvas title from HTML, falling back to `fallback`."""
     match = CANVAS_TITLE.search(html) or HTML_TITLE.search(html)
     if match is None:
-        return canvas_id
+        return fallback
     text = unescape(HTML_TAG.sub("", match.group(1)))
-    return " ".join(text.split()) or canvas_id
+    return " ".join(text.split()) or fallback
 
 
 def read_json(path: Path) -> dict[str, Any] | None:

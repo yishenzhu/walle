@@ -8,11 +8,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from ..tools.builtin.canvas import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from .store import (
     CANVAS_DIR,
+    CANVAS_MARKER,
     COURSE_FILE,
     LESSONS_DIR,
-    course_dir,
+    canvas_file,
     load_course,
     read_lesson,
 )
@@ -35,11 +37,19 @@ def course_bundle(
         if loaded is not None:
             lessons[item["id"]] = loaded
 
+    canvas_ids: list[str] = []
+    for lesson in lessons.values():
+        for canvas_id in CANVAS_MARKER.findall(lesson.get("markdown") or ""):
+            if canvas_id not in canvas_ids:
+                canvas_ids.append(canvas_id)
+
     canvases: dict[str, str] = {}
-    directory = course_dir(course_id, courses_root) / CANVAS_DIR
-    if directory.is_dir():
-        for path in sorted(directory.glob("*.html")):
-            canvases[path.stem] = path.read_text(encoding="utf-8")
+    for canvas_id in canvas_ids:
+        path = canvas_file(course_id, canvas_id, courses_root)
+        if not path.is_file():
+            path = GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
+        if path.is_file():
+            canvases[canvas_id] = path.read_text(encoding="utf-8")
 
     return {"course": exported, "lessons": lessons, "canvases": canvases}
 

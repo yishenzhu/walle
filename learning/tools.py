@@ -1,4 +1,4 @@
-"""Course tools: create courses, write lessons, and add canvases."""
+"""Course tools: create courses, write lessons, and read course material."""
 
 import time
 from typing import Literal
@@ -6,9 +6,8 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..infra import tool_context
-from ..tools.builtin.canvas import CanvasResult, create_canvas
-from .store import canvas_dir, load_course, read_lesson, save_course
 from .store import create_course as create_course_entry
+from .store import load_course, read_lesson, save_course
 from .store import write_lesson as write_lesson_entry
 
 
@@ -27,10 +26,6 @@ class LessonResult(BaseModel):
     title: str
     order: int
     version: int
-
-
-class CourseCanvasResult(CanvasResult):
-    course_id: str
 
 
 async def create_course(
@@ -75,8 +70,8 @@ async def write_lesson(
     lesson_id: str | None = None,
 ) -> LessonResult | str:
     """Write one lesson's Markdown into a course package.
-    Supports Markdown, LaTeX and `{{canvas:<id>}}`; call course_canvas first
-    to create the visual, then put its id on its own line."""
+    Supports Markdown, LaTeX and `{{canvas:<id>}}`; call `canvas` first,
+    then put its id on its own line."""
     try:
         entry = write_lesson_entry(
             course_id=course_id,
@@ -95,24 +90,6 @@ async def write_lesson(
         order=entry.get("order") or 0,
         version=time.time_ns(),
     )
-
-
-async def course_canvas(
-    title: str,
-    course_id: str,
-    spec: str | None = None,
-    html: str | None = None,
-    canvas_id: str | None = None,
-) -> CourseCanvasResult | str:
-    """Create or update an interactive course canvas.
-    Prefer `spec`; see the `canvas-spec` skill for the schema and kit.
-    Use `html` only for custom pages; pass `canvas_id` to update."""
-    if load_course(course_id) is None:
-        return f"Error: course 不存在: {course_id}"
-    result = create_canvas(title, spec, html, canvas_id, canvas_dir(course_id))
-    if isinstance(result, str):
-        return result
-    return CourseCanvasResult(**result.model_dump(), course_id=course_id)
 
 
 async def read_course(
