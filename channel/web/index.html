@@ -944,8 +944,37 @@
       return details;
     }
 
+    function parseToolArgs(call) {
+      try {
+        return JSON.parse(historyToolArgs(call) || "{}");
+      } catch (err) {
+        return {};
+      }
+    }
+
+    function matchCanvasId(text) {
+      const match = /canvas_id=['"]?([A-Za-z0-9_-]+)/.exec(text || "");
+      return match ? match[1] : "";
+    }
+
+    function matchCanvasTitle(text) {
+      const match = /title=['"]([^'"]+)['"]/.exec(text || "");
+      return match ? match[1] : "";
+    }
+
     function renderHistory(items) {
-      const calls = new Map();
+      const results = new Map();
+      const callIds = new Set();
+      for (const item of items || []) {
+        if (item.role === "assistant") {
+          for (const call of item.tool_calls || []) {
+            if (call.id) callIds.add(call.id);
+          }
+        } else if (item.role === "tool" && item.tool_call_id) {
+          results.set(item.tool_call_id, item.content || "");
+        }
+      }
+
       for (const item of items || []) {
         if (item.role === "assistant") {
           if ((item.content || "").trim()) {
@@ -954,14 +983,26 @@
             if (html !== null) view.bubble.innerHTML = html;
           }
           for (const call of item.tool_calls || []) {
-            const details = addHistoryTool(call);
-            if (call.id) calls.set(call.id, details);
+            const name = historyToolName(call);
+            const output = results.get(call.id) || "";
+            if (name === "canvas" || name === "course_canvas") {
+              const args = parseToolArgs(call);
+              const canvasId = args.canvas_id || matchCanvasId(output);
+              if (canvasId && !output.startsWith("Error:")) {
+                canvasCard({
+                  canvas_id: canvasId,
+                  title: args.title || matchCanvasTitle(output) || canvasId,
+                  session_id: conversationStore.get().sessionId || "",
+                  course_id: conversationStore.get().courseId || "",
+                  version: 0,
+                });
+                continue;
+              }
+            }
+            addHistoryTool(call, output || undefined);
           }
         } else if (item.role === "tool") {
-          const details = calls.get(item.tool_call_id);
-          if (details) {
-            details.append(el("pre", "", item.content || ""));
-          } else {
+          if (!callIds.has(item.tool_call_id)) {
             addHistoryTool(null, item.content || "");
           }
         } else if (item.role === "user") {
@@ -969,6 +1010,20 @@
         }
       }
       scroll();
+    }
+
+    function renderHistorySnapshot(items) {
+      approvals.clear();
+      tools.clear();
+      prepareRow = null;
+      current = null;
+      busy = false;
+      lastRender = 0;
+      log.replaceChildren(chatEmpty);
+      chatEmpty.hidden = false;
+      renderHistory(items);
+      refreshPending();
+      updateComposer();
     }
 
     async function api(path) {
@@ -1540,6 +1595,7 @@
         existing.name.textContent = existing.title;
         if (shownCanvas === existing) canvasName.textContent = existing.title;
         latestCanvas = existing;
+        if (!existing.card.isConnected) log.append(existing.card);
         return existing;
       }
       const card = el("div", "canvas-card");
@@ -1639,10 +1695,8 @@
         return;
       }
       if (msg.type === "welcome") {
-        resetChat();
         setStatus("已连接", "on");
-        renderHistory(msg.history);
-        updateComposer();
+        renderHistorySnapshot(msg.history);
         return;
       }
       if (msg.type === "error") {
