@@ -268,7 +268,7 @@
     .args-block summary::-webkit-details-marker,
     .result summary::-webkit-details-marker { display: none; }
     .args-block summary::before, .result summary::before {
-      content: "▸"; font-size: 10px; flex: 0 0 auto;
+      content: "›"; font-size: 12px; flex: 0 0 auto;
       transition: transform .15s ease;
     }
     .args-block[open] summary::before, .result[open] summary::before {
@@ -351,8 +351,25 @@
       font-size: 12px; color: var(--muted);
     }
     .tool-history summary {
+      display: flex; align-items: center; gap: 6px;
       cursor: pointer; color: #c9d6e4; font-family: var(--mono);
+      list-style: none;
     }
+    .tool-history-name {
+      flex: 1 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tool-history-open {
+      flex: 0 0 auto; margin-left: auto;
+      padding: 2px 8px; font-size: 11px;
+    }
+    .tool-history summary::-webkit-details-marker { display: none; }
+    .tool-history summary::before {
+      content: "›"; display: inline-block; margin-right: 4px;
+      color: var(--faint); font-size: 12px;
+      transition: transform .15s ease;
+    }
+    .tool-history[open] summary::before { transform: rotate(90deg); }
     .tool-history pre {
       margin: 8px 0 0; max-height: 240px; overflow: auto;
       white-space: pre-wrap; word-break: break-word;
@@ -931,10 +948,53 @@
       return fn.arguments || call?.arguments || "";
     }
 
+    function prettyArgs(raw) {
+      if (!raw) return "";
+      try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+      } catch (err) {
+        return String(raw);
+      }
+    }
+
+    function canvasDetails(name, args, output, data) {
+      if (chatEmpty) chatEmpty.hidden = true;
+      const details = el("details", "tool-history");
+      const summary = el("summary");
+      summary.append(el("span", "tool-history-name", name));
+      if (data) {
+        const open = el("button", "ghost tool-history-open", "打开画布");
+        open.type = "button";
+        const state = canvasState(data, open);
+        open.onclick = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleCanvas(state);
+        };
+        summary.append(open);
+      }
+      details.append(summary);
+      const pretty = prettyArgs(args);
+      if (pretty) details.append(el("pre", "", pretty));
+      if (output) details.append(el("pre", "", String(output)));
+      return details;
+    }
+
+    function addHistoryCanvas(call, output, data) {
+      const details = canvasDetails(
+        historyToolName(call),
+        historyToolArgs(call),
+        output,
+        data,
+      );
+      log.append(details);
+      return details;
+    }
+
     function addHistoryTool(call, output) {
       if (chatEmpty) chatEmpty.hidden = true;
       const details = el("details", "tool-history");
-      details.append(el("summary", "", `工具 · ${historyToolName(call)}`));
+      details.append(el("summary", "", historyToolName(call)));
       const args = historyToolArgs(call);
       if (args) details.append(el("pre", "", String(args)));
       if (output !== undefined && output !== null) {
@@ -988,16 +1048,16 @@
             if (name === "canvas" || name === "course_canvas") {
               const args = parseToolArgs(call);
               const canvasId = args.canvas_id || matchCanvasId(output);
-              if (canvasId && !output.startsWith("Error:")) {
-                canvasCard({
-                  canvas_id: canvasId,
-                  title: args.title || matchCanvasTitle(output) || canvasId,
-                  session_id: conversationStore.get().sessionId || "",
-                  course_id: conversationStore.get().courseId || "",
-                  version: 0,
-                });
-                continue;
-              }
+              const failed = output.startsWith("Error:");
+              const data = canvasId && !failed ? {
+                canvas_id: canvasId,
+                title: args.title || matchCanvasTitle(output) || canvasId,
+                session_id: conversationStore.get().sessionId || "",
+                course_id: conversationStore.get().courseId || "",
+                version: 0,
+              } : null;
+              addHistoryCanvas(call, output, data);
+              continue;
             }
             addHistoryTool(call, output || undefined);
           }
@@ -1522,6 +1582,7 @@
         el("span", "tool-name", data.tool_name || "tool"),
         el("span", "tool-state", "执行中")
       );
+      row.dataset.args = data.arguments ? JSON.stringify(data.arguments, null, 2) : "";
       log.append(row);
       tools.set(data.tool_call_id || data.tool_name, row);
       scroll();
@@ -1540,13 +1601,28 @@
       if (!data.error && WallePlugins.toolResult(data)) {
         tools.delete(data.tool_call_id);
       } else if (!data.error && isCanvasResult(result)) {
-        // 保留调用状态条：即使无需审批，也要能看到 canvas 被调用
         tools.delete(data.tool_call_id);
-        const state = canvasCard({ ...result, session_id: data.session_id });
-        // 面板已打开时：同画布版本更新直接刷新，新画布也直接切过去
+        const payload = { ...result, session_id: data.session_id };
+        const state = canvasState(payload);
+        const details = canvasDetails(
+          "canvas",
+          row ? row.dataset.args : "",
+          JSON.stringify(result, null, 2),
+          payload,
+        );
+        if (row && row.parentNode) row.replaceWith(details);
+        else log.append(details);
         if (!canvasPanel.hidden) openCanvas(state);
       } else if (data.error && !hasCard) {
-        log.append(el("div", "tool-error", data.error));
+        const toolName = data.tool_name ||
+          (row ? row.querySelector(".tool-name").textContent : "");
+        if (toolName === "canvas" && row && row.parentNode) {
+          const details = canvasDetails("canvas", row.dataset.args, data.error, null);
+          row.replaceWith(details);
+          tools.delete(data.tool_call_id);
+        } else {
+          log.append(el("div", "tool-error", data.error));
+        }
       }
       scroll();
     }
@@ -1586,41 +1662,29 @@
       return `/canvas/${session}/${id}?v=${state.version}`;
     }
 
-    function canvasCard(data) {
+    function canvasState(data, openButton = null) {
       const key = `${data.course_id || ""}:${data.canvas_id}`;
       const existing = canvases.get(key);
       if (existing) {
         if (data.title) existing.title = data.title;
         if (data.version) existing.version = data.version;
-        existing.name.textContent = existing.title;
+        if (openButton) existing.open = openButton;
         if (shownCanvas === existing) canvasName.textContent = existing.title;
         latestCanvas = existing;
-        if (!existing.card.isConnected) log.append(existing.card);
+        syncCanvasButtons();
         return existing;
       }
-      const card = el("div", "canvas-card");
-      const title = el("div", "canvas-title");
-      const name = el("div", "canvas-name", data.title || "画布");
-      title.append(el("div", "canvas-kicker", "画布"), name);
-      const open = el("button", "ghost canvas-open", "打开画布");
-      card.append(title, open);
       const state = {
         id: data.canvas_id,
         sessionId: data.session_id || "",
         courseId: data.course_id || "",
         title: data.title || "画布",
         version: data.version || 0,
-        card, name, open,
-      };
-      card.onclick = () => toggleCanvas(state);
-      open.onclick = (event) => {
-        event.stopPropagation();
-        toggleCanvas(state);
+        open: openButton,
       };
       canvases.set(key, state);
       latestCanvas = state;
-      log.append(card);
-      scroll();
+      syncCanvasButtons();
       return state;
     }
 

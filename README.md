@@ -1,6 +1,8 @@
-# Walle 🤖
+# Walle · AI 辅助学习系统
 
-> 一个从零构建的 AI Agent 框架 —— 工具调用 · 多智能体 · MCP · 运行时插件化 · 全链路可观测
+> 从学习目标到可导出的课程包：AI 生成课程大纲、课节与交互画布，边学边问，离线可读。
+
+Walle 是一个 AI 辅助学习系统。底层是通用 Agent 运行时（工具调用、多智能体、MCP、插件化、可观测），学习插件在此之上提供课程生成、课节阅读、交互画布、答疑与导出。
 
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)](https://docs.pydantic.dev)
@@ -13,6 +15,11 @@
 
 | 特性 | 说明 |
 |---|---|
+| 🎓 **AI 课程生成** | 从学习目标生成课程大纲、Markdown 课节与交互画布；按章节顺序逐课完成 |
+| 🖼️ **交互画布** | 共享 JSXGraph runtime，优先使用 `spec`；全局 `canvas_id`，普通对话和课程共用 |
+| 💬 **课程答疑** | 课程页默认 `tutor` 只读答疑，基于 `read_course` 与课程上下文 |
+| 📦 **离线导出** | 课程导出为 zip：课节、画布、runtime 与 JSXGraph 一并打包，解压即可打开 |
+| 🧭 **学习空间** | 课程列表 + 课节阅读；左侧内容、右侧常驻面板切换「画布 / 对话」，可拖拽分栏 |
 | ⚙️ **Agent 循环引擎** | ReAct 式多轮工具调用，流式/非流式双模式，可配置最大轮次 |
 | 📝 **Agent 可配置化** | `.agent/agents/*.md` frontmatter 定义（角色/温度/工具筛选/技能白名单），启动按名加载，会话内可切换 |
 | 🤝 **多智能体 Handoff** | Agent 可移交任务，支持链式协作 |
@@ -21,10 +28,21 @@
 | 🔒 **OS 级沙箱** | 可选 bwrap 沙箱插件：全盘只读 + 会话 cwd 可写，隐藏凭据路径，可断网；同名覆盖内置 bash，无 bwrap 时自动降级 |
 | 🧠 **全链路可观测** | OpenTelemetry Traces + Metrics → Grafana / Tempo / Mimir |
 | 💬 **Web 通道** | JSON-line 会话服务端 + WebSocket 桥接；多客户端并发、流式回复，断开重连保留状态 |
-| 🖥️ **Web 工作区** | 工作目录与会话列表、对话 + 画布双栏；Markdown/KaTeX、工具审批、可拖拽分栏与全屏画布 |
-| 📚 **学习课程** | 课程包 = 学习计划 + Markdown 课节 + 交互画布；课程页可直接提问，答疑继续生成该课程的原对话 |
 | 🔌 **插件化** | `apply(ctx, config)` + 服务依赖注入 + 每会话 PluginHost；工具 / 提示段 / 技能 / 事件 / Web 路由都是插件，`.agent/plugins/` 即插即用 |
 | 🪟 **上下文窗口管理** | 模型主动换窗口（`read`/`edit` 维护 `.agent/note.md` 工作笔记 + `new_window` 硬切）、`history` 工具无损回源、会话 JSONL + 切点持久化 |
+
+---
+
+## 🎓 学习系统
+
+Walle 的默认使用方式是 AI 辅助学习：
+
+1. 在对话里说明学习目标。
+2. 学习插件生成课程大纲、Markdown 课节和交互画布。
+3. 在课程页左侧阅读，右侧在「画布 / 对话」之间切换。
+4. 标记完成、记录进度；需要时导出离线 zip。
+
+画布是全局资源，课程只通过 `{{canvas:<canvas_id>}}` 引用；普通对话和课程共用同一个 `canvas` 工具与 JSXGraph runtime。
 
 ---
 
@@ -188,15 +206,16 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 ```
 
 - **工作区与会话**：顶栏「工作区」打开最近目录、手动路径输入和当前目录下的历史会话；选择会话会 attach 恢复，刷新页面默认接续上次会话，也可「新建会话」。
-- **学习空间**：顶栏「学习」进入 `/courses`；课程页左侧学习计划、中间课节 Markdown/KaTeX、画布按 `{{canvas:id}}` 就地嵌入，右侧直接提问。课程和答疑延续生成该课程的原对话，进入课程自动回到原会话，不另起上下文；切换课节时课程上下文自动跟随。
-- **学习模式**：顶栏「学习模式」在当前连接内直接切换 agent（学习用 `learning`，通用回 `default`），不断开、不丢历史；空状态提示与快捷问题同步切换，新会话沿用当前模式。
+- **学习空间**：顶栏「学习」进入 `/courses`；课程页左侧阅读课节，顶部下拉切换章节，右侧常驻面板可在「画布 / 对话」之间切换，左右栏可拖动调整宽度。进入课程回到生成该课程的原会话，切换课节时课程上下文自动跟随。
+- **课程模式**：顶栏「课程模式」在当前连接内切换到 `learning` agent，用于生成/续写课程；关闭后回到通用助手。课程页默认使用只读 `tutor` 答疑，点「填入续写提示」会切到 `learning` 写课。
 - **服务重启恢复**：attach 失败时 Web 用同一 `session_id` 重新建会话，从 `data/sessions` 的 JSONL 读回历史并回填到页面。
 - **断线自动重连**：异常断开后自动恢复；run 在服务端继续，新连接接收后续事件，服务重启后历史从文件读回。
 - **run 续跑**：连接断开不取消当前 run；新连接 attach 后继续接收流式事件，审批/提问会等待重连。
 - **对话区**：Markdown 渲染（marked + KaTeX + DOMPurify），支持代码块、表格、引用、链接，以及 `$...$` / `$$...$$` 数学公式；流式输出。
-- **画布区**：模型调用内置 `canvas` 工具后生成入口卡，点击才打开右侧画布；可拖拽调整两栏宽度、放大到全屏。面板打开时，新的画布结果会自动刷新或切换。
+- **画布区**：`canvas` 工具调用显示为可展开的工具行，点开可看参数；行内「打开画布」按钮控制右侧面板，打开后变为「收起画布」。支持拖拽分栏与全屏。
 - **交互反馈**：工具参数生成阶段先显示「工具名 生成参数…」，参数完成后进入工具执行状态；审批卡支持允许/拒绝和结果折叠。
-- **画布内容**：存放在 `data/canvas/<canvas_id>.html`，通过 `/canvas/<session_id>/<canvas_id>` 加载（旧数据回退到 session 目录）；在 sandbox iframe 中渲染，可引用外部 CDN，但不能访问主页面或本地接口。
+- **画布内容**：全局存放在 `data/canvas/<canvas_id>.html`，通过 `/canvas/<session_id>/<canvas_id>` 加载（旧 session/课程目录仅作回退）；优先使用共享 JSXGraph runtime 的 `spec`，完整 HTML 作为兜底。
+- **画布 runtime**：`spec` 由 `/plugins/learning/canvas-runtime.js` 渲染，JSXGraph 与 runtime 在导出时只打包一次。
 - 画布工具默认在 `conf.yaml.example` 中放行；可以这样触发：`用 canvas 工具画一个 sin(x) 函数图像`。
 
 会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态，当前 run 继续执行；连接接入 → `attach` 绑定新传输并继续接收事件。Web 工作区可从工作目录浏览历史会话并恢复。真正销毁走服务端停机（`--stop`）。
@@ -340,7 +359,7 @@ tools:
 - **技能注入**：会话激活技能插件后，可用技能清单（名/描述/路径）按 `skills` 白名单注入 system prompt，模型按需加载全文
 - **默认 Agent**：`.agent/agents/default.md`，未指定 agent 名时加载
 - **课程导师**：`.agent/agents/tutor.md`，只读答疑（仅允许 `read_course`），课程页自动使用
-- **学习规划**：`.agent/agents/learning.md`，按章节顺序生成课程包（当前课正文和画布完成后再进入下一课），Web「学习模式」使用
+- **课程规划**：`.agent/agents/learning.md`，按章节顺序生成课程包（当前课正文和画布完成后再进入下一课），Web「课程模式」使用
 - **会话内切换**：API `Session.set_agent(name)` 按名切换（历史保留）；未指定时用默认 agent
 
 ---
@@ -493,12 +512,15 @@ async def weather(city: str) -> str:
 
 `canvas` 是内置工具，参数为 `title` / `spec` / `html` / `canvas_id?`：
 
+- 优先 `spec`：由共享 JSXGraph runtime 渲染，适合向量、矩阵、函数图、投影等 2D 数学可视化；
+- `html` 仅作为兜底，用于 spec 无法表达的页面；
 - 画布写入全局 `data/canvas/<canvas_id>.html`，返回 `canvas_id` / `title` / `version`；
 - 课程课节通过 `{{canvas:<canvas_id>}}` 引用同一份全局画布；导出时按引用收集；
 - 同标题默认复用同一画布；更新已有画布时传回上次返回的 `canvas_id` 可原地刷新；
-- Web 端在 `tool_result` 中识别画布结果，生成入口卡；点击打开右侧面板，面板已打开时自动刷新/切换；
-- 画布在 sandbox iframe 中渲染（无 `allow-same-origin`），可引用外部 CDN，但不能访问主页面或本地接口；
-- `conf.yaml.example` 默认 `[allow, canvas]`，不触发审批；画布 HTML 属于运行时数据，`data/` 已被 `.gitignore` 排除。
+- Web 端工具行可展开查看参数，行内「打开画布 / 收起画布」控制右侧面板；
+- 画布在 sandbox iframe 中渲染；导出时打包 runtime 与 JSXGraph，离线可用；
+- 详细 spec / kit 见 `.agent/skills/canvas-spec/SKILL.md`；
+- `conf.yaml.example` 默认 `[allow, canvas]`，不触发审批；画布文件在 `data/` 下，已被 `.gitignore` 排除。
 
 ### 📚 课程包
 
@@ -515,15 +537,14 @@ data/courses/<course_id>/
 学习插件（`learning/`）提供的工具与动态指令；核心运行时只认识会话元数据，不认识 course/lesson：
 
 - `create_course(title, goal, lessons?, course_id?)`：创建/更新课程与课节大纲；`lessons` 为有序标题列表；
-- `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md，自动解析并登记 `{{canvas:id}}`；
-- `canvas(title, spec=..., html=..., canvas_id=...)`：内置工具，普通对话和课程共用；课节里用 `{{canvas:<id>}}` 引用；
+- `write_lesson(course_id, title, markdown, order?, lesson_id?)`：写入课节 md；先调用 `canvas` 生成画布，再用 `{{canvas:<id>}}` 引用；
+- `canvas(title, spec=..., html=..., canvas_id=...)`：内置工具，普通对话和课程共用；课程只保存 `canvas_id`；
 - `read_course(course_id?, lesson_id?, outline?)`：课程答疑读取当前课节全文或课程大纲（默认取会话上下文）；
-- Web 端 `/courses` 列出课程，`/courses/<id>` 阅读页按课节渲染 Markdown/KaTeX 与画布，并记住上次课节；
-- 课程页右侧可直接提问：进入课程回到生成该课程的原会话，答疑延续原上下文；切换课节时课程上下文自动更新；
-- 阅读页显示“已完成 N/M · 已生成 N/M”，可标记完成/未完成并记住上次课节；“继续学习”跳到上次未完成课节；
-- 空课节提供“填入续写提示”，在右侧对话继续生成，按章节顺序补齐后续课节；
-- `/courses` 列表显示每门课的完成进度，点击直接回到该课的继续学习位置；
-- `/courses/<id>/export` 导出 zip 静态站点：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课程源文件，解压后可直接用浏览器打开；依赖 CDN 的画布仍需联网。
+- Web 端 `/courses` 列出课程，`/courses/<id>` 左侧阅读 Markdown/KaTeX，右侧在「画布 / 对话」间切换，并记住上次课节；
+- 顶部下拉切换章节，上一课/下一课与标记完成；进入课程回到生成该课程的原会话，切换课节时课程上下文自动更新；
+- 空课节提供「填入续写提示」，在右侧「对话」继续生成，按章节顺序补齐后续课节；
+- `/courses` 列表显示每门课的完成进度，点击直接回到该课继续位置；
+- `/courses/<id>/export` 导出 zip：`index.html` + `data.js` + 本地 marked/KaTeX/DOMPurify + 课节/画布 + `canvas-runtime.js` 与 JSXGraph，解压后离线打开。
 
 ### 配置多智能体 Handoff
 
@@ -618,7 +639,7 @@ walle/
 │       ├── edit.py            #     文件局部替换（降级匹配 + 换行/BOM 保真）
 │       ├── write.py           #     整文件写入
 │       ├── ask_user.py        #     向用户提问
-│       ├── canvas.py          #     Web 画布（HTML 落盘 + CanvasResult）
+│       ├── canvas.py          #     Web 画布（spec/HTML 落盘 + CanvasResult）
 │       ├── paths.py           #     文件工具路径解析（会话 cwd）
 │       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
@@ -627,9 +648,9 @@ walle/
 ├── learning/                  # 可选学习插件（通用运行时之上）
 │   ├── plugin.py              #   课程工具 + 动态提示段 + PLUGIN / WEB_PLUGINS
 │   ├── tools.py               #   课程包工具（create_course / write_lesson / read_course）
-│   ├── store.py               #   课程包文件存储（course.json / lessons / canvas）
+│   ├── store.py               #   课程包文件存储（course.json / lessons / progress）
 │   ├── web.py                 #   课程 Web 插件（路由 / 静态资源 / UI 清单）
-│   ├── static/                #   views.js / course-view.css（学习前端插件）
+│   ├── static/                #   views.js / course-view.css / canvas-runtime.js / vendor
 │   ├── web_export.py          #   课程包 zip 导出
 │   └── export.html            #   离线课程阅读器模板
 ├── messages/                  # 消息存储
