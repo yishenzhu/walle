@@ -8,7 +8,7 @@ from ..messages import (
     ProjectedMessages,
     SQLiteMessages,
 )
-from ..spec import Projection, Usage, UserMessage
+from ..spec import Projection, UserMessage
 
 
 def make_storage(kind, tmp_path=None):
@@ -98,13 +98,6 @@ class TestProjectedMessages:
         popped = await proj.pop()
         assert popped is not None
         assert popped.content == "u1"
-
-    async def test_add_with_usage_delegates(self, kind, tmp_path):
-        proj = ProjectedMessages(make_storage(kind, tmp_path))
-        usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-        await proj.add([UserMessage(content="hi")], usage=usage)
-        result = await proj.get()
-        assert len(result) == 1
 
     async def test_get_returns_copy_not_internal_state(self, kind, tmp_path):
         proj = ProjectedMessages(make_storage(kind, tmp_path))

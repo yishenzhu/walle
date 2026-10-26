@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 
-from ..spec import Message, Messages, Projection, ProjectionStore, Usage
+from ..spec import Message, Messages, Projection, ProjectionStore
 
 
 class ProjectedMessages(Projection):
@@ -68,9 +68,9 @@ class ProjectedMessages(Projection):
         return list(messages)
 
     # ── 透传底层存储 ────────────────────────────────────
-    async def add(self, items: Sequence[Message], usage: Usage | None = None):
+    async def add(self, items: Sequence[Message]):
         await self._ensure_restored()
-        await self._messages.add(items, usage)
+        await self._messages.add(items)
 
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:
         # 窗口查询永远查底层原文（不经投影）：history 回源工具读折叠前细节

@@ -2,7 +2,7 @@
 import pytest
 
 from ..messages import InMemoryMessages
-from ..spec import SystemMessage, Usage, UserMessage
+from ..spec import SystemMessage, UserMessage
 
 
 @pytest.fixture
@@ -48,9 +48,3 @@ class TestInMemoryMessages:
         await messages.add([])
         result = await messages.get()
         assert len(result) == 0
-
-    async def test_add_with_usage(self, messages):
-        usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-        await messages.add([UserMessage(content="hi")], usage=usage)
-        result = await messages.get()
-        assert len(result) == 1

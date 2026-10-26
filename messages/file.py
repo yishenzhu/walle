@@ -13,7 +13,7 @@ from typing import Any
 
 from ..conf import PROJECT_ROOT
 from ..infra.jsonio import atomic_write, read_json, write_json_atomic
-from ..spec import Message, MessageAdapter, Usage
+from ..spec import Message, MessageAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ class FileMessages:
         async with self._lock:
             return len(self._items)
 
-    async def add(self, items: Sequence[Message], usage: Usage | None = None):
+    async def add(self, items: Sequence[Message]):
         if not items:
             return
         batch = list(items)

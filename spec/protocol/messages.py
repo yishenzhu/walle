@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from ..schemas import Message, Usage
+from ..schemas import Message
 
 
 @runtime_checkable
@@ -13,7 +13,7 @@ class Messages(Protocol):
     async def get(self) -> list[Message]:
         """全部原始消息（按追加顺序）。窗口查询用 query。"""
 
-    async def add(self, items: Sequence[Message], usage: Usage | None = None): ...
+    async def add(self, items: Sequence[Message]): ...
 
     async def clear(self): ...
 

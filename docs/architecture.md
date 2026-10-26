@@ -200,7 +200,8 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
 - **metadata**：唯一事实源 `Session._metadata`；客户端经
   `session.set_metadata` 合并，核心不解释键名，插件在 PromptService 段里读取。
 - **工具表**：插件经 ToolService 注册，落到会话 `SessionToolTable`（define_tool
-  动态注册实时反映到下一轮）；Agent 不持有工具源。
+  动态注册实时反映到下一轮）；Agent 不持有工具源。工具/技能注册随会话关闭释放，
+  单插件卸载只回收事件订阅，不回收其注册项。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时
   由 SessionManager 就地新建，其余沿用进程默认。
 - **子 agent 历史**：`SessionContext.history_factory` 提供隔离历史来源（装配注入

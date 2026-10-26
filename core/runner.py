@@ -164,7 +164,7 @@ class Runner:
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
-                await history.add([message], usage=usage)
+                await history.add([message])
                 await history.add(
                     [
                         ToolMessage(content=str(r), tool_call_id=tc_id)

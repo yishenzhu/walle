@@ -3,7 +3,7 @@ import sqlite3
 from collections.abc import Sequence
 
 from ..infra import SQLiteStore
-from ..spec import Message, MessageAdapter, Usage
+from ..spec import Message, MessageAdapter
 
 
 class SQLiteMessages(SQLiteStore):
@@ -93,7 +93,7 @@ class SQLiteMessages(SQLiteStore):
 
         return await asyncio.to_thread(_count)
 
-    async def add(self, items: Sequence[Message], usage: Usage | None = None):
+    async def add(self, items: Sequence[Message]):
         if not items:
             return
         await self.executemany(

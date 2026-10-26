@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from ..spec import Message, Usage
+from ..spec import Message
 
 
 class InMemoryMessages:
@@ -31,7 +31,7 @@ class InMemoryMessages:
     async def count(self) -> int:
         return len(self._items)
 
-    async def add(self, items: Sequence[Message], usage: Usage | None = None):
+    async def add(self, items: Sequence[Message]):
         if not items:
             return
         self._items.extend(items)
