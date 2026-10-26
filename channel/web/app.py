@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from ...conf import CANVAS_ROOT
 from ...plugin import PluginHost
 from ...spec import WebService
 from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
@@ -22,7 +23,6 @@ app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
 STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
-CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 

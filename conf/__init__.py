@@ -1,5 +1,6 @@
 from .config import (
     AGENT_DIR,
+    CANVAS_ROOT,
     PROJECT_ROOT,
     ApprovalConfig,
     ApprovalDecision,
@@ -31,5 +32,6 @@ __all__ = [
     "PluginConfig",
     "PROJECT_ROOT",
     "AGENT_DIR",
+    "CANVAS_ROOT",
     "resolve_path",
 ]

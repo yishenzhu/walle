@@ -2,7 +2,7 @@
 import pytest
 
 from ..messages import SQLiteMessages
-from ..spec import AssistantMessage, SystemMessage, UserMessage
+from ..spec import AssistantMessage, SystemMessage, ToolMessage, UserMessage
 
 
 @pytest.fixture
@@ -19,6 +19,25 @@ class TestSQLiteMessages:
         assert result[0].role == "user"
         assert result[0].content == "hello"
         assert result[1].role == "system"
+
+    async def test_query_window(self, messages):
+        for i in range(5):
+            await messages.add([UserMessage(content=f"msg{i}")])
+        result = await messages.query(offset=1, limit=2)
+        assert [m.content for m in result] == ["msg1", "msg2"]
+
+    async def test_search_matches_content_only(self, messages):
+        await messages.add(
+            [
+                UserMessage(content="sunny day"),
+                ToolMessage(content="forecast", tool_call_id="call_abc"),
+            ]
+        )
+        hits = await messages.search("sunny")
+        assert [m.content for _, m in hits] == ["sunny day"]
+
+        # tool_call_id 不进检索范围（与 file/in_memory 一致）
+        assert await messages.search("call_abc") == []
 
     async def test_pop(self, messages):
         await messages.add([UserMessage(content="first"), UserMessage(content="second")])

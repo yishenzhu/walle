@@ -71,6 +71,19 @@ def canvas_file(
     return canvas_dir(course_id, root) / f"{canvas_id}.html"
 
 
+def lesson_canvas_ids(lesson: dict[str, Any]) -> list[str]:
+    """一课的画布 id：正文标记 + 元数据记录，去重保序。"""
+    ids: list[str] = []
+    sources = [
+        *CANVAS_MARKER.findall(lesson.get("markdown") or ""),
+        *(lesson.get("canvas_ids") or []),
+    ]
+    for canvas_id in sources:
+        if canvas_id not in ids:
+            ids.append(canvas_id)
+    return ids
+
+
 def outline_lines(
     course: dict[str, Any], current_lesson_id: str | None = None
 ) -> list[str]:

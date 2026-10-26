@@ -5,9 +5,11 @@ from collections.abc import Sequence
 from ..infra import SQLiteStore
 from ..spec import Message, MessageAdapter
 
+DEFAULT_DB_PATH = "data/session.db"
+
 
 class SQLiteMessages(SQLiteStore):
-    def __init__(self, db_path: str = "data/session.db", session_id: str = "default"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH, session_id: str = "default"):
         super().__init__(db_path)
         self._session_id = session_id
 
@@ -18,8 +20,7 @@ class SQLiteMessages(SQLiteStore):
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
-                data TEXT NOT NULL,
-                created_at REAL NOT NULL DEFAULT (julianday('now'))
+                data TEXT NOT NULL
             )
             """
         )
@@ -29,50 +30,50 @@ class SQLiteMessages(SQLiteStore):
         conn.commit()
         return conn
 
-    async def get(self) -> list[Message]:
+    async def _fetch(self, sql: str, params: tuple = ()) -> list[Message]:
+        """跑一条 SELECT data，按行解成消息。"""
         conn = await self._get_conn()
 
-        def _query():
-            sql = "SELECT data FROM messages WHERE session_id = ? ORDER BY id ASC"
-            rows = conn.execute(sql, (self._session_id,)).fetchall()
+        def _run():
+            rows = conn.execute(sql, params).fetchall()
             return [MessageAdapter.validate_json(row[0]) for row in rows]
 
-        return await asyncio.to_thread(_query)
+        return await asyncio.to_thread(_run)
+
+    async def get(self) -> list[Message]:
+        return await self._fetch(
+            "SELECT data FROM messages WHERE session_id = ? ORDER BY id ASC",
+            (self._session_id,),
+        )
 
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:
         """窗口查询：按 id 顺序取 [offset, offset+limit) 的原文。"""
         if offset < 0 or limit < 0:
             raise ValueError("offset/limit must be >= 0")
-        conn = await self._get_conn()
-
-        def _query():
-            sql = (
-                "SELECT data FROM messages WHERE session_id = ? "
-                "ORDER BY id ASC LIMIT ? OFFSET ?"
-            )
-            rows = conn.execute(sql, (self._session_id, limit, offset)).fetchall()
-            return [MessageAdapter.validate_json(row[0]) for row in rows]
-
-        return await asyncio.to_thread(_query)
+        return await self._fetch(
+            "SELECT data FROM messages WHERE session_id = ? "
+            "ORDER BY id ASC LIMIT ? OFFSET ?",
+            (self._session_id, limit, offset),
+        )
 
     async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
-        """关键词检索：词间 AND 的 LIKE 子串匹配，返回 (绝对序号, 消息) 倒序。"""
-        words = [w for w in query.split() if w]
+        """关键词检索：词间 AND 子串匹配正文，返回 (绝对序号, 消息) 倒序。"""
+        words = [w for w in query.lower().split() if w]
         conn = await self._get_conn()
 
         def _search():
-            # 会话内先按 id 排号（seq），再做词过滤；seq 同 query 的 offset 寻址
+            # 会话内先按 id 排号（seq），再按正文过滤；seq 同 query 的 offset 寻址
             sql = (
                 "WITH ranked AS ("
                 "  SELECT data, ROW_NUMBER() OVER (ORDER BY id) - 1 AS seq "
                 "  FROM messages WHERE session_id = ?"
                 ")"
                 "SELECT data, seq FROM ranked WHERE 1=1"
-                + "".join(" AND LOWER(data) LIKE ?" for _ in words)
+                + "".join(" AND LOWER(json_extract(data, '$.content')) LIKE ?" for _ in words)
                 + " ORDER BY seq DESC LIMIT ?"
             )
             params: list[str | int] = [self._session_id]
-            params += [f"%{w.lower()}%" for w in words]
+            params += [f"%{w}%" for w in words]
             params.append(limit)
             rows = conn.execute(sql, params).fetchall()
             return [

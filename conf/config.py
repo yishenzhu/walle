@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AGENT_DIR = PROJECT_ROOT / ".agent"
+CANVAS_ROOT = PROJECT_ROOT / "data" / "canvas"
 
 
 def resolve_path(path: str) -> str:

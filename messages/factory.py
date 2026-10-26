@@ -14,9 +14,7 @@ from .file import (
 from .in_memory import InMemoryMessages
 from .projected import ProjectedMessages
 from .projection_store import SQLiteProjectionStore
-from .sqlite import SQLiteMessages
-
-DEFAULT_DB_PATH = "data/session.db"
+from .sqlite import DEFAULT_DB_PATH, SQLiteMessages
 
 
 def build_history(

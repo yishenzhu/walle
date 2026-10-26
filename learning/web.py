@@ -9,17 +9,17 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
+from ..conf import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
+from ..conf import PROJECT_ROOT
 from ..plugin import plugin
 from ..spec import WebService
-from ..tools.builtin.canvas import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from .store import (
-    CANVAS_MARKER,
     DEFAULT_COURSES_PATH,
-    PROJECT_ROOT,
     SAFE_ID,
     canvas_file,
     course_progress,
     html_title,
+    lesson_canvas_ids,
     list_courses,
     load_course,
     read_lesson,
@@ -30,11 +30,21 @@ from .web_export import build_course_zip
 COURSES_ROOT = PROJECT_ROOT / DEFAULT_COURSES_PATH
 
 
-def canvas_title_for(course_id: str, canvas_id: str) -> str:
-    """Resolve a course or global canvas title by id."""
+def _canvas_path(course_id: str, canvas_id: str) -> Path:
+    """课程内画布优先，缺省回退全局画布。"""
     path = canvas_file(course_id, canvas_id, COURSES_ROOT)
-    if not path.is_file():
-        path = GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
+    return path if path.is_file() else GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
+
+
+def _require_ids(*values: str) -> None:
+    """路径参数必须是安全 id（防目录穿越），否则 404。"""
+    if not all(SAFE_ID.fullmatch(value) for value in values):
+        raise HTTPException(status_code=404)
+
+
+def _canvas_title_for(course_id: str, canvas_id: str) -> str:
+    """画布标题：读 HTML 的 h1/title，读不到时回退 id。"""
+    path = _canvas_path(course_id, canvas_id)
     try:
         return html_title(path.read_text(encoding="utf-8"), canvas_id)
     except OSError:
@@ -90,8 +100,7 @@ def create_router(
 
     @router.get("/api/courses/{course_id}")
     async def api_course(course_id: str) -> dict:
-        if not SAFE_ID.fullmatch(course_id):
-            raise HTTPException(status_code=404)
+        _require_ids(course_id)
         course = load_course(course_id, COURSES_ROOT)
         if course is None:
             raise HTTPException(status_code=404)
@@ -117,8 +126,7 @@ def create_router(
 
     @router.post("/api/courses/{course_id}/progress")
     async def api_update_progress(course_id: str, payload: ProgressUpdate) -> dict:
-        if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(payload.lesson_id):
-            raise HTTPException(status_code=404)
+        _require_ids(course_id, payload.lesson_id)
         try:
             update_progress(
                 course_id,
@@ -133,38 +141,27 @@ def create_router(
 
     @router.get("/api/courses/{course_id}/lessons/{lesson_id}")
     async def api_lesson(course_id: str, lesson_id: str) -> dict:
-        if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(lesson_id):
-            raise HTTPException(status_code=404)
+        _require_ids(course_id, lesson_id)
         lesson = read_lesson(course_id, lesson_id, COURSES_ROOT)
         if lesson is None:
             raise HTTPException(status_code=404)
-        canvas_ids: list[str] = []
-        for canvas_id in CANVAS_MARKER.findall(lesson.get("markdown") or ""):
-            if canvas_id not in canvas_ids:
-                canvas_ids.append(canvas_id)
-        for canvas_id in lesson.get("canvas_ids") or []:
-            if canvas_id not in canvas_ids:
-                canvas_ids.append(canvas_id)
         lesson["canvases"] = [
-            {"id": canvas_id, "title": canvas_title_for(course_id, canvas_id)}
-            for canvas_id in canvas_ids
+            {"id": canvas_id, "title": _canvas_title_for(course_id, canvas_id)}
+            for canvas_id in lesson_canvas_ids(lesson)
         ]
         return {"course_id": course_id, "lesson": lesson}
 
     @router.get("/courses/{course_id}")
     async def course_page(course_id: str) -> HTMLResponse:
-        if (
-            not SAFE_ID.fullmatch(course_id)
-            or load_course(course_id, COURSES_ROOT) is None
-        ):
+        _require_ids(course_id)
+        if load_course(course_id, COURSES_ROOT) is None:
             raise HTTPException(status_code=404)
         # 课程阅读同样是 Shell 视图：右侧主对话保持连接。
         return await shell()
 
     @router.get("/courses/{course_id}/export")
     async def export_course(course_id: str) -> Response:
-        if not SAFE_ID.fullmatch(course_id):
-            raise HTTPException(status_code=404)
+        _require_ids(course_id)
         try:
             payload = build_course_zip(course_id, COURSES_ROOT, static_dir)
         except (OSError, ValueError) as exc:
@@ -180,11 +177,8 @@ def create_router(
 
     @router.get("/courses/{course_id}/canvas/{canvas_id}")
     async def canvas_page(course_id: str, canvas_id: str) -> HTMLResponse:
-        if not SAFE_ID.fullmatch(course_id) or not SAFE_ID.fullmatch(canvas_id):
-            raise HTTPException(status_code=404)
-        path = canvas_file(course_id, canvas_id, COURSES_ROOT)
-        if not path.is_file():
-            path = GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
+        _require_ids(course_id, canvas_id)
+        path = _canvas_path(course_id, canvas_id)
         if not path.is_file():
             raise HTTPException(status_code=404)
         return HTMLResponse(

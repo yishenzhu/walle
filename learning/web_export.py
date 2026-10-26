@@ -8,13 +8,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from ..tools.builtin.canvas import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
+from ..conf import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from .store import (
     CANVAS_DIR,
-    CANVAS_MARKER,
     COURSE_FILE,
     LESSONS_DIR,
     canvas_file,
+    lesson_canvas_ids,
     load_course,
     read_lesson,
 )
@@ -39,7 +39,7 @@ def course_bundle(
 
     canvas_ids: list[str] = []
     for lesson in lessons.values():
-        for canvas_id in CANVAS_MARKER.findall(lesson.get("markdown") or ""):
+        for canvas_id in lesson_canvas_ids(lesson):
             if canvas_id not in canvas_ids:
                 canvas_ids.append(canvas_id)
 

@@ -5,12 +5,12 @@ import html as html_module
 import re
 import time
 import uuid
-from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
-CANVAS_ROOT = Path(__file__).resolve().parents[2] / "data" / "canvas"
+from ...conf import CANVAS_ROOT
+
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
