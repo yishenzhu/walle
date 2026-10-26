@@ -184,7 +184,7 @@ class SessionServer:
 
     # ── 生命周期 ──────────────────────────────────────
     async def start(self) -> None:
-        """开始监听，等待客户端连接。"""
+        """开始监听（不阻塞；连接由各 handler 自行处理）。"""
         self._server = await asyncio.start_server(
             self._handle_conn, self._host, self._port, limit=MAX_FRAME
         )

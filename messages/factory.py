@@ -4,16 +4,14 @@ from pathlib import Path
 
 from ..spec import Messages
 from .file import (
-    PROJECTION_FILE,
     FileMessages,
-    FileProjectionStore,
     canonical_cwd,
     session_dir_name,
     workspace_dir,
 )
 from .in_memory import InMemoryMessages
 from .projected import ProjectedMessages
-from .projection_store import SQLiteProjectionStore
+from .projection_store import PROJECTION_FILE, FileProjectionStore, SQLiteProjectionStore
 from .sqlite import DEFAULT_DB_PATH, SQLiteMessages
 
 

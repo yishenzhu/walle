@@ -17,13 +17,13 @@ from ..messages import (
 from ..messages.file import (
     MESSAGES_FILE,
     META_FILE,
-    PROJECTION_FILE,
     WORKSPACE_FILE,
     canonical_cwd,
     session_dir_name,
     workspace_dir,
     workspace_id,
 )
+from ..messages.projection_store import PROJECTION_FILE
 from ..spec import UserMessage
 
 

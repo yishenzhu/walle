@@ -22,7 +22,6 @@ DEFAULT_SESSIONS_PATH = "data/sessions"
 WORKSPACE_FILE = "workspace.json"
 META_FILE = "meta.json"
 MESSAGES_FILE = "messages.jsonl"
-PROJECTION_FILE = "projection.json"
 
 
 def canonical_cwd(cwd: str | Path | None) -> Path:
@@ -285,34 +284,3 @@ class FileMessages:
 
     async def close(self):
         pass
-
-
-class FileProjectionStore:
-    """切点持久化：会话目录下 projection.json。"""
-
-    def __init__(self, path: str | Path):
-        self._path = Path(path)
-
-    async def load(self) -> int | None:
-        def read_cut() -> int | None:
-            data = read_json(self._path)
-            cut = data.get("cut") if data else None
-            if isinstance(cut, bool) or not isinstance(cut, int) or cut < 0:
-                return None
-            return cut
-
-        return await asyncio.to_thread(read_cut)
-
-    async def save(self, cut: int) -> None:
-        if cut < 0:
-            raise ValueError("cut must be >= 0")
-        await asyncio.to_thread(write_json_atomic, self._path, {"cut": cut})
-
-    async def clear(self) -> None:
-        def remove() -> None:
-            try:
-                self._path.unlink()
-            except FileNotFoundError:
-                pass
-
-        await asyncio.to_thread(remove)

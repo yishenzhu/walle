@@ -340,7 +340,7 @@ class Runner:
         # 按 agent 的可用工具（源经 tool_filter 过滤）构造工具表；工具不经
         # agent 配置——源来自会话插件 runner，每轮实时取。
         tools: dict[str, Tool] = {}
-        for t in agent.available_tools(source):
+        for t in agent.tool_filter.apply(source):
             tools[t.name] = t
         # handoff / subagent 只存目标名，此处按会话 agent 注册表解析构造工具
         # （注册表是同一批 Agent 实例，不重复加载）。depth>=1 时不再挂派发

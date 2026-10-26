@@ -117,10 +117,6 @@ class Agent(BaseModel):
             tool_filter=ToolFilter.model_validate(meta.get("tools") or {}),
         )
 
-    def available_tools(self, source: list[Tool]) -> list[Tool]:
-        """从会话工具源过滤出本 agent 可用工具（tool_filter allow/deny）。"""
-        return self.tool_filter.apply(source)
-
     def _validate_tool_metadata(self) -> None:
         if self.name is None or self.description is None:
             raise ValueError("Agent must have a name and description")

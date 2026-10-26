@@ -1,8 +1,13 @@
-"""切点持久化：每会话一行切点（SQLite）。"""
+"""切点持久化：文件后端（projection.json）与 SQLite 后端。"""
 
+import asyncio
 import sqlite3
+from pathlib import Path
 
 from ..infra import SQLiteStore
+from ..infra.jsonio import read_json, write_json_atomic
+
+PROJECTION_FILE = "projection.json"
 
 
 class SQLiteProjectionStore(SQLiteStore):
@@ -43,3 +48,34 @@ class SQLiteProjectionStore(SQLiteStore):
         await self.execute(
             "DELETE FROM projection WHERE session_id = ?", (self._session_id,)
         )
+
+
+class FileProjectionStore:
+    """切点持久化：会话目录下 projection.json。"""
+
+    def __init__(self, path: str | Path):
+        self._path = Path(path)
+
+    async def load(self) -> int | None:
+        def read_cut() -> int | None:
+            data = read_json(self._path)
+            cut = data.get("cut") if data else None
+            if isinstance(cut, bool) or not isinstance(cut, int) or cut < 0:
+                return None
+            return cut
+
+        return await asyncio.to_thread(read_cut)
+
+    async def save(self, cut: int) -> None:
+        if cut < 0:
+            raise ValueError("cut must be >= 0")
+        await asyncio.to_thread(write_json_atomic, self._path, {"cut": cut})
+
+    async def clear(self) -> None:
+        def remove() -> None:
+            try:
+                self._path.unlink()
+            except FileNotFoundError:
+                pass
+
+        await asyncio.to_thread(remove)

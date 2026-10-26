@@ -655,7 +655,7 @@ walle/
 │   ├── in_memory.py           #   内存实现
 │   ├── sqlite.py              #   SQLite 持久化（可选）
 │   ├── projected.py           #   投影视图（切点截断模型视野）
-│   ├── projection_store.py    #   切点持久化
+│   ├── projection_store.py    #   切点持久化（文件 / SQLite 两种后端）
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
 │   ├── tool.py                #   Tool 值类型 + Tools 会话工具表 + tool_context

@@ -1,7 +1,6 @@
 """τ-bench 适配层：把 τ-bench 环境折叠成 Walle 工具集，由 Walle Runner 驱动。"""
 
 import asyncio
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -11,8 +10,6 @@ from tau_bench.types import RESPOND_ACTION_NAME, Action
 
 from ...infra import Tool
 from ..spec import GroundTruth, TaskSpec
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TURNS = 40  # τ-bench 官方 max_steps 同量级
 
