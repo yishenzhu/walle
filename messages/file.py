@@ -14,6 +14,7 @@ from typing import Any
 from ..conf import PROJECT_ROOT
 from ..infra.jsonio import atomic_write, read_json, write_json_atomic
 from ..spec import Message, MessageAdapter
+from .search import keyword_hits
 
 logger = logging.getLogger(__name__)
 
@@ -249,16 +250,9 @@ class FileMessages:
 
     async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
         """关键词检索：词间 AND 子串匹配（大小写不敏感），倒序返回。"""
-        words = [w for w in query.lower().split() if w]
         await self._ensure_loaded()
         async with self._lock:
-            matched = [
-                (i, m)
-                for i, m in enumerate(self._items)
-                if all(w in (m.content or "").lower() for w in words)
-            ]
-            matched.reverse()
-            return matched[:limit]
+            return keyword_hits(self._items, query, limit)
 
     async def count(self) -> int:
         await self._ensure_loaded()

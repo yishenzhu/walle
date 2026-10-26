@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 from ..spec import Message
+from .search import keyword_hits
 
 
 class InMemoryMessages:
@@ -18,15 +19,7 @@ class InMemoryMessages:
 
     async def search(self, query: str = "", limit: int = 20) -> list[tuple[int, Message]]:
         """关键词检索：词间 AND 子串匹配（大小写不敏感），倒序返回最近 limit 条。"""
-        words = [w for w in query.lower().split() if w]
-
-        def hit(m: Message) -> bool:
-            content = (m.content or "").lower()
-            return all(w in content for w in words)
-
-        matched = [(i, m) for i, m in enumerate(self._items) if hit(m)]
-        matched.reverse()
-        return matched[:limit]
+        return keyword_hits(self._items, query, limit)
 
     async def count(self) -> int:
         return len(self._items)
