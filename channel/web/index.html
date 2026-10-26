@@ -433,10 +433,11 @@
       padding: 10px 12px; min-height: 52px;
       border-bottom: 1px solid var(--border); background: #121821;
     }
-    .canvas-head .canvas-title { flex: 1; min-width: 0; }
-    .canvas-head .canvas-kicker { font-size: 10px; color: var(--muted); letter-spacing: .4px; }
+    .canvas-head .canvas-title { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+    .canvas-head .canvas-kicker { flex: 0 0 auto; font-size: 10px; color: var(--muted); letter-spacing: .4px; }
     #canvas-name {
-      font-size: 13px; font-weight: 600; margin-top: 1px;
+      min-width: 0;
+      font-size: 13px; font-weight: 600;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .canvas-head button { padding: 5px 10px; font-size: 12px; }

@@ -152,7 +152,7 @@
     desiredAgent() {
       const state = this.store.get();
       if (state.courseId) return this.courseAgent || "tutor";
-      return this.pendingAgent || state.agentMode || "";
+      return this.pendingAgent || state.agentMode || DEFAULT_AGENT;
     }
 
     connect(cwd, sessionId, attach) {
@@ -186,7 +186,6 @@
       const pendingAgent = this.pendingAgent;
       this.pendingAgent = null;
       this.pendingCourse = null;
-      this.courseAgent = null;
       this.onOpen();
       this.onStatus("已连接", "on");
       if (pendingAgent) {
