@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -69,15 +70,15 @@ class Agent(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    def skill_prompt(self, skills: dict[str, Skill]) -> str:
+    def skill_prompt(self, skills: Sequence[Skill]) -> str:
         """从会话可用技能拼清单（一行一技能）。"""
         if not self.skills or not skills:
             return ""
         wanted = None if "*" in self.skills else set(self.skills)
         lines = [
-            f"- {m.name}: {m.description}（{m.path}）"
-            for m in skills.values()
-            if wanted is None or m.name in wanted
+            f"- {s.name}: {s.description}（{s.path}）"
+            for s in skills
+            if wanted is None or s.name in wanted
         ]
         if not lines:
             return ""

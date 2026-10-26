@@ -57,13 +57,13 @@ def runner(allow_executor):
 @pytest.fixture
 def env(channel, provider):
     """默认会话环境：模型（协议面注入）+ 历史（每测试隔离）+ 会话工具表。"""
-    from ..core import SessionToolTable
+    from ..core import ToolTable
 
     return SessionContext(
         provider=provider,
         channel=channel,
         history=InMemoryMessages(),
-        tool_table=SessionToolTable(),
+        tool_table=ToolTable(),
         history_factory=build_ephemeral_history,
     )
 
@@ -424,7 +424,7 @@ class TestRunnerSubagent:
 
     async def test_subagent_env_inherits_capabilities(self, monkeypatch):
         """子环境继承 provider/cwd/tool_table/agents，隔离历史与 channel，深度 +1。"""
-        from ..core import SessionToolTable
+        from ..core import ToolTable
         from ..core import runner as runner_mod
 
         captured: list[SessionContext] = []
@@ -437,7 +437,7 @@ class TestRunnerSubagent:
         monkeypatch.setattr(runner_mod, "Runner", SpyRunner)
 
         helper = Agent(name="helper", description="helper")
-        tool_table = SessionToolTable()
+        tool_table = ToolTable()
         parent = SessionContext(
             history=InMemoryMessages(),
             provider="fake-provider",
@@ -612,7 +612,7 @@ class TestRunnerToolHooks:
         assert result.output == "done"
 
     async def test_tool_after_hook_notified(self, provider, env):
-        from ..core import EventBus, SessionToolTable
+        from ..core import EventBus, ToolTable
         from ..infra import ToolExecutionEndEvent
 
         seen: list[str] = []
@@ -643,7 +643,7 @@ class TestRunnerToolHooks:
             instruction="helpful",
             tool_filter=ToolFilter(allow=["*"]),
         )
-        env.tool_table = SessionToolTable()  # 工具经会话插件 runner 提供
+        env.tool_table = ToolTable()  # 工具经会话插件 runner 提供
         env.tool_table.add(make_echo_tool())
         await runner.run(agent, "use echo", env=env)
 

@@ -1,20 +1,16 @@
-"""会话工具表：工具与技能注册，Runner 每轮实时取源。"""
+"""会话工具表（ToolService）：工具注册与查询，Runner 每轮实时取源。"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from ..plugin.runtime import current_scope
-from ..spec import Skill
 from .tool import Tool
 
 
-class SessionToolTable:
-    """会话级工具/技能表：同名后到者覆盖先到者。"""
+class ToolTable:
+    """会话级工具表：同名后到者覆盖先到者。"""
 
     def __init__(self) -> None:
         self._tools: list[Tool] = []
-        self._skills: dict[str, Skill] = {}
 
     # ── 工具表（ToolService） ──────────────────────────
     def add(self, *tools: Tool) -> None:
@@ -44,28 +40,3 @@ class SessionToolTable:
     def all_tools(self) -> list[Tool]:
         """本会话全部工具（Agent 工具源）。"""
         return list(self._tools)
-
-    # ── 技能表 ────────────────────────────────────────
-    def register_skill(
-        self, name: str, description: str, path: str
-    ) -> Callable[[], None]:
-        """注册一个技能声明；返回注销函数。"""
-        skill = Skill(name=name, description=description, path=path)
-        self._skills[name] = skill
-
-        def _off() -> None:
-            if self._skills.get(name) is skill:  # 同名被覆盖时不误删
-                del self._skills[name]
-
-        scope = current_scope.get()
-        if scope is not None:  # 插件 apply 期间注册：随插件卸载回收
-            scope.effect(_off)
-        return _off
-
-    def remove_skill(self, name: str) -> None:
-        self._skills.pop(name, None)
-
-    @property
-    def skills(self) -> dict[str, Skill]:
-        """本会话可用技能（name→Skill），供 system prompt 拼技能清单。"""
-        return dict(self._skills)

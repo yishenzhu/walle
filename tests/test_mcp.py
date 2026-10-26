@@ -41,7 +41,7 @@ def test_unusual_name_allowed(tmp_path):
 
 def test_plugin_registers_client_tools():
     """MCPManager.plugin 把客户端工具注册进 ToolService。"""
-    from ..infra import SessionToolTable, Tool
+    from ..infra import Tool, ToolTable
     from ..plugin import PluginHost
     from ..spec import ToolService
 
@@ -59,7 +59,7 @@ def test_plugin_registers_client_tools():
 
     async def run():
         host = PluginHost()
-        table = SessionToolTable()
+        table = ToolTable()
         await host.root.register(ToolService, table)
         try:
             await host.launch([manager.plugin()])

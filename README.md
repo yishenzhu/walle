@@ -128,7 +128,7 @@ sequenceDiagram
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions/SessionInit）、messages（Messages/Projection/ProjectionStore）、runtime（ToolTable）、events（EventBus）、llm（LLM）、view（SessionView） |
+| 协议面 | `spec/` | **数据模型 + 全部跨层能力协议**（唯一声明面，不提及实现）：protocol/（Channel/Sessions/SessionInit）、messages（Messages/Projection/ProjectionStore）、events（EventBus）、llm（LLM）、view（SessionView） |
 | 入口·装配根 | `main.py` | 唯一组装进程级具体实现：插件声明（builtin/sandbox/mcp/skill/approval/learning/用户插件）、进程默认 provider、会话服务端 |
 | 基建实现 | `infra/` | EventBus、Tool、Provider（LLM 实现）、诊断、日志、遥测、指标、插件加载/激活器 |
 | 核心引擎 | `core/` | 会话装配（SessionManager：构造存储/provider 并组装 Session）、Agent 循环（Runner）、工具执行器 |
@@ -596,7 +596,6 @@ walle/
 │   │   ├── prompt.py          #     PromptService（动态提示词段）
 │   │   ├── skill.py           #     SkillService（技能目录）
 │   │   ├── web.py             #     WebService（插件挂载 Web 路由）
-│   │   ├── runtime.py         #     ToolTable（工具表 + 技能清单）
 │   │   ├── events.py          #     EventBus（事件总线能力）
 │   │   ├── llm.py             #     LLM（模型能力）
 │   │   └── view.py            #     SessionView（工具可见会话面）
@@ -612,7 +611,6 @@ walle/
 │   ├── runner.py              #   Agent 运行循环
 │   ├── executor.py            #   工具执行器（查找 / 裁决 / 超时 / 通知）
 │   ├── prompt.py              #   PromptService 默认实现（Prompts）
-│   ├── plugins.py             #   插件服务 → 会话运行时适配（Tool/Skill）
 │   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
@@ -659,7 +657,8 @@ walle/
 │   ├── projection_store.py    #   切点持久化
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
-│   ├── tool_table.py          #   会话工具/技能表（SessionToolTable）
+│   ├── tool_table.py          #   会话工具表（ToolTable）
+│   ├── skill_table.py         #   会话技能表（SkillTable）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）

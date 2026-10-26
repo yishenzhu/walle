@@ -222,9 +222,9 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import SessionToolTable
+        from ..core import ToolTable
 
-        tool_table = SessionToolTable()
+        tool_table = ToolTable()
         tool_table.add(
             make_tool("slow", "slow-done", delay=0.05),
             Tool.from_function(background),
@@ -282,9 +282,9 @@ class TestRunnerIntegration:
             jobs={},
         )
 
-        from ..core import SessionToolTable
+        from ..core import ToolTable
 
-        tool_table = SessionToolTable()
+        tool_table = ToolTable()
         tool_table.add(
             make_tool("slow", "done-42", delay=0.1),
             Tool.from_function(background),

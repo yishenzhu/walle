@@ -22,7 +22,6 @@ from .protocol import (
     SessionView,
     SkillService,
     ToolService,
-    ToolTable,
     WebService,
 )
 from .schemas import (
@@ -141,7 +140,6 @@ __all__ = [
     "Messages",
     "Projection",
     "ProjectionStore",
-    "ToolTable",
     "ToolService",
     "SkillService",
     "PromptService",

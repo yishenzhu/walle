@@ -14,7 +14,8 @@ from ..infra import (
     MessageDeltaEvent,
     MessageEndEvent,
     OpenAIProvider,
-    SessionToolTable,
+    SkillTable,
+    ToolTable,
 )
 from ..messages import (
     build_ephemeral_history,
@@ -49,7 +50,6 @@ from ..spec import (
 from .agent import Agent
 from .commands import Commands
 from .executor import ToolExecutor
-from .plugins import SessionAgentService, SessionSkillService
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
 
@@ -69,7 +69,8 @@ class SessionRuntime:
 
     bus: EventBus
     executor: ToolExecutor
-    tool_table: SessionToolTable
+    tool_table: ToolTable
+    skill_table: SkillTable
     tool_config: ToolConfig
 
     @classmethod
@@ -79,7 +80,8 @@ class SessionRuntime:
         return cls(
             bus=EventBus(),
             executor=ToolExecutor(config),
-            tool_table=SessionToolTable(),
+            tool_table=ToolTable(),
+            skill_table=SkillTable(),
             tool_config=config,
         )
 
@@ -128,7 +130,8 @@ class Session:
         # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
         self._bus = runtime.bus  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
         self._agent_runner = Runner(executor=runtime.executor)  # 执行器只交给 Runner
-        self._tool_table = runtime.tool_table  # 会话级工具/技能表
+        self._tool_table = runtime.tool_table  # 会话级工具表
+        self._skill_table = runtime.skill_table  # 会话级技能表
         # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
         self._bus.on(MessageDeltaEvent, self._on_delta)
         self._bus.on(MessageEndEvent, self._on_message_end)
@@ -167,11 +170,11 @@ class Session:
         self._commands = Commands()
         await host.root.register(CommandService, self._commands)
         await host.root.register(Channel, self)
-        await host.root.register(AgentService, SessionAgentService(self))
+        await host.root.register(AgentService, Agents(self))
         await host.root.register(SessionView, self.context)
         await host.root.register(ToolService, self._tool_table)
         await host.root.register(PromptService, Prompts())
-        await host.root.register(SkillService, SessionSkillService(self._tool_table))
+        await host.root.register(SkillService, self._skill_table)
         await host.launch(
             self._plugins,
             {
@@ -190,6 +193,7 @@ class Session:
             session_id=self.id,
             jobs=self._jobs,
             tool_table=self._tool_table,  # 工具执行期动态注册通道
+            skills=self._skill_table,  # 技能清单（提示词）
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
@@ -550,3 +554,17 @@ class SessionManager:
             except Exception:
                 pass
         self._sessions.clear()
+
+
+class Agents:
+    """AgentService：当前 agent 与按名加载（会话视图）。"""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    @property
+    def current(self) -> Agent:
+        return self._session.agent
+
+    def get(self, name: str) -> Agent:
+        return self._session.get_agent(name)

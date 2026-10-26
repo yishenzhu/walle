@@ -93,13 +93,13 @@ class TestSandboxExt:
         monkeypatch.setattr(
             "walle.tools.sandbox.shutil.which", lambda _: "/usr/bin/bwrap"
         )
-        from ..infra import SessionToolTable
+        from ..infra import ToolTable
         from ..plugin import PluginHost
         from ..spec import ToolService
 
         async def run():
             host = PluginHost()
-            table = SessionToolTable()
+            table = ToolTable()
             await host.root.register(ToolService, table)
             try:
                 entries = await host.launch([Sandbox().plugin()])
@@ -112,13 +112,13 @@ class TestSandboxExt:
 
     def test_missing_bwrap_marks_plugin_failed(self, monkeypatch):
         monkeypatch.setattr("walle.tools.sandbox.shutil.which", lambda _: None)
-        from ..infra import SessionToolTable
+        from ..infra import ToolTable
         from ..plugin import PluginHost
         from ..spec import ToolService
 
         async def run():
             host = PluginHost()
-            await host.root.register(ToolService, SessionToolTable())
+            await host.root.register(ToolService, ToolTable())
             entries = await host.launch([Sandbox().plugin()])
             try:
                 assert entries[0].state.value == "failed"

@@ -28,9 +28,11 @@ from ..spec import (
     PromptService,
     SessionEndEvent,
     SessionStartEvent,
+    SkillService,
     SystemMessage,
     ToolCallPrepareEvent,
     ToolMessage,
+    ToolService,
     TurnEndEvent,
     TurnStartEvent,
     Usage,
@@ -38,9 +40,6 @@ from ..spec import (
 )
 from ..spec import (
     EventBus as EventBusProtocol,
-)
-from ..spec import (
-    ToolTable as ToolTableProtocol,
 )
 from .agent import Agent, Handoff
 from .executor import ToolExecutor
@@ -67,7 +66,8 @@ class SessionContext:
     channel: Channel | None = None  # 会话 channel 端点（仅交互，不承担会话身份）
     session_id: str | None = None  # 会话身份（内聚在 context，而非 channel）
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
-    tool_table: ToolTableProtocol | None = None  # 会话工具表 + 技能清单
+    tool_table: ToolService | None = None  # 会话工具表（每轮工具源）
+    skills: SkillService | None = None  # 会话技能表（提示词清单）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
@@ -319,8 +319,8 @@ class Runner:
         messages = await history.get()
         if agent.instruction:
             messages += [SystemMessage(content=agent.instruction)]
-        if ctx.tool_table is not None:
-            skill_prompt = agent.skill_prompt(ctx.tool_table.skills)
+        if ctx.skills is not None:
+            skill_prompt = agent.skill_prompt(ctx.skills.list())
             if skill_prompt:
                 messages += [SystemMessage(content=skill_prompt)]
         if ctx.prompt is not None:

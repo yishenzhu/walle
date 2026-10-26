@@ -131,6 +131,7 @@ class FakeSession:
     cwd: str | None = None
     history: Any = None
     tool_table: Any = None
+    skills: Any = None
     bus: Any = None
     metadata: dict = field(default_factory=dict)
 

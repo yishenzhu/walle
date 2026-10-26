@@ -55,19 +55,19 @@ def test_skill_scan_skips_broken(tmp_path, monkeypatch):
 
 class TestAgentSkillPrompt:
     @staticmethod
-    def _skills() -> dict[str, Skill]:
-        return {
-            "grilling": Skill(
+    def _skills() -> list[Skill]:
+        return [
+            Skill(
                 name="grilling",
                 description="Grill the user",
                 path="/skills/grilling/SKILL.md",
             ),
-            "review": Skill(
+            Skill(
                 name="review",
                 description="Review code",
                 path="/skills/review/SKILL.md",
             ),
-        }
+        ]
 
     def test_no_skills_returns_empty(self):
         """skills 白名单为空 → 不注入技能提示词。"""
@@ -87,19 +87,19 @@ class TestAgentSkillPrompt:
         assert "grilling" in one_prompt
         assert "review" not in one_prompt
 
-    def test_empty_skills_dict_returns_empty(self):
-        """会话无可用技能（空 dict）→ 不注入。"""
-        assert Agent(instruction="x", skills=["*"]).skill_prompt({}) == ""
+    def test_empty_skills_list_returns_empty(self):
+        """会话无可用技能（空列表）→ 不注入。"""
+        assert Agent(instruction="x", skills=["*"]).skill_prompt([]) == ""
 
     def test_description_with_special_chars(self):
         """description 含特殊字符不影响纯文本清单。"""
-        skills = {
-            "x": Skill(
+        skills = [
+            Skill(
                 name="x",
                 description="uses <code> & more",
                 path="/s/x/SKILL.md",
             )
-        }
+        ]
         prompt = Agent(instruction="x", skills=["*"]).skill_prompt(skills)
         assert "uses <code> & more" in prompt  # 原样保留，无需转义
 
@@ -112,8 +112,7 @@ class TestAgentSkillPrompt:
 
 async def test_skill_plugin_registers_into_session(tmp_path, monkeypatch):
     """技能插件：扫描 .agent/skills/，注册到会话技能表。"""
-    from ..core.plugins import SessionSkillService
-    from ..infra import SessionToolTable
+    from ..infra import SkillTable
     from ..plugin import PluginHost
     from ..spec import SkillService
     from ..tools import skill as skill_mod
@@ -122,13 +121,14 @@ async def test_skill_plugin_registers_into_session(tmp_path, monkeypatch):
     _make_skill(tmp_path / "skills", "grilling", "Grill the user")
     _make_skill(tmp_path / "skills", "review", "Review code")
 
-    table = SessionToolTable()
+    table = SkillTable()
     host = PluginHost()
-    await host.root.register(SkillService, SessionSkillService(table))
+    await host.root.register(SkillService, table)
     try:
         entries = await host.launch([skill_mod.native_skill])
         assert entries[0].state.value == "active"
-        assert set(table.skills) == {"grilling", "review"}
-        assert table.skills["grilling"].path.endswith("grilling/SKILL.md")
+        skills = {s.name: s for s in table.list()}
+        assert set(skills) == {"grilling", "review"}
+        assert skills["grilling"].path.endswith("grilling/SKILL.md")
     finally:
         await host.dispose()

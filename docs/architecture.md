@@ -32,9 +32,9 @@ walle 的运行时模型：**进程级共享"声明"，会话级自持"运行时
    provider；`SessionManager.create` 组合 Session 具体实现（历史存储、会话级
    provider）。除此之外的模块代码不得 `new` 别的模块的具体实现。
 
-4. **核心引擎只依赖协议** —— `Runner` 依赖 `Messages` / `LLM` / `ToolTable`
-   / `EventBus`（均为 `spec` 协议）；不依赖 `OpenAIProvider`、`SQLiteMessages`
-   等具体实现（具体实现在装配时注入）。
+4. **核心引擎只依赖协议** —— `Runner` 依赖 `Messages` / `LLM` / `ToolService`
+   / `SkillService` / `EventBus`（均为 `spec` 协议）；不依赖 `OpenAIProvider`、
+   `SQLiteMessages` 等具体实现（具体实现在装配时注入）。
 
 5. **工具只看视图面** —— 工具经 `tool_context -> SessionView` 拿能力，
    绝不 import Session / SessionContext 具体类。
@@ -124,10 +124,6 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   `AssembleContext`（agent / depth / metadata）求值。
 - `SkillService`（add / remove / list）—— 技能目录，支持 glob 筛选。
 
-### 工具表能力（`runtime.py`）
-- `ToolTable`（ToolService + skills）—— 会话工具表：工具经 `SessionView` 拿本面
-  动态注册，Runner 经本面取每轮工具源与技能清单。
-
 ### 模型能力（`llm.py`）
 - `LLM`（model / set_model / create / stream）—— Runner 只依赖本面；
   `OpenAIProvider` 作为其实现之一，由装配根注入。
@@ -152,7 +148,8 @@ SessionManager.create(conn)                 # 装配根
     ├─ _plugins        list[Plugin]    # 本会话选中的插件声明
     ├─ _prompt         PromptService   # 插件提示段（Runner 组装 system）
     ├─ _agent_runner   Runner          # 构造注入按会话新建的 ToolExecutor
-    ├─ _tool_table     SessionToolTable # 会话工具表/技能表（ToolService 落点）
+    ├─ _tool_table     ToolTable       # 会话工具表（ToolService 落点）
+    ├─ _skill_table    SkillTable      # 会话技能表（SkillService 落点）
     ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
@@ -200,7 +197,7 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
   job_result 读）。
 - **metadata**：唯一事实源 `Session._metadata`；客户端经
   `session.set_metadata` 合并，核心不解释键名，插件在 PromptService 段里读取。
-- **工具表**：插件经 ToolService 注册，落到会话 `SessionToolTable`（define_tool
+- **工具表**：插件经 ToolService 注册，落到会话 `ToolTable`（define_tool
   动态注册实时反映到下一轮）；Agent 不持有工具源。插件 apply 期间注册的工具/
   技能随插件卸载回收（按实例摘除，同名被覆盖时不误删）。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时

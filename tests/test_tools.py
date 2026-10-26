@@ -2,7 +2,7 @@
 
 import pytest
 
-from ..core import SessionToolTable
+from ..core import ToolTable
 from ..infra import Tool
 
 
@@ -66,7 +66,7 @@ class TestRunnerToolTable:
 
     @pytest.fixture
     def runner(self):
-        return SessionToolTable()
+        return ToolTable()
 
     def test_empty_tool_table(self, runner):
         assert runner.all_tools() == []

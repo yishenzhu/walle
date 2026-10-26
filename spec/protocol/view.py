@@ -6,7 +6,8 @@ from ..schemas import Job
 from .channel import Channel
 from .events import EventBus
 from .messages import Messages
-from .runtime import ToolTable
+from .skill import SkillService
+from .tool import ToolService
 
 
 class SessionView(Protocol):
@@ -17,6 +18,7 @@ class SessionView(Protocol):
     jobs: dict[str, Job]
     cwd: str | None
     history: Messages
-    tool_table: ToolTable | None
+    tool_table: ToolService | None
+    skills: SkillService | None
     bus: EventBus | None
     metadata: dict[str, Any]

@@ -13,7 +13,6 @@ from .prompt import (
     PromptSection,
     PromptService,
 )
-from .runtime import ToolTable
 from .skill import SkillService
 from .tool import ToolService
 from .view import SessionView
@@ -28,7 +27,6 @@ __all__ = [
     "CommandService",
     "SessionInit",
     "Sessions",
-    "ToolTable",
     "ToolService",
     "SkillService",
     "PromptService",
