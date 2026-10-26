@@ -7,9 +7,7 @@ class InMemoryMessages:
     def __init__(self):
         self._items: list[Message] = []
 
-    async def get(self, limit: int | None = None) -> list[Message]:
-        if limit is not None:
-            return self._items[-limit:]
+    async def get(self) -> list[Message]:
         return list(self._items)
 
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:

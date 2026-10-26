@@ -11,7 +11,7 @@ from ..spec import (
     PromptService,
     ToolService,
 )
-from .store import load_course, read_lesson
+from .store import load_course, outline_lines, read_lesson
 from .tools import create_course, read_course, write_lesson
 
 
@@ -27,13 +27,7 @@ def course_instructions(metadata: dict[str, Any]) -> str | None:
     lines = [f"Course: {course.get('title') or course_id}"]
     if course.get("goal"):
         lines.append(f"Goal: {course['goal']}")
-    lines.append("Lessons:")
-    for item in course.get("lessons") or []:
-        marker = " (current)" if item.get("id") == lesson_id else ""
-        lines.append(
-            f"- {item.get('order') or '?'}. {item.get('title')} "
-            f"[{item.get('id')}]{marker}"
-        )
+    lines.extend(outline_lines(course, lesson_id))
     if lesson_id:
         lesson = read_lesson(course_id, lesson_id)
         if lesson is not None:
@@ -45,7 +39,7 @@ def course_instructions(metadata: dict[str, Any]) -> str | None:
     return "\n".join(lines)
 
 
-def course_section(context: AssembleContext) -> str:
+def _course_section(context: AssembleContext) -> str:
     """PromptService 段：课程上下文随会话 metadata 变化。"""
     return course_instructions(context.metadata) or ""
 
@@ -55,12 +49,12 @@ async def learning_plugin(ctx, config) -> None:
     """注册课程工具与课程动态提示段。"""
     tools = ctx.get(ToolService)
     for fn in (create_course, write_lesson, read_course):
-        tools.register_tool(Tool.from_function(fn))
+        tools.add(Tool.from_function(fn))
     ctx.get(PromptService).section(
         PromptSection(
             name="learning:course",
             order=PromptOrder.RUNTIME,
-            text=course_section,
+            text=_course_section,
         )
     )
 

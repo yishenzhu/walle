@@ -96,7 +96,7 @@ class MCPManager:
         tools = ctx.get(ToolService)
         for client in self._clients:
             for tool in client.tools:
-                tools.register_tool(tool)
+                tools.add(tool)
 
 
 class MCPClient:

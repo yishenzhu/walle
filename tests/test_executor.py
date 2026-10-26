@@ -334,7 +334,7 @@ class TestToolHooks:
 
     async def test_before_hook_pass_executes(self, ctx):
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent
+        from ..infra import PreExecuteToolEvent
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -344,7 +344,7 @@ class TestToolHooks:
             return True
 
         bus = EventBus()
-        bus.on(ToolExecutionStartEvent, allow)
+        bus.on(PreExecuteToolEvent, allow)
         ctx.bus = bus
         from ..infra import tool_context
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
@@ -358,7 +358,7 @@ class TestToolHooks:
     async def test_preflight_hook_sees_tool_context(self, ctx, channel):
         """preflight 钩子执行时 tool_context 已注入：handler 可拿会话上下文交互。"""
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent, tool_context
+        from ..infra import PreExecuteToolEvent, tool_context
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -370,7 +370,7 @@ class TestToolHooks:
             seen["ctx"] = tool_context.get()  # 事件 handler 内经上下文拿交互接口
 
         bus = EventBus()
-        bus.on(ToolExecutionStartEvent, check)
+        bus.on(PreExecuteToolEvent, check)
         ctx = make_session(channel=channel, bus=bus)
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
 
@@ -414,7 +414,7 @@ class TestToolHooks:
     async def test_before_hook_block_with_reason(self, ctx):
         """TOOL_EXECUTION_START 监听器返回 HookVerdict(block=reason) → 阻止执行。"""
         from ..core import EventBus
-        from ..infra import HookVerdict, ToolExecutionStartEvent
+        from ..infra import HookVerdict, PreExecuteToolEvent
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -424,7 +424,7 @@ class TestToolHooks:
             return HookVerdict(block="危险命令")
 
         bus = EventBus()
-        bus.on(ToolExecutionStartEvent, block)
+        bus.on(PreExecuteToolEvent, block)
         ctx.bus = bus
         from ..infra import tool_context
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文
@@ -440,7 +440,7 @@ class TestToolHooks:
     async def test_before_hook_rewrites_arguments(self, ctx):
         """TOOL_EXECUTION_START 监听器返回 HookVerdict(arguments=...) → 改写本次调用。"""
         from ..core import EventBus
-        from ..infra import HookVerdict, ToolExecutionStartEvent
+        from ..infra import HookVerdict, PreExecuteToolEvent
 
         executor = ToolExecutor(
             ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
@@ -456,7 +456,7 @@ class TestToolHooks:
             return "done"
 
         bus = EventBus()
-        bus.on(ToolExecutionStartEvent, rewrite)
+        bus.on(PreExecuteToolEvent, rewrite)
         ctx.bus = bus
         from ..infra import tool_context
         tool_context.set(ctx)  # executor 从 tool_context 取会话上下文

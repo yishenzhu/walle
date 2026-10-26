@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ..infra import tool_context
 from .store import create_course as create_course_entry
-from .store import load_course, read_lesson, save_course
+from .store import load_course, outline_lines, read_lesson, save_course
 from .store import write_lesson as write_lesson_entry
 
 
@@ -102,18 +102,18 @@ async def read_course(
     the course structure. Use before answering material questions."""
     ctx = tool_context.get()
     metadata = ctx.metadata if ctx is not None else {}
-    cid = course_id or metadata.get("course_id")
-    lid = None if outline else lesson_id or metadata.get("lesson_id")
-    if not cid:
+    course_key = course_id or metadata.get("course_id")
+    lesson_key = None if outline else lesson_id or metadata.get("lesson_id")
+    if not course_key:
         return "Error: 当前会话没有课程上下文，请提供 course_id"
-    course = load_course(cid)
+    course = load_course(course_key)
     if course is None:
-        return f"Error: course 不存在: {cid}"
+        return f"Error: course 不存在: {course_key}"
 
-    if lid:
-        lesson = read_lesson(cid, lid)
+    if lesson_key:
+        lesson = read_lesson(course_key, lesson_key)
         if lesson is None:
-            return f"Error: lesson 不存在: {lid}"
+            return f"Error: lesson 不存在: {lesson_key}"
         return (
             f"# {course.get('title')} / {lesson.get('title')}\n\n"
             f"{lesson.get('markdown') or ''}"
@@ -122,12 +122,5 @@ async def read_course(
     lines = [f"# {course.get('title')}"]
     if course.get("goal"):
         lines.append(course["goal"])
-    lines.append("Lessons:")
-    current = metadata.get("lesson_id")
-    for item in course.get("lessons") or []:
-        marker = " (current)" if item.get("id") == current else ""
-        lines.append(
-            f"- {item.get('order') or '?'}. {item.get('title')} "
-            f"[{item.get('id')}]{marker}"
-        )
+    lines.extend(outline_lines(course, metadata.get("lesson_id")))
     return "\n".join(lines)

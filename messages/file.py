@@ -4,21 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
-import os
 import re
-import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from ..conf import PROJECT_ROOT
+from ..infra.jsonio import atomic_write, read_json, write_json_atomic
 from ..spec import Message, MessageAdapter, Usage
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SESSIONS_PATH = "data/sessions"
 WORKSPACE_FILE = "workspace.json"
 META_FILE = "meta.json"
@@ -130,34 +128,6 @@ def session_dir_name(session_id: str) -> str:
     return f"{safe}-{digest}"
 
 
-def read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    """临时文件 + replace，避免读到写了一半的元数据。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_name, path)
-    finally:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-
-
 def load_messages(path: Path) -> tuple[list[Message], bool]:
     """读取 JSONL；返回 (消息, 是否需要重写修复)。"""
     if not path.exists():
@@ -179,23 +149,12 @@ def load_messages(path: Path) -> tuple[list[Message], bool]:
 
 
 def write_messages_atomic(path: Path, items: Sequence[Message]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            for item in items:
-                f.write(item.model_dump_json())
-                f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_name, path)
-    finally:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
+    def _write(f) -> None:
+        for item in items:
+            f.write(item.model_dump_json())
+            f.write("\n")
+
+    atomic_write(path, _write)
 
 
 def append_messages(path: Path, items: Sequence[Message]) -> None:
@@ -275,11 +234,9 @@ class FileMessages:
         write_messages_atomic(self._messages_path, items)
         self._touch_meta_sync()
 
-    async def get(self, limit: int | None = None) -> list[Message]:
+    async def get(self) -> list[Message]:
         await self._ensure_loaded()
         async with self._lock:
-            if limit is not None:
-                return list(self._items[:limit])
             return list(self._items)
 
     async def query(self, offset: int = 0, limit: int = 20) -> list[Message]:

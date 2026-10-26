@@ -389,12 +389,12 @@ from ...spec import ToolService
 async def builtin_plugin(ctx, config) -> None:
     tools = ctx.get(ToolService)
     for fn in (bash, ask_user, read, edit, write, ..., history, new_window):
-        tools.register_tool(Tool.from_function(fn))
+        tools.add(Tool.from_function(fn))
 ```
 
 - `inject` / `provides`：声明依赖与提供的服务，`PluginHost` 依赖驱动激活
 - `ctx.register(Service, impl)`：注册能力，作用域销毁时自动回滚
-- `ctx.on(Event, handler)`：订阅事件，handler 签名为 `(event, value)`
+- `ctx.on(Event, handler)`：订阅事件，handler 签名为 `(event)`
 - `ctx.child()` / `ctx.scope(key)`：作用域分层（覆盖全局能力）
 - 插件加载顺序无关；失败单项隔离，不影响其他插件
 
@@ -582,7 +582,7 @@ writer = Agent(
 walle/
 ├── main.py                    # 入口（装配根）
 ├── plugin/                   # 插件运行时（EventBus / Context / PluginHost）
-│   ├── events.py              #   事件类 + 5 种分发（emit/bail/serial/parallel/waterfall）
+│   ├── events.py              #   事件类 + 分发（emit / bail / parallel）
 │   ├── runtime.py             #   Plugin / Context 作用域 / PluginHost 生命周期
 │   └── discovery.py           #   目录与包内 plugin.py 发现
 ├── conf.yaml.example          # 配置模板
@@ -662,7 +662,6 @@ walle/
 │   └── factory.py             #   装配工厂（build_history / build_ephemeral_history）
 ├── infra/                     # 基础设施
 │   ├── plugin.py              #   旧式插件兼容层（PluginManager / Runner / CommandContext）
-│   ├── event_bus.py           #   会话事件总线（Runner 事件，兼容层）
 │   ├── tool.py                #   Tool 具体实现 + tool_context 注入点
 │   ├── diagnostics.py         #   资源诊断
 │   ├── logger.py              #   日志（含 Trace 注入）

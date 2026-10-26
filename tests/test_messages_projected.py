@@ -106,21 +106,6 @@ class TestProjectedMessages:
         result = await proj.get()
         assert len(result) == 1
 
-    async def test_get_with_limit_applies_after_projection(self, kind, tmp_path):
-        proj = ProjectedMessages(make_storage(kind, tmp_path))
-        await proj.add(sample_messages())
-        await proj.set_projection(cut=2)
-        # 切点后剩 [u3, u4]；limit=2 → 全部
-        result = await proj.get(limit=2)
-        assert [m.content for m in result] == ["u3", "u4"]
-
-    async def test_get_without_projection_limit_returns_head(self, kind, tmp_path):
-        # limit 由投影类统一为「取前 N 条」，不依赖底层不对称语义
-        proj = ProjectedMessages(make_storage(kind, tmp_path))
-        await proj.add(sample_messages())
-        result = await proj.get(limit=2)
-        assert [m.content for m in result] == ["u1", "u2"]
-
     async def test_get_returns_copy_not_internal_state(self, kind, tmp_path):
         proj = ProjectedMessages(make_storage(kind, tmp_path))
         await proj.add(sample_messages())

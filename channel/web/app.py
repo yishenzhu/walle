@@ -87,8 +87,8 @@ async def api_sessions(cwd: str = "") -> dict:
 class WebHost:
     """Web 宿主能力实现：把插件路由挂到 FastAPI 应用。"""
 
-    def __init__(self, app: FastAPI, shell, static_dir: Path) -> None:
-        self._app = app
+    def __init__(self, fastapi_app: FastAPI, shell, static_dir: Path) -> None:
+        self._app = fastapi_app
         self._shell = shell
         self._static_dir = static_dir
         self._ui: list[dict] = []

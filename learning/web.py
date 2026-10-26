@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -15,6 +14,9 @@ from ..spec import WebService
 from ..tools.builtin.canvas import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
 from .store import (
     CANVAS_MARKER,
+    DEFAULT_COURSES_PATH,
+    PROJECT_ROOT,
+    SAFE_ID,
     canvas_file,
     course_progress,
     html_title,
@@ -25,8 +27,7 @@ from .store import (
 )
 from .web_export import build_course_zip
 
-COURSES_ROOT = Path(__file__).resolve().parents[1] / "data" / "courses"
-SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+COURSES_ROOT = PROJECT_ROOT / DEFAULT_COURSES_PATH
 
 
 def canvas_title_for(course_id: str, canvas_id: str) -> str:

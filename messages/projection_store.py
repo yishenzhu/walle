@@ -26,7 +26,7 @@ class SQLiteProjectionStore(SQLiteStore):
         return conn
 
     async def load(self) -> int | None:
-        rows = await self.query(
+        rows = await self.fetchall(
             "SELECT cut FROM projection WHERE session_id = ?",
             (self._session_id,),
         )

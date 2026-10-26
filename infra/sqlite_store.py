@@ -44,7 +44,7 @@ class SQLiteStore:
 
         await asyncio.to_thread(_run)
 
-    async def query(self, sql: str, params: tuple = ()) -> list[tuple]:
+    async def fetchall(self, sql: str, params: tuple = ()) -> list[tuple]:
         """执行查询，返回行列表。"""
         conn = await self._get_conn()
 

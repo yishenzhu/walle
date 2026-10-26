@@ -20,8 +20,8 @@ from ..infra import (
     tracer,
 )
 from ..spec import (
+    PreExecuteToolEvent,
     ToolExecutionEndEvent,
-    ToolExecutionStartEvent,
     ToolResult,
     ToolStart,
 )
@@ -78,18 +78,16 @@ class ToolExecutor:
                 ToolStart(tool_name=name, arguments=args, tool_call_id=tc_id)
             )
 
-        # preflight 屏障：监听器返回 HookVerdict，None 放行。
-        # block → 阻止执行；arguments → 按注册顺序改写参数（后者覆盖前者）。
+        # preflight 屏障：首个表态决定放行 / 阻止 / 改写参数。
         if ctx is not None and ctx.bus is not None:
-            for verdict in await ctx.bus.emit(
-                ToolExecutionStartEvent(
-                    tool_name=name,
+            verdict = await ctx.bus.bail(
+                PreExecuteToolEvent(
+                    name=name,
                     arguments=args,
                     tool_call_id=tc_id,
                 )
-            ):
-                if not isinstance(verdict, HookVerdict):
-                    continue  # None 放行
+            )
+            if isinstance(verdict, HookVerdict):
                 if verdict.blocks:
                     blocked = f"Tool '{name}' blocked by plugin"
                     if verdict.block:
@@ -97,7 +95,15 @@ class ToolExecutor:
                     logger.info(blocked)
                     return tc_id, await report_error(blocked)
                 if verdict.arguments is not None:
-                    args = verdict.arguments  # 改写本次调用参数
+                    args = verdict.arguments
+            elif isinstance(verdict, dict):
+                if verdict.get("block"):
+                    blocked = f"Tool '{name}' blocked by plugin"
+                    blocked += f": {verdict['block']}"
+                    logger.info(blocked)
+                    return tc_id, await report_error(blocked)
+                if isinstance(verdict.get("arguments"), dict):
+                    args = verdict["arguments"]
 
         attrs = {"tool.name": name}
         result = error = None

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
 from ..plugin import plugin
@@ -12,8 +11,6 @@ from ..spec import (
     PromptSection,
     PromptService,
 )
-
-logger = logging.getLogger(__name__)
 
 INSTRUCTION_SECTION = "agent:instruction"
 

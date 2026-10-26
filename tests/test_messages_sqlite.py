@@ -20,14 +20,6 @@ class TestSQLiteMessages:
         assert result[0].content == "hello"
         assert result[1].role == "system"
 
-    async def test_get_with_limit(self, messages):
-        for i in range(5):
-            await messages.add([UserMessage(content=f"msg{i}")])
-        result = await messages.get(limit=2)
-        assert len(result) == 2
-        assert result[0].content == "msg0"
-        assert result[1].content == "msg1"
-
     async def test_pop(self, messages):
         await messages.add([UserMessage(content="first"), UserMessage(content="second")])
         popped = await messages.pop()

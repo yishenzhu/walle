@@ -118,7 +118,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   Session 具体类。刻意不含 provider / agents / depth / session_id。
 
 ### 插件服务（`tool.py` / `prompt.py` / `skill.py`）
-- `ToolService`（register_tool / remove_tool / has / all_tools / schemas / execute /
+- `ToolService`（add / remove / has / all_tools / schemas / execute /
   launch_pending）—— 工具注册、可见性投影与执行管线。
 - `PromptService`（section / assemble）—— 动态 system 提示段，按
   `AssembleContext`（agent / depth / metadata）求值。
@@ -134,7 +134,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   `OpenAIProvider` 作为其实现之一，由装配根注入。
 
 ### 事件总线（`events.py`）
-- `EventBus`（on / off / emit）—— Runner 只依赖本面发事件，具体总线由装配注入。
+- `EventBus`（on / off / emit / bail / parallel）—— Runner / Executor / 插件共用；实现位于 `plugin/events.py`，`infra` 只做转发导出。
 
 > 事件**载荷**（`TurnEndEvent` 等 dataclass）是纯数据，定义在
 > `spec/schemas/events.py`，不在 `spec/protocol/`。二者勿混：
@@ -147,7 +147,7 @@ SessionManager.create(conn)                 # 装配根
 ├─ build_history(storage, db, session_id)    # messages.factory：投影包装
 ├─ provider（conn.model 新建 / 沿用进程默认）  # 均为 spec.LLM
 └─ Session(session_id, history, provider, plugins, transport, cwd)
-    ├─ _bus            EventBus        # 会话私有事件总线（Runner / 旧式钩子）
+    ├─ _bus            EventBus        # 会话唯一事件总线（Runner / Executor / PluginHost 共用）
     ├─ _host           PluginHost      # 每会话插件运行时（start 时 launch）
     ├─ _plugins        list[Plugin]    # 本会话选中的插件声明
     ├─ _prompt         PromptService   # 插件提示段（Runner 组装 system）
@@ -167,9 +167,9 @@ SessionManager.create(conn)                 # 装配根
 再 `PluginHost.launch(plugins)`；插件 `apply(ctx, config)` 只经 ctx 注册，
 `Session.close()` 时随 host 作用域逆序回收。
 
-各零件持有**同一 `_bus` 引用**：Runner / PluginRunner / `tool_context` /
-CommandContext 共用会话唯一总线。插件事件走 `PluginHost` 的根 EventBus，
-工具预执行裁决经 `Session._plugin_tool_gate` 桥接给旧 executor。
+各零件持有**同一 `_bus` 引用**：Runner / Executor / PluginHost /
+`tool_context` / CommandContext 共用会话唯一总线。工具预执行由 executor
+直接 `bail(PreExecuteToolEvent)`，审批 / guard 插件订阅同一事件。
 
 run task 由 Session 持有；transport 断开只影响事件投递，不取消 run。
 新连接 attach 后先收历史，再补发当前 turn 的通知。
@@ -216,9 +216,9 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
 |---|---|---|
 | `MessageDeltaEvent` | Runner 流式增量 | Session → transport.notify(Delta) |
 | `MessageEndEvent` | Runner 文本完成 | Session → transport.notify(DeltaEnd)（output 非 None 时） |
-| `ToolExecutionStartEvent` | executor | 旧式审批/guard 钩子 |
-| `ToolExecutionEndEvent` | executor | 观测型旧式插件 |
-| `PreExecuteToolEvent` | 插件侧桥接 | 审批插件（ctx.bail） |
+| `PreExecuteToolEvent` | executor | 审批 / guard 插件（ctx.bail） |
+| `ToolExecutionEndEvent` | executor | 观测型插件 |
+| `ToolExecutionStartEvent` | —（legacy） | 保留给旧插件导入；核心不再发出 |
 | `ToolResultEvent` | Tools / 工具服务 | 插件观测方 |
 | `Session*Event` / `Agent*Event` / `Turn*Event` / `MessageStartEvent` | Runner | 观测 / 会话管理 |
 

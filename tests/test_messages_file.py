@@ -52,12 +52,6 @@ class TestFileMessages:
         result = await messages.get()
         assert [m.content for m in result] == ["hello", "world"]
 
-    async def test_get_limit_returns_head(self, messages):
-        for i in range(5):
-            await messages.add([UserMessage(content=f"msg{i}")])
-        result = await messages.get(limit=2)
-        assert [m.content for m in result] == ["msg0", "msg1"]
-
     async def test_query_window(self, messages):
         for i in range(5):
             await messages.add([UserMessage(content=f"msg{i}")])

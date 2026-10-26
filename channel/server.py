@@ -109,9 +109,6 @@ class SessionConn:
         self._pending.clear()
         self._link.close()
 
-    async def wait_closed(self) -> None:
-        await self._link.wait_closed()
-
     # ── 读循环 ────────────────────────────────────────
     async def run(
         self,

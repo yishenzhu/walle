@@ -85,4 +85,4 @@ class Sandbox:
             raise RuntimeError(
                 "bwrap 不可用：沙箱插件跳过（apt install bubblewrap 可启用）"
             )
-        ctx.get(ToolService).register_tool(self._bash())
+        ctx.get(ToolService).add(self._bash())

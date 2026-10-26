@@ -27,7 +27,7 @@ def build_history(
 ) -> Messages:
     """构造会话历史：file 集中落盘；sqlite 落数据库；memory 不落盘。"""
     if storage == "memory":
-        return ProjectedMessages(InMemoryMessages())
+        return _memory_history()
     if storage == "file":
         target = canonical_cwd(cwd)
         session_dir = workspace_dir(target, path) / session_dir_name(session_id)
@@ -42,6 +42,11 @@ def build_history(
     )
 
 
-def build_ephemeral_history() -> Messages:
-    """一次性会话历史（子 agent 隔离用）：纯内存，不落盘、不跨实例。"""
+def _memory_history() -> Messages:
+    """纯内存历史：不落盘、不跨实例。"""
     return ProjectedMessages(InMemoryMessages())
+
+
+def build_ephemeral_history() -> Messages:
+    """一次性会话历史（子 agent 隔离用）。"""
+    return _memory_history()

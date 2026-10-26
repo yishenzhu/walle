@@ -32,12 +32,6 @@ class ScopedLayers:
             return self.global_layer
         return self.scoped.setdefault(key, {})
 
-    def peek(self, key: object | None) -> dict[type, Any] | None:
-        """只读探测（不创建层）：全局层恒存在，作用域层可能未建。"""
-        if key is None:
-            return self.global_layer
-        return self.scoped.get(key)
-
     def resolve(self, service: type, key: object | None) -> Any | None:
         """解析实现：先查作用域覆盖层，再落全局（作用域掩盖全局）。"""
         if key is not None:
@@ -64,10 +58,12 @@ class Context:
         *,
         host: PluginHost | None = None,
         key: object | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         self._parent = parent
         self._key = key  # 作用域层 key（None = 全局层）
-        self._bus = EventBus() if parent is None else parent._bus  # 根作用域总线（子作用域共享）
+        # 根作用域可注入总线；子作用域共享父总线。
+        self._bus = (bus or EventBus()) if parent is None else parent._bus
         self._layers = ScopedLayers() if parent is None else parent._layers  # 分层能力表（共享）
         self._effects: list[Callable[[], Any]] = []
         self._detach: Callable[[], None] | None = None  # 从父 effect 表摘除自身（根为 None）
@@ -85,11 +81,6 @@ class Context:
     def bus(self) -> EventBus:
         """根作用域事件总线（全体插件共享）。"""
         return self._root()._bus
-
-    @property
-    def scope_key(self) -> object | None:
-        """本作用域的层 key（None = 全局层）。"""
-        return self._key
 
     # 能力（键为能力协议类；写入本作用域的层）
     async def register(
@@ -162,25 +153,17 @@ class Context:
         self.effect(off)
         return off
 
-    async def emit(self, event: Event) -> None:
-        """广播：顺序调用观察者，异常隔离，不取结果。"""
-        await self.bus.emit(event)
+    async def emit(self, event: Event) -> list[Any]:
+        """顺序分发：逐个 await，异常隔离；返回各监听器结果。"""
+        return await self.bus.emit(event)
 
     async def bail(self, event: Event) -> Any | None:
         """首个表态：返回第一个非 None 结果。"""
         return await self.bus.bail(event)
 
-    async def serial(self, event: Event) -> list[Any]:
-        """顺序聚合：按序 await 全部，返回结果列表（异常也在内）。"""
-        return await self.bus.serial(event)
-
     async def parallel(self, event: Event) -> list[Any]:
-        """并发聚合：并行 await 全部，异常隔离（进结果列表）。"""
+        """并发分发：并行 await 全部，异常隔离（进结果列表）。"""
         return await self.bus.parallel(event)
-
-    async def waterfall(self, event: Event, value: Any = None) -> Any:
-        """拦截/改写链：监听器接收 (event, 当前值) 返回新值递进，stop() 终断。"""
-        return await self.bus.waterfall(event, value)
 
     # 生命周期
     def effect(self, cleanup: Callable[[], Any]) -> Callable[[], None]:
@@ -317,8 +300,8 @@ class PluginEntry:
 class PluginHost:
     """插件运行时根：持根作用域，按 能力→依赖方 映射做依赖驱动编排。"""
 
-    def __init__(self) -> None:
-        self._root = Context(host=self)
+    def __init__(self, bus: EventBus | None = None) -> None:
+        self._root = Context(host=self, bus=bus)
         self._entries: dict[str, PluginEntry] = {}
         self._order: list[str] = []
         self._dependents: dict[type, list[str]] = {}  # 能力 → 依赖方（声明序）

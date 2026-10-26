@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -11,11 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from ..conf import resolve_path
+from ..plugin.events import EventBus, Handler
 from ..spec import DiagnosticType, ResourceDiagnostic
-from .event_bus import EventBus, Handler
 from .tool import Tool
-
-logger = logging.getLogger(__name__)
 
 
 class PluginState(StrEnum):
@@ -279,7 +276,7 @@ class PluginMount:
 
 @dataclass(frozen=True)
 class HookVerdict:
-    """工具执行前钩子（TOOL_EXECUTION_START）的表态。"""
+    """工具执行前钩子（PreExecuteToolEvent）的表态。"""
 
     block: str | None = None
     arguments: dict[str, Any] | None = None

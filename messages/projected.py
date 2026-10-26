@@ -59,13 +59,11 @@ class ProjectedMessages(Projection):
         return self._cut
 
     # ── 模型视图 ────────────────────────────────────────
-    async def get(self, limit: int | None = None) -> list[Message]:
+    async def get(self) -> list[Message]:
         await self._ensure_restored()
         messages = await self._messages.get()
         if self._cut is not None and self._cut < len(messages):
             messages = messages[self._cut :]
-        if limit is not None:
-            messages = messages[:limit]
         # 返回副本：调用方修改不影响投影内部/底层状态
         return list(messages)
 

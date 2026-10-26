@@ -29,16 +29,12 @@ class SQLiteMessages(SQLiteStore):
         conn.commit()
         return conn
 
-    async def get(self, limit: int | None = None) -> list[Message]:
+    async def get(self) -> list[Message]:
         conn = await self._get_conn()
 
         def _query():
             sql = "SELECT data FROM messages WHERE session_id = ? ORDER BY id ASC"
-            params: list[str | int] = [self._session_id]
-            if limit is not None:
-                sql += " LIMIT ?"
-                params.append(limit)
-            rows = conn.execute(sql, params).fetchall()
+            rows = conn.execute(sql, (self._session_id,)).fetchall()
             return [MessageAdapter.validate_json(row[0]) for row in rows]
 
         return await asyncio.to_thread(_query)

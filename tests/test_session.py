@@ -554,7 +554,7 @@ class TestSessionStreamForward:
         finally:
             await s.close()
 
-    async def test_mcp_pluginension_tools_visible_in_session(self, tmp_path):
+    async def test_mcp_plugin_tools_visible_in_session(self, tmp_path):
         """MCP 工具经插件组装进会话：plugin → 插件声明 → 会话激活。"""
         from ..core import PluginManager
         from ..infra import Tool

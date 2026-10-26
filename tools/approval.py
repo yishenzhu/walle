@@ -7,12 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec
-from ..infra import (
-    HookVerdict,
-    PluginAPI,
-    ToolExecutionStartEvent,
-    tool_context,
-)
+from ..infra import HookVerdict, PluginAPI, tool_context
 from ..plugin import plugin
 from ..spec import ApprovalRequest, ApprovalResponse, Channel, PreExecuteToolEvent
 
@@ -151,17 +146,11 @@ class Approval:
 
 
     async def legacy_plugin(self, api: PluginAPI) -> None:
-        """兼容旧插件 API：订阅旧工具预执行事件。"""
-        async def legacy_check(evt: ToolExecutionStartEvent) -> HookVerdict | None:
-            return await self.check(
-                PreExecuteToolEvent(
-                    name=evt.tool_name,
-                    arguments=evt.arguments,
-                    tool_call_id=evt.tool_call_id,
-                )
-            )
+        """兼容旧插件 API：订阅统一的工具预执行事件。"""
+        async def legacy_check(evt: PreExecuteToolEvent) -> HookVerdict | None:
+            return await self.check(evt)
 
-        api.on(ToolExecutionStartEvent, legacy_check)
+        api.on(PreExecuteToolEvent, legacy_check)
 
 
 @plugin(name="approval")

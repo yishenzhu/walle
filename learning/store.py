@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import re
-import tempfile
 import time
 from html import unescape
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from ..conf import PROJECT_ROOT
+from ..infra.jsonio import read_json, write_json_atomic, write_text_atomic
+
 DEFAULT_COURSES_PATH = "data/courses"
 COURSE_FILE = "course.json"
 LESSONS_DIR = "lessons"
@@ -20,7 +19,7 @@ CANVAS_DIR = "canvas"
 PROGRESS_FILE = "progress.json"
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
-CANVAS_TITLE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+H1_TITLE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
 HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 HTML_TAG = re.compile(r"<[^>]+>")
 
@@ -33,16 +32,19 @@ def courses_root(path: str | Path | None = None) -> Path:
     return root
 
 
-def course_id_for(title: str) -> str:
+def _slug_id(title: str, fallback: str) -> str:
+    """标题 → 稳定 id：可读前缀 + 内容摘要，非法字符归一为连字符。"""
     safe = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-").lower()[:40]
     digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
-    return f"{safe or 'course'}-{digest}"
+    return f"{safe or fallback}-{digest}"
+
+
+def course_id_for(title: str) -> str:
+    return _slug_id(title, "course")
 
 
 def lesson_id_for(title: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", title).strip("-").lower()[:40]
-    digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
-    return f"{safe or 'lesson'}-{digest}"
+    return _slug_id(title, "lesson")
 
 
 def course_dir(course_id: str, root: str | Path | None = None) -> Path:
@@ -69,58 +71,27 @@ def canvas_file(
     return canvas_dir(course_id, root) / f"{canvas_id}.html"
 
 
+def outline_lines(
+    course: dict[str, Any], current_lesson_id: str | None = None
+) -> list[str]:
+    """课程大纲：一行一课，当前课加标记。"""
+    lines = ["Lessons:"]
+    for item in course.get("lessons") or []:
+        marker = " (current)" if item.get("id") == current_lesson_id else ""
+        lines.append(
+            f"- {item.get('order') or '?'}. {item.get('title')} "
+            f"[{item.get('id')}]{marker}"
+        )
+    return lines
+
+
 def html_title(html: str, fallback: str) -> str:
     """Extract a canvas title from HTML, falling back to `fallback`."""
-    match = CANVAS_TITLE.search(html) or HTML_TITLE.search(html)
+    match = H1_TITLE.search(html) or HTML_TITLE.search(html)
     if match is None:
         return fallback
     text = unescape(HTML_TAG.sub("", match.group(1)))
     return " ".join(text.split()) or fallback
-
-
-def read_json(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_name, path)
-    finally:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-
-
-def write_text_atomic(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_name, path)
-    finally:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
 
 
 def load_course(course_id: str, root: str | Path | None = None) -> dict[str, Any] | None:

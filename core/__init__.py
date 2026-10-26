@@ -25,6 +25,7 @@ from .session import (
     SessionBusyError,
     SessionClosedError,
     SessionManager,
+    SessionState,
 )
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "SessionBusyError",
     "SessionClosedError",
     "SessionManager",
+    "SessionState",
     # 插件面（自 infra 转发，core 对外统一出口）
     "Commands",
     "DiagnosticType",

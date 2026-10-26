@@ -10,7 +10,8 @@ from ..schemas import Message, Usage
 class Messages(Protocol):
     """消息存储：按时间追加、可读回会话历史。"""
 
-    async def get(self, limit: int | None = None) -> list[Message]: ...
+    async def get(self) -> list[Message]:
+        """全部原始消息（按追加顺序）。窗口查询用 query。"""
 
     async def add(self, items: Sequence[Message], usage: Usage | None = None): ...
 

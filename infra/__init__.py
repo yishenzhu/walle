@@ -1,3 +1,4 @@
+from ..plugin.events import EventBus, Handler
 from ..spec import (
     AgentEndEvent,
     AgentStartEvent,
@@ -7,6 +8,7 @@ from ..spec import (
     MessageDeltaEvent,
     MessageEndEvent,
     MessageStartEvent,
+    PreExecuteToolEvent,
     ResourceDiagnostic,
     SessionEndEvent,
     SessionStartEvent,
@@ -16,7 +18,6 @@ from ..spec import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from .event_bus import EventBus, Handler
 from .logger import LogConfig, setup_logger
 from .metrics import (
     AGENT_ITERATIONS,
@@ -43,7 +44,7 @@ from .telemetry import meter, setup_telemetry, tracer
 from .tool import Tool, tool_context
 
 __all__ = [
-    # event_bus — 会话事件总线（具体实现）
+    # 事件总线（实现位于 plugin.events，infra 统一出口）
     "EventBus",
     "Handler",
     # 事件载荷与数据模型（自 spec 转发，infra 对外统一出口）
@@ -58,6 +59,7 @@ __all__ = [
     "MessageEndEvent",
     "ToolExecutionStartEvent",
     "ToolExecutionEndEvent",
+    "PreExecuteToolEvent",
     "DiagnosticType",
     "ResourceDiagnostic",
     # tool — 工具与执行视图协议

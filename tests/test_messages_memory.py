@@ -19,14 +19,6 @@ class TestInMemoryMessages:
         assert result[0].content == "hello"
         assert result[1].content == "sys"
 
-    async def test_get_with_limit(self, messages):
-        for i in range(5):
-            await messages.add([UserMessage(content=f"msg{i}")])
-        result = await messages.get(limit=2)
-        assert len(result) == 2
-        assert result[0].content == "msg3"
-        assert result[1].content == "msg4"
-
     async def test_get_returns_copy(self, messages):
         await messages.add([UserMessage(content="hello")])
         result1 = await messages.get()

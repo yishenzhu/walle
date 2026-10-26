@@ -9,7 +9,7 @@ from ..core import (
     PluginRunner,
     PluginState,
 )
-from ..infra import AgentStartEvent, Tool, ToolExecutionStartEvent
+from ..infra import AgentStartEvent, PreExecuteToolEvent, Tool
 
 
 def make_tool(name: str) -> Tool:
@@ -131,7 +131,7 @@ async def test_approval_plugin_blocks_tool():
         },
     )
     tools = host.root.get(ToolService)
-    tools.register_tool(make_tool("bash"))
+    tools.add(make_tool("bash"))
     ctx = make_session()
     token = tool_context.set(ctx)
     try:
@@ -205,10 +205,10 @@ async def test_plugin_tool_blocked_by_hook_end_to_end():
     blocked: dict = {}
 
     async def guard(evt):
-        blocked["name"] = evt.tool_name
+        blocked["name"] = evt.name
         return HookVerdict(block="guard 拦截")  # 拦下插件工具
 
-    bus.on(ToolExecutionStartEvent, guard)
+    bus.on(PreExecuteToolEvent, guard)
 
     loader = PluginManager()
     plugin_runner = PluginRunner(bus)

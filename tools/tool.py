@@ -56,7 +56,7 @@ class Tools:
         self._timeout_policy = (tool_config or ToolConfig()).timeout
 
     # ── 注册 ──────────────────────────────────────────
-    def register_tool(self, *tools: Tool) -> None:
+    def add(self, *tools: Tool) -> None:
         """注册工具：同名后到者覆盖先到者。同批重名视为编程错误。"""
         names = [t.name for t in tools]
         if len(set(names)) != len(names):
@@ -65,25 +65,15 @@ class Tools:
         self._tools = [t for t in self._tools if t.name not in fresh]
         self._tools.extend(fresh.values())
 
-    def add(self, *tools: Tool) -> None:
-        self.register_tool(*tools)
-
     def remove(self, name: str) -> None:
         self._tools = [t for t in self._tools if t.name != name]
-
-    def remove_tool(self, name: str) -> None:
-        self.remove(name)
 
     def has(self, name: str) -> bool:
         return self._lookup(name) is not None
 
     def all_tools(self) -> list[Tool]:
         """本层注册 + 继承层（同名本层覆盖）。"""
-        merged: dict[str, Tool] = {}
-        if self._base is not None:
-            merged.update({t.name: t for t in self._base.all_tools()})
-        merged.update({t.name: t for t in self._tools})
-        return list(merged.values())
+        return self._all_tools()
 
     def restrict(self, restriction: ToolRestriction) -> Callable[[], None]:
         """对继承来的工具追加一层限制（多层取交集）；返回撤销函数。"""
@@ -299,15 +289,6 @@ def _admits(name: str, restriction: ToolRestriction | None) -> bool:
     if restriction is None or restriction.allow is None:
         return True
     return any(fnmatch(name, pat) for pat in restriction.allow)
-
-
-def matches(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
-    """glob 筛选：include 白名单（None=全收，[]=全拒）；exclude 优先。"""
-    if exclude and any(fnmatch(name, p) for p in exclude):
-        return False
-    if include is None:
-        return True
-    return any(fnmatch(name, p) for p in include)
 
 
 @plugin(name="tools", provides=(ToolService,))

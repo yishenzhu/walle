@@ -58,11 +58,10 @@ def build_course_zip(
     course_id: str,
     courses_root: str | Path,
     static_dir: str | Path,
-    template_dir: str | Path | None = None,
 ) -> bytes:
     bundle = course_bundle(course_id, courses_root)
     static = Path(static_dir)
-    template = Path(template_dir or Path(__file__).parent) / "export.html"
+    template = Path(__file__).parent / "export.html"
 
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:

@@ -2,21 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
+from fnmatch import fnmatch
 from typing import Any
 
 from ..conf import ToolConfig
 from ..infra import PluginRunner, Skill, Tool
-from ..spec import (
-    AssembleContext,
-    PromptAssembly,
-    PromptSection,
-    ToolRestriction,
-)
+from ..spec import ToolRestriction
 from .executor import ToolExecutor
-
-logger = logging.getLogger(__name__)
 
 
 class SessionToolService:
@@ -26,17 +19,11 @@ class SessionToolService:
         self._runner = runner
         self._executor = ToolExecutor(tool_config)
 
-    def register_tool(self, *tools: Tool) -> None:
-        self._runner.register_tool(*tools)
-
     def add(self, *tools: Tool) -> None:
-        self.register_tool(*tools)
+        self._runner.register_tool(*tools)
 
     def remove(self, name: str) -> None:
         self._runner.remove_tool(name)
-
-    def remove_tool(self, name: str) -> None:
-        self.remove(name)
 
     def has(self, name: str) -> bool:
         return any(tool.name == name for tool in self._runner.all_tools())
@@ -78,34 +65,6 @@ class SessionToolService:
 
     async def launch_pending(self) -> None:
         """后台作业由现有 Runner/Executor 拉起，这里保持幂等空操作。"""
-        return None
-
-
-class SessionPromptService:
-    """PromptService 适配：会话级 section 表，交给 Runner 组装 system 提示。"""
-
-    def __init__(self) -> None:
-        self._sections: dict[str, PromptSection] = {}
-
-    def section(self, section: PromptSection) -> Callable[[], None]:
-        if section.name in self._sections:
-            raise ValueError(f"prompt 段重名: {section.name}")
-        self._sections[section.name] = section
-
-        def _off() -> None:
-            self._sections.pop(section.name, None)
-
-        return _off
-
-    async def assemble(self, context: AssembleContext) -> PromptAssembly:
-        sections: list[str] = []
-        for section in sorted(
-            self._sections.values(), key=lambda item: (item.order, item.name)
-        ):
-            text = section.text(context) if callable(section.text) else section.text
-            if text:
-                sections.append(text)
-        return PromptAssembly(sections=sections)
 
 
 class SessionSkillService:
@@ -126,12 +85,10 @@ class SessionSkillService:
         include: list[str] | None = None,
         exclude: list[str] | None = None,
     ) -> list[Skill]:
-        from ..tools.tool import matches
-
         return [
             skill
             for name, skill in self._runner.skills.items()
-            if matches(name, include, exclude)
+            if _matches(name, include, exclude)
         ]
 
 
@@ -147,3 +104,12 @@ class SessionAgentService:
 
     def get(self, name: str):
         return self._session.get_agent(name)
+
+
+def _matches(name: str, include: list[str] | None, exclude: list[str] | None) -> bool:
+    """glob 筛选：include 白名单（None=全收，[]=全拒）；exclude 优先。"""
+    if exclude and any(fnmatch(name, p) for p in exclude):
+        return False
+    if include is None:
+        return True
+    return any(fnmatch(name, p) for p in include)

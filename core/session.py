@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+from enum import StrEnum
 from typing import Any
 
 from ..conf import ToolConfig
 from ..infra import (
     EventBus,
-    HookVerdict,
     MessageDeltaEvent,
     MessageEndEvent,
     OpenAIProvider,
@@ -35,14 +35,12 @@ from ..spec import (
     Message,
     Messages,
     NotificationUnion,
-    PreExecuteToolEvent,
     PromptService,
     RequestUnion,
     SessionInit,
     SessionView,
     SkillService,
     ToolCallPrepareEvent,
-    ToolExecutionStartEvent,
     ToolPrepare,
     ToolService,
     TurnEndEvent,
@@ -51,13 +49,18 @@ from ..spec import (
 from .agent import Agent
 from .commands import Commands
 from .executor import ToolExecutor
-from .plugins import (
-    SessionAgentService,
-    SessionPromptService,
-    SessionSkillService,
-    SessionToolService,
-)
+from .plugins import SessionAgentService, SessionSkillService, SessionToolService
+from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
+
+
+class SessionState(StrEnum):
+    """会话运行状态：同一时刻只允许一个 run。"""
+
+    IDLE = "idle"
+    RUNNING = "running"
+    CANCELLING = "cancelling"
+    CLOSED = "closed"
 
 
 class SessionBusyError(RuntimeError):
@@ -132,7 +135,7 @@ class Session:
         self._pending: list[NotificationUnion] = []
         self._replaying = False
         # 单写者：一个会话同时只跑一个 run；忙时直接拒绝，不排队
-        self._state = "idle"  # idle / running / cancelling / closed
+        self._state = SessionState.IDLE  # 单写者状态机
         self._run_task: asyncio.Task | None = None
         self._cancel_reason: str | None = None
 
@@ -140,7 +143,7 @@ class Session:
         """启动插件运行时：把服务适配到本会话，再执行插件 apply。"""
         if not self._plugins:
             return
-        host = PluginHost()
+        host = PluginHost(self._bus)
         self._host = host
         self._plugin_ctx = host.root
         self._commands = Commands()
@@ -151,10 +154,8 @@ class Session:
         await host.root.register(
             ToolService, SessionToolService(self._plugin_runner, self._tool_config)
         )
-        await host.root.register(PromptService, SessionPromptService())
+        await host.root.register(PromptService, Prompts())
         await host.root.register(SkillService, SessionSkillService(self._plugin_runner))
-        # 新插件的事件总线桥接：工具预执行裁决回落到旧 executor 的 HookVerdict
-        self._bus.on(ToolExecutionStartEvent, self._plugin_tool_gate)
         await host.launch(
             self._plugins,
             {
@@ -162,26 +163,6 @@ class Session:
             },
         )
         self._prompt = host.root.get(PromptService)
-
-    async def _plugin_tool_gate(self, evt: ToolExecutionStartEvent) -> HookVerdict | None:
-        """把新插件总线的 PreExecuteToolEvent 裁决桥接给旧 ToolExecutor。"""
-        if self._plugin_ctx is None:
-            return None
-        verdict = await self._plugin_ctx.bail(
-            PreExecuteToolEvent(
-                name=evt.tool_name,
-                arguments=evt.arguments,
-                tool_call_id=evt.tool_call_id,
-            )
-        )
-        if isinstance(verdict, HookVerdict):
-            return verdict
-        if isinstance(verdict, dict):
-            if "block" in verdict:
-                return HookVerdict(block=verdict.get("block") or "blocked")
-            if isinstance(verdict.get("arguments"), dict):
-                return HookVerdict(arguments=verdict["arguments"])
-        return None
 
     @property
     def context(self) -> SessionContext:
@@ -227,7 +208,7 @@ class Session:
         return self._transport is not None
 
     @property
-    def state(self) -> str:
+    def state(self) -> SessionState:
         return self._state
 
     @property
@@ -268,14 +249,14 @@ class Session:
     async def call(self, request: RequestUnion) -> Any:
         """向当前连接发起交互；断连时等待重连，连接失败则重试。"""
         while True:
-            if self._state == "closed":
+            if self._state is SessionState.CLOSED:
                 raise SessionClosedError(f"session '{self.id}' is closed")
             transport = self._transport
             if transport is not None:
                 try:
                     return await transport.call(request)
                 except ConnectionError:
-                    if self._state == "closed":
+                    if self._state is SessionState.CLOSED:
                         raise
                     if self._transport is transport:
                         self._attached.clear()
@@ -312,7 +293,7 @@ class Session:
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
-        if self._state == "closed":
+        if self._state is SessionState.CLOSED:
             raise SessionClosedError(f"session '{self.id}' is closed")
         self._transport = transport
         self._attached.set()
@@ -327,16 +308,16 @@ class Session:
 
     def submit(self, user_input: UserInput) -> asyncio.Task:
         """提交一次 run 并立即返回；忙时同步抛 SessionBusyError。"""
-        if self._state == "closed":
+        if self._state is SessionState.CLOSED:
             raise SessionClosedError(f"session '{self.id}' is closed")
         if self._transport is None:
             raise SessionClosedError(f"session '{self.id}' is detached, attach first")
-        if self._state in ("running", "cancelling"):
+        if self._state in (SessionState.RUNNING, SessionState.CANCELLING):
             raise SessionBusyError(f"session '{self.id}' is busy ({self._state})")
 
         content = user_input.content or ""
         self._pending.clear()
-        self._state = "running"
+        self._state = SessionState.RUNNING
         self._cancel_reason = None
         task = asyncio.create_task(self._run(content))
         self._run_task = task
@@ -354,8 +335,8 @@ class Session:
             self._pending.clear()
             if self._run_task is asyncio.current_task():
                 self._run_task = None
-            if self._state != "closed":
-                self._state = "idle"
+            if self._state is not SessionState.CLOSED:
+                self._state = SessionState.IDLE
 
     async def _report_error(self, exc: Exception) -> None:
         """把 run 异常发给当前连接；断连期间进入缓冲。"""
@@ -400,7 +381,7 @@ class Session:
             )
         except asyncio.CancelledError:
             # 主动取消：先发终态再正常返回，调用方不必处理 CancelledError。
-            if self._state == "cancelling":
+            if self._state is SessionState.CANCELLING:
                 await self._bus.emit(
                     MessageEndEvent(
                         output=None,
@@ -416,20 +397,20 @@ class Session:
         task = self._run_task
         if task is None or task.done():
             return False
-        self._state = "cancelling"
+        self._state = SessionState.CANCELLING
         self._cancel_reason = reason
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        if self._state != "closed":
-            self._state = "idle"
+        if self._state is not SessionState.CLOSED:
+            self._state = SessionState.IDLE
         return True
 
     async def close(self) -> None:
         """真正销毁：取消当前 run / 后台作业，关消息存储。"""
-        if self._state == "closed":
+        if self._state is SessionState.CLOSED:
             return
         await self.cancel(reason="session closed")
-        self._state = "closed"
+        self._state = SessionState.CLOSED
         self._attached.set()
         self._pending.clear()
         pending = [

@@ -576,13 +576,13 @@ class TestRunnerToolHooks:
 
     async def test_tool_blocked_by_before_hook(self, provider, env):
         from ..core import EventBus
-        from ..infra import ToolExecutionStartEvent
+        from ..infra import PreExecuteToolEvent
 
         async def block(evt):
             return HookVerdict(block="runner 层拦截")
 
         bus = EventBus()
-        bus.on(ToolExecutionStartEvent, block)
+        bus.on(PreExecuteToolEvent, block)
 
         runner = Runner(
             executor=ToolExecutor(

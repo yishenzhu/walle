@@ -34,4 +34,4 @@ async def builtin_plugin(ctx, config) -> None:
     """Built-in tool plugin: register all built-in tools with ToolService."""
     tools = ctx.get(ToolService)
     for fn in BUILTIN_TOOLS:
-        tools.register_tool(Tool.from_function(fn))
+        tools.add(Tool.from_function(fn))
