@@ -605,15 +605,14 @@ walle/
 │       ├── events.py          #     事件总线载荷（Session/Turn/Tool 事件）
 │       ├── channel.py         #     通道载荷（连接/通知/服务 + 判别联合）
 │       ├── job.py             #     后台作业（Job/JobStatus + Dispatch/Result）
-│       ├── tools.py           #     ToolRestriction（作用域 allow/deny）
 │       ├── diagnostics.py     #     资源诊断
 │       └── usage.py           #     Token 用量
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（兼容层：ToolService 执行适配）
+│   ├── executor.py            #   工具执行器（查找 / 裁决 / 超时 / 通知）
 │   ├── prompt.py              #   PromptService 默认实现（Prompts）
-│   ├── plugins.py             #   插件服务 → 会话运行时适配（Tool/Prompt/Skill）
+│   ├── plugins.py             #   插件服务 → 会话运行时适配（Tool/Skill）
 │   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
@@ -627,7 +626,6 @@ walle/
 │       ├── static/            #     marked / KaTeX / DOMPurify（Markdown、公式与净化）
 │       └── __main__.py        #     入口（python -m walle.channel.web）
 ├── tools/                     # 工具与插件声明
-│   ├── tool.py                #   ToolService 默认实现（Tools：注册/schema/执行）
 │   ├── mcp.py                 #   MCP 配置 + 客户端（MCPManager.plugin）
 │   ├── skill.py               #   技能扫描（native_skill 插件）
 │   ├── approval.py            #   审批插件（native_approval：规则 + 人工确认）

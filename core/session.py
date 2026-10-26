@@ -152,7 +152,7 @@ class Session:
         await host.root.register(AgentService, SessionAgentService(self))
         await host.root.register(SessionView, self.context)
         await host.root.register(
-            ToolService, SessionToolService(self._plugin_runner, self._tool_config)
+            ToolService, SessionToolService(self._plugin_runner)
         )
         await host.root.register(PromptService, Prompts())
         await host.root.register(SkillService, SessionSkillService(self._plugin_runner))

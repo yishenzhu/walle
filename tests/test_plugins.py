@@ -106,42 +106,6 @@ async def test_discover_packages_and_web_plugins():
     assert "learning-web" in web_plugins
 
 
-async def test_approval_plugin_blocks_tool():
-    """新插件总线：approval 订阅 PreExecuteToolEvent，Tools 执行前被拦截。"""
-    from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec
-    from ..infra import tool_context
-    from ..plugin import PluginHost
-    from ..spec import ToolService
-    from ..tools.approval import native_approval
-    from ..tools.tool import Tools
-    from .conftest import make_session
-
-    host = PluginHost()
-    tools = Tools(host.root)
-    await host.root.register(ToolService, tools)
-    await host.launch(
-        [native_approval],
-        {
-            "approval": {
-                "config": ApprovalConfig(
-                    rules=[ApprovalRuleSpec(ApprovalDecision.DENY, "bash")],
-                    default=ApprovalDecision.ALLOW,
-                )
-            }
-        },
-    )
-    tools = host.root.get(ToolService)
-    tools.add(make_tool("bash"))
-    ctx = make_session()
-    token = tool_context.set(ctx)
-    try:
-        result = await tools.execute("bash", {}, "tc1")
-        assert "denied by policy" in result
-    finally:
-        tool_context.reset(token)
-        await host.dispose()
-
-
 async def test_failing_factory_is_isolated():
     mgr = PluginManager()
 

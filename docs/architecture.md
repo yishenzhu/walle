@@ -118,12 +118,11 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   Session 具体类。刻意不含 provider / agents / depth / session_id。
 
 ### 插件服务（`tool.py` / `prompt.py` / `skill.py`）
-- `ToolService`（add / remove / has / all_tools / schemas / execute /
-  launch_pending）—— 工具注册、可见性投影与执行管线。
+- `ToolService`（add / remove / has / all_tools）—— 会话工具表：插件注册
+  工具，Runner 每轮实时取工具源。
 - `PromptService`（section / assemble）—— 动态 system 提示段，按
   `AssembleContext`（agent / depth / metadata）求值。
 - `SkillService`（add / remove / list）—— 技能目录，支持 glob 筛选。
-- `ToolRestriction`（schemas/tools.py）—— 作用域 allow/deny，多层取交集。
 
 ### 旧式工具表能力（`runtime.py`）
 - `ToolTable`（register_tool / remove_tool / all_tools / skills）—— 会话工具表：
@@ -219,7 +218,7 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
 | `PreExecuteToolEvent` | executor | 审批 / guard 插件（ctx.bail） |
 | `ToolExecutionEndEvent` | executor | 观测型插件 |
 | `ToolExecutionStartEvent` | —（legacy） | 保留给旧插件导入；核心不再发出 |
-| `ToolResultEvent` | Tools / 工具服务 | 插件观测方 |
+| `ToolResultEvent` | 工具服务 | 插件观测方 |
 | `Session*Event` / `Agent*Event` / `Turn*Event` / `MessageStartEvent` | Runner | 观测 / 会话管理 |
 
 > 载荷只携带值类型：需要与会话状态交互的 handler 从 `SessionView` /

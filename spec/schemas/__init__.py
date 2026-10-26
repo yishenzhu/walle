@@ -55,7 +55,6 @@ from .message import (
     ToolMessage,
     UserMessage,
 )
-from .tools import ToolRestriction
 from .usage import Usage
 
 __all__ = [
@@ -104,8 +103,6 @@ __all__ = [
     "ToolExecutionEndEvent",
     "PreExecuteToolEvent",
     "ToolResultEvent",
-    # tools — 工具作用域限制
-    "ToolRestriction",
     # job — 后台作业模型
     "Job",
     "JobStatus",

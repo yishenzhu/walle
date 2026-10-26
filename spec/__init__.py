@@ -65,7 +65,6 @@ from .schemas import (
     ToolExecutionStartEvent,
     ToolMessage,
     ToolPrepare,
-    ToolRestriction,
     ToolResult,
     ToolResultEvent,
     ToolStart,
@@ -125,7 +124,6 @@ __all__ = [
     "ToolExecutionEndEvent",
     "PreExecuteToolEvent",
     "ToolResultEvent",
-    "ToolRestriction",
     # protocol — 能力协议
     "AgentService",
     "Channel",

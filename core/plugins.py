@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from fnmatch import fnmatch
-from typing import Any
 
-from ..conf import ToolConfig
 from ..infra import PluginRunner, Skill, Tool
-from ..spec import ToolRestriction
-from .executor import ToolExecutor
 
 
 class SessionToolService:
-    """ToolService 适配：注册落到 PluginRunner，执行走 ToolExecutor。"""
+    """ToolService 适配：工具表落在会话 PluginRunner 上。"""
 
-    def __init__(self, runner: PluginRunner, tool_config: ToolConfig | None = None):
+    def __init__(self, runner: PluginRunner) -> None:
         self._runner = runner
-        self._executor = ToolExecutor(tool_config)
 
     def add(self, *tools: Tool) -> None:
         self._runner.register_tool(*tools)
@@ -30,41 +24,6 @@ class SessionToolService:
 
     def all_tools(self) -> list[Tool]:
         return self._runner.all_tools()
-
-    def restrict(self, restriction: ToolRestriction) -> Callable[[], None]:
-        """工具限制由 Agent.tool_filter 在每轮组装，适配层不叠加。"""
-        return lambda: None
-
-    def schemas(
-        self,
-        *,
-        restriction: ToolRestriction | None = None,
-        tools: dict[str, Tool] | None = None,
-    ) -> list[dict[str, Any]]:
-        source = {t.name: t for t in self._runner.all_tools()}
-        if tools:
-            source.update(tools)
-        return [tool.to_schema() for tool in source.values()]
-
-    async def execute(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        tool_call_id: str = "",
-        *,
-        restriction: ToolRestriction | None = None,
-        tools: dict[str, Tool] | None = None,
-    ) -> Any:
-        source = {t.name: t for t in self._runner.all_tools()}
-        if tools:
-            source.update(tools)
-        _, result = await self._executor.execute_tool(
-            name, arguments or {}, tool_call_id, source
-        )
-        return result
-
-    async def launch_pending(self) -> None:
-        """后台作业由现有 Runner/Executor 拉起，这里保持幂等空操作。"""
 
 
 class SessionSkillService:
