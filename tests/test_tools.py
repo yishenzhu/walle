@@ -82,11 +82,6 @@ class TestRunnerTools:
         tools = [t for t in runner.all_tools() if t.name == "x"]
         assert tools == [second]  # 旧实例被替换，只剩新实例
 
-    def test_register_same_batch_duplicate_raises(self, runner):
-        """同一批内工具名重复是编程错误（整批抛错）。"""
-        with pytest.raises(ValueError, match="Duplicate tool name"):
-            runner.add(self._tool("a"), self._tool("a"))
-
     def test_remove_tool(self, runner):
         runner.add(self._tool("x"))
         runner.remove("x")

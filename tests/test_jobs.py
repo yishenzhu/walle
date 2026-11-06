@@ -5,7 +5,6 @@ import json
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, Runner, Session, SessionContext, ToolExecutor
 from ..core.agent import ToolFilter
 from ..infra import JobStatus, Tool, tool_context
@@ -23,11 +22,7 @@ from .conftest import (
 
 
 def allow_executor() -> ToolExecutor:
-    return ToolExecutor(
-        ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        )
-    )
+    return ToolExecutor()
 
 
 def make_tool(name: str, result: str = "ok", delay: float = 0.0) -> Tool:
@@ -225,11 +220,9 @@ class TestRunnerIntegration:
         from ..core import Tools
 
         tools = Tools()
-        tools.add(
-            make_tool("slow", "slow-done", delay=0.05),
-            Tool.from_function(background),
-            Tool.from_function(job_result),
-        )
+        tools.add(make_tool("slow", "slow-done", delay=0.05))
+        tools.add(Tool.from_function(background))
+        tools.add(Tool.from_function(job_result))
         env.tools = tools
 
         agent = Agent(
@@ -285,11 +278,9 @@ class TestRunnerIntegration:
         from ..core import Tools
 
         tools = Tools()
-        tools.add(
-            make_tool("slow", "done-42", delay=0.1),
-            Tool.from_function(background),
-            Tool.from_function(job_result),
-        )
+        tools.add(make_tool("slow", "done-42", delay=0.1))
+        tools.add(Tool.from_function(background))
+        tools.add(Tool.from_function(job_result))
         env.tools = tools
 
         agent = Agent(
@@ -337,14 +328,9 @@ class TestSessionCloseCancels:
         s = Session(
             session_id="jobs-1",
             history=build_history("sqlite", str(tmp_path / "s.db"), "jobs-1"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
         )
         # Session 不暴露执行器——close 取消验证用独立 executor 派发即可
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         # 派发一个永不完成的后台作业
         async def never(args):

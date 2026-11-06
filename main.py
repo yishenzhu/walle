@@ -45,7 +45,8 @@ async def main() -> None:
     logger.info(f"plugins loaded: {len(plugins)}")
 
     sessions = SessionManager(
-        tool_config=conf.tool,
+        timeout=conf.timeout,
+        plugin_configs={"approval": conf.approval.model_dump()},
         plugins=plugins,
         provider=provider,
         storage=conf.session.storage,

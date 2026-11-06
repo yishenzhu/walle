@@ -45,8 +45,8 @@ class PromptAssembly:
 class PromptService(Protocol):
     """提示词组装：注册贡献 + 一次组装。"""
 
-    def section(self, section: PromptSection) -> Callable[[], None]:
-        """注册 prompt 段（返回摘除函数）；重名报错。"""
+    def section(self, section: PromptSection) -> None:
+        """注册 prompt 段；重名报错。"""
 
     async def assemble(self, context: AssembleContext) -> PromptAssembly:
         """组装：有序段文本。"""

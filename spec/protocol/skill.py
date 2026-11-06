@@ -7,7 +7,8 @@ from typing import Any, Protocol, runtime_checkable
 class SkillService(Protocol):
     """会话技能目录：注册/移除/列表（含 glob 筛选）。"""
 
-    def add(self, name: str, description: str, path: str) -> None: ...
+    def add(self, name: str, description: str, path: str) -> None:
+        """注册技能。"""
 
     def remove(self, name: str) -> None: ...
 

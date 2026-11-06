@@ -2,7 +2,6 @@
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Agent, EventBus, Runner, SessionContext, ToolExecutor
 from ..infra import (
     AgentEndEvent,
@@ -96,9 +95,7 @@ async def test_clear_removes_handlers():
 
 @pytest.fixture
 def allow_executor():
-    return ToolExecutor(
-        ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-    )
+    return ToolExecutor()
 
 
 async def test_runner_emits_lifecycle(allow_executor):

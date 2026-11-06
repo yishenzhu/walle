@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, TimeoutConfig, ToolConfig
+from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, TimeoutConfig
 from ..core.executor import ToolExecutor
 from ..infra import Tool
 from .conftest import FakeChannel, FakeProvider, FakeToolCall, make_session
@@ -36,7 +36,7 @@ async def mount_approval(ctx, config) -> None:
     if ctx.bus is None:
         ctx.bus = EventBus()
     host = PluginHost(ctx.bus)
-    await host.launch([native_approval], {"approval": {"config": config}})
+    await host.launch([native_approval], {"approval": config.model_dump()})
     # 模拟 runner 每轮统一注入：tool_context 由调用方设置，executor 不再自设
     tool_context.set(ctx)
 
@@ -61,9 +61,7 @@ def ctx():
 
 class TestExecute:
     async def test_execute_allowed_tool(self, ctx):
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
         tool = make_tool("echo", "hello")
         tc = make_tool_call(name="echo")
         tc_id, result = await executor.execute_tool_call(tc, {"echo": tool})
@@ -84,9 +82,7 @@ class TestExecute:
         assert "denied by policy" in result
 
     async def test_execute_unknown_tool(self, ctx):
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
         tc = make_tool_call(name="nonexistent")
         tc_id, result = await executor.execute_tool_call(tc, {})
         assert "Unknown tool" in result
@@ -101,9 +97,7 @@ class TestExecute:
             parameters={"type": "object", "properties": {}},
             fn=failing_fn,
         )
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
         tc = make_tool_call(name="boom")
         tc_id, result = await executor.execute_tool_call(tc, {"boom": tool})
         assert "Error: boom" in result
@@ -172,10 +166,7 @@ class TestExecute:
             fn=slow_fn,
         )
         executor = ToolExecutor(
-            ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                timeout=TimeoutConfig(default=0.1),
-            )
+            TimeoutConfig(default=0.1)
         )
         tc = make_tool_call(name="slow")
         tc_id, result = await executor.execute_tool_call(tc, {"slow": tool})
@@ -192,10 +183,7 @@ class TestExecute:
             fn=fn,
         )
         executor = ToolExecutor(
-            ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                timeout=TimeoutConfig(default=None),
-            )
+            TimeoutConfig(default=None)
         )
         tc = make_tool_call(name="ok")
         tc_id, result = await executor.execute_tool_call(tc, {"ok": tool})
@@ -216,10 +204,7 @@ class TestExecute:
             fn=slow_interactive,
         )
         executor = ToolExecutor(
-            ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                timeout=TimeoutConfig(default=0.1, overrides={"ask_user": 5.0}),
-            )
+            TimeoutConfig(default=0.1, overrides={"ask_user": 5.0})
         )
         tc = make_tool_call(name="ask_user")
         tc_id, result = await executor.execute_tool_call(tc, {"ask_user": tool})
@@ -240,10 +225,7 @@ class TestExecute:
             fn=interactive,
         )
         executor = ToolExecutor(
-            ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-                timeout=TimeoutConfig(default=0.1, overrides={"ask_user": None}),
-            )
+            TimeoutConfig(default=0.1, overrides={"ask_user": None})
         )
         tc = make_tool_call(name="ask_user")
         tc_id, result = await executor.execute_tool_call(tc, {"ask_user": tool})
@@ -254,9 +236,7 @@ class TestExecuteToolCalls:
     """execute_tool_calls：并发执行一批工具调用，按完成序产出（async for 或收集）。"""
 
     def _executor(self) -> ToolExecutor:
-        return ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        return ToolExecutor()
 
     def _tools_and_calls(self):
         tools = {
@@ -334,9 +314,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import PreExecuteToolEvent
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         async def allow(evt):
             return True
@@ -358,9 +336,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import PreExecuteToolEvent, tool_context
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         seen = {}
 
@@ -380,9 +356,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import ToolExecutionEndEvent
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         seen = []
 
@@ -400,9 +374,7 @@ class TestToolHooks:
         assert seen == ["echo"]
 
     async def test_no_bus_skips_hooks(self, ctx):
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
         tool = make_tool("echo", "ran")
         tc_id, result = await executor.execute_tool_call(
             make_tool_call(name="echo"), {"echo": tool}
@@ -414,9 +386,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import HookVerdict, PreExecuteToolEvent
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         async def block(evt):
             return HookVerdict(block="危险命令")
@@ -440,9 +410,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import HookVerdict, PreExecuteToolEvent
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         seen = {}
 
@@ -476,9 +444,7 @@ class TestToolHooks:
         from ..core import EventBus
         from ..infra import ToolExecutionEndEvent
 
-        executor = ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        )
+        executor = ToolExecutor()
 
         seen = {}
 

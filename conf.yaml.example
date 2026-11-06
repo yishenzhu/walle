@@ -11,33 +11,33 @@ telemetry:
     insecure: true
   console_export: false
 
-tool:
-  timeout:
-    default: 30
-    overrides:
-      ask_user: null    # None = 豁免超时（等人回答不设时限）；数值 = 覆盖全局
-  approval:
-    rules:
-      - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
-      - [allow, bash(cmd=ls -la*)]    # 安全命令自动放行（ls -la 开头）
-      - [ask, jupyter]                 # 代码执行默认需人工确认
-      - [ask, edit]                    # 编辑文件默认需人工确认（改动可见）
-      - [ask, write]                   # 整文件写入默认需人工确认（可覆盖全文）
-      - [allow, edit(path=.agent/note.md)]  # 工作笔记 note.md 自动放行
-      - [allow, ask_user]             # 提问工具自动放行
-      - [allow, canvas]               # 画布 HTML 在沙箱 iframe 内渲染，自动放行
-      - [allow, course_canvas]        # 课程画布写入 data/courses
-      - [allow, create_course]        # 课程包写入 data/courses
-      - [allow, write_lesson]         # 课节 md 写入 data/courses
-      - [allow, read_course]          # 课程答疑只读
-      - [allow, read]                 # 读文件自动放行（技能按需加载）
-      - [allow, history]              # 历史检索只读，自动放行
-      - [allow, new_window]           # 模型主动开新窗口（仅改模型视野，不删原文）
-      - [allow, mcp_rag_list_knowledge]   # RAG 检索只读
-      - [allow, mcp_rag_search_knowledge]
-      - [allow, mcp_rag_search_memory]
-      - [ask, mcp_rag_add_memory]         # 写入用户记忆需确认
-    default: ask
+timeout:
+  default: 30
+  overrides:
+    ask_user: null    # None = 豁免超时（等人回答不设时限）；数值 = 覆盖全局
+
+approval:
+  rules:
+    - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
+    - [allow, bash(cmd=ls -la*)]    # 安全命令自动放行（ls -la 开头）
+    - [ask, jupyter]                 # 代码执行默认需人工确认
+    - [ask, edit]                    # 编辑文件默认需人工确认（改动可见）
+    - [ask, write]                   # 整文件写入默认需人工确认（可覆盖全文）
+    - [allow, edit(path=.agent/note.md)]  # 工作笔记 note.md 自动放行
+    - [allow, ask_user]             # 提问工具自动放行
+    - [allow, canvas]               # 画布 HTML 在沙箱 iframe 内渲染，自动放行
+    - [allow, course_canvas]        # 课程画布写入 data/courses
+    - [allow, create_course]        # 课程包写入 data/courses
+    - [allow, write_lesson]         # 课节 md 写入 data/courses
+    - [allow, read_course]          # 课程答疑只读
+    - [allow, read]                 # 读文件自动放行（技能按需加载）
+    - [allow, history]              # 历史检索只读，自动放行
+    - [allow, new_window]           # 模型主动开新窗口（仅改模型视野，不删原文）
+    - [allow, mcp_rag_list_knowledge]   # RAG 检索只读
+    - [allow, mcp_rag_search_knowledge]
+    - [allow, mcp_rag_search_memory]
+    - [ask, mcp_rag_add_memory]         # 写入用户记忆需确认
+  default: ask
 
 # 会话持久化：历史跨连接/重启保留（attach/resume 的基础）
 session:

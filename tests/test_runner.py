@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import (
     Agent,
     EventBus,
@@ -43,9 +42,7 @@ def channel():
 
 @pytest.fixture
 def allow_executor():
-    return ToolExecutor(
-        ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-    )
+    return ToolExecutor()
 
 
 @pytest.fixture
@@ -242,7 +239,8 @@ class TestRunnerWithTools:
         )
 
         agent = Agent(instruction="helpful")
-        env.tools.add(tool_a, tool_b)
+        env.tools.add(tool_a)
+        env.tools.add(tool_b)
 
         result = await runner.run(agent, "use both", env=env)
         assert result.completed_turns == 2
@@ -585,9 +583,7 @@ class TestRunnerToolHooks:
         bus.on(PreExecuteToolEvent, block)
 
         runner = Runner(
-            executor=ToolExecutor(
-                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-            ),
+            executor=ToolExecutor(),
         )
         env.bus = bus  # 会话总线（钩子屏障来源）
 
@@ -624,9 +620,7 @@ class TestRunnerToolHooks:
         bus.on(ToolExecutionEndEvent, record)
 
         runner = Runner(
-            executor=ToolExecutor(
-                ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-            ),
+            executor=ToolExecutor(),
         )
         env.bus = bus  # 会话总线（钩子屏障来源）
 

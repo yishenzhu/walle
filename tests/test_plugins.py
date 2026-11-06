@@ -1,12 +1,11 @@
 """插件运行时测试：依赖驱动激活 + 作用域 + 工具落表 + 失败隔离。"""
 
-import pytest
 
 from ..channel.web.plugins import discover_web_plugins
 from ..core import HookVerdict, Tools
-from ..infra import AgentStartEvent, PreExecuteToolEvent, Tool
+from ..infra import AgentStartEvent, PreExecuteToolEvent, Skills, Tool
 from ..plugin import Plugin, PluginHost, discover_packages, plugin
-from ..spec import ToolService
+from ..spec import SkillService, ToolService
 
 
 def make_tool(name: str) -> Tool:
@@ -97,21 +96,6 @@ async def test_failing_plugin_is_isolated():
     assert entries[1].state.value == "active"
 
 
-async def test_duplicate_provider_rejected():
-    """同一能力被两个插件声明提供 → 启动即报错。"""
-
-    @plugin(name="a", provides=(ToolService,))
-    async def a(ctx, config) -> None:
-        return None
-
-    @plugin(name="b", provides=(ToolService,))
-    async def b(ctx, config) -> None:
-        return None
-
-    with pytest.raises(ValueError):
-        await PluginHost().launch([a, b])
-
-
 async def test_stop_rolls_back_subscriptions():
     """stop 逆序回滚 effect：插件订阅的事件被摘除。"""
     host = PluginHost()
@@ -127,34 +111,81 @@ async def test_stop_rolls_back_subscriptions():
     assert not host.root.bus.has(AgentStartEvent)
 
 
-async def test_stop_reclaims_plugin_tools():
-    """插件卸载回收它注册的工具。"""
+async def test_unload_reclaims_tools_and_skills():
+    """中途卸载插件：它注册的工具与技能一并回收。"""
     host = PluginHost()
-    table = Tools()
-    await host.root.register(ToolService, table)
-    await host.launch([tool_plugin("demo", "t")])
-    assert table.has("t")
-    await host.stop()
-    assert not table.has("t")
+    tools = Tools()
+    skills = Skills()
+    await host.root.register(ToolService, tools)
+    await host.root.register(SkillService, skills)
 
-
-async def test_stop_reclaims_plugin_skills():
-    """插件卸载回收它注册的技能。"""
-    from ..infra import Skills
-    from ..spec import SkillService
-
-    host = PluginHost()
-    table = Skills()
-    await host.root.register(SkillService, table)
-
-    @plugin(name="skills", inject=(SkillService,))
-    async def skills(ctx, config) -> None:
+    @plugin(name="demo", inject=(ToolService, SkillService))
+    async def demo(ctx, config) -> None:
+        ctx.get(ToolService).add(make_tool("t"))
         ctx.get(SkillService).add("grill", "Grill the user", "/s/SKILL.md")
 
-    await host.launch([skills])
-    assert [s.name for s in table.list()] == ["grill"]
-    await host.stop()
-    assert table.list() == []
+    await host.launch([demo])
+    assert tools.has("t")
+    assert [s.name for s in skills.list()] == ["grill"]
+
+    assert await host.unload("demo") is True
+    assert not tools.has("t")
+    assert skills.list() == []
+    assert host.entries == []
+    assert await host.unload("demo") is False  # 幂等：已卸载返回 False
+
+
+async def test_unload_reclaims_prompt_sections_and_commands():
+    """同一套视图收集 prompt 段与命令的注销函数。"""
+    from ..core.command import Commands
+    from ..core.prompt import Prompts
+    from ..spec import (
+        AssembleContext,
+        Command,
+        CommandService,
+        PromptSection,
+        PromptService,
+    )
+
+    host = PluginHost()
+    prompts = Prompts()
+    commands = Commands()
+    await host.root.register(PromptService, prompts)
+    await host.root.register(CommandService, commands)
+
+    async def handler(request, ctx):
+        return None
+
+    @plugin(name="ui", inject=(PromptService, CommandService))
+    async def ui(ctx, config) -> None:
+        ctx.get(PromptService).section(
+            PromptSection(name="demo", order=10, text="hi")
+        )
+        ctx.get(CommandService).register(
+            Command(name="demo", description="d", handler=handler)
+        )
+
+    await host.launch([ui])
+    assembly = await prompts.assemble(AssembleContext(agent="a"))
+    assert assembly.sections == ["hi"]
+    assert commands.find("demo") is not None
+
+    await host.unload("ui")
+    assert (await prompts.assemble(AssembleContext(agent="a"))).sections == []
+    assert commands.find("demo") is None
+
+
+async def test_unload_keeps_other_plugins():
+    """卸载一个插件不影响其它插件注册的工具。"""
+    host = PluginHost()
+    tools = Tools()
+    await host.root.register(ToolService, tools)
+    await host.launch([tool_plugin("a", "tool_a"), tool_plugin("b", "tool_b")])
+
+    await host.unload("a")
+    assert not tools.has("tool_a")
+    assert tools.has("tool_b")
+    assert [e.plugin.name for e in host.entries] == ["b"]
 
 
 async def test_builtin_plugin_registers_tools():
@@ -174,7 +205,6 @@ async def test_builtin_plugin_registers_tools():
 
 async def test_plugin_tool_blocked_by_hook_end_to_end():
     """插件注册工具 + 钩子经共享总线拦下工具执行，流程继续。"""
-    from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
     from ..core import Agent, Runner, SessionContext, ToolExecutor
     from ..core.agent import ToolFilter
     from ..messages import InMemoryMessages
@@ -202,9 +232,7 @@ async def test_plugin_tool_blocked_by_hook_end_to_end():
 
     agent = Agent(instruction="helpful", tool_filter=ToolFilter(allow=["*"]))
     runner = Runner(
-        executor=ToolExecutor(
-            ToolConfig(approval=ApprovalConfig(default=ApprovalDecision.ALLOW))
-        ),
+        executor=ToolExecutor(),
     )
     provider.client.chat.completions.set_responses(
         FakeCompletion(

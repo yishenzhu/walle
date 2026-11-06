@@ -137,6 +137,8 @@ class Agent(BaseModel):
                 history=env.history_factory(),  # 子 agent 独立历史，不继承父对话
                 provider=env.provider,
                 tools=env.tools,
+                skills=env.skills,
+                executor=env.executor,
                 cwd=env.cwd,
                 agents=env.agents,
                 depth=env.depth + 1,

@@ -111,7 +111,7 @@ class ChannelApprover:
 
 
 class Approval:
-    """审批插件：把工具审批（规则判断 + 人工审批）作为插件提供。"""
+    """审批策略：规则判断 + 人工审批。"""
 
     def __init__(self, config: ApprovalConfig | None = None):
         self._policy = ApprovalPolicy(config or ApprovalConfig())
@@ -145,9 +145,8 @@ class Approval:
         )
 
 
-
 @plugin(name="approval")
 async def native_approval(ctx, config) -> None:
     """审批插件：订阅工具预执行事件，拒绝即阻断。"""
-    approval = Approval(config.get("config"))
+    approval = Approval(ApprovalConfig.model_validate(config))
     ctx.on(PreExecuteToolEvent, approval.check)

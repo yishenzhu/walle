@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..conf import ToolConfig
+from ..conf import TimeoutConfig
 from ..infra import (
     TOOL_CALLS,
     TOOL_DURATION,
@@ -19,7 +19,9 @@ from ..infra import (
     tool_context,
     tracer,
 )
+from ..plugin import plugin
 from ..spec import (
+    ExecutorService,
     PreExecuteToolEvent,
     ToolExecutionEndEvent,
     ToolResult,
@@ -32,9 +34,13 @@ logger = logging.getLogger(__name__)
 class ToolExecutor:
     """工具执行器：无状态，通知渠道来自每次 execute 的会话上下文。"""
 
-    def __init__(self, config: ToolConfig | None = None):
-        config = config or ToolConfig()
-        self._timeout_policy = config.timeout
+    def __init__(self, timeout: TimeoutConfig | None = None):
+        self._timeout = timeout or TimeoutConfig()
+
+    @property
+    def timeout(self) -> TimeoutConfig:
+        """构造本执行器时使用的超时策略。"""
+        return self._timeout
 
     async def execute_tool_call(
         self,
@@ -108,7 +114,7 @@ class ToolExecutor:
         attrs = {"tool.name": name}
         result = error = None
         elapsed_ms = None
-        timeout = self._timeout_policy.resolve(name)
+        timeout = self._timeout.resolve(name)
         try:
             with tracer.start_as_current_span("tool.execute") as span:
                 span.set_attribute("tool.name", name)
@@ -195,3 +201,9 @@ class ToolExecutor:
         except Exception as exc:
             job.error = str(exc)
             job.status = JobStatus.ERROR
+
+
+@plugin(name="executor")
+async def executor_plugin(ctx, config) -> None:
+    """工具执行器插件：preflight / 超时 / 通知 / 后台作业。"""
+    await ctx.register(ExecutorService, ToolExecutor(TimeoutConfig.model_validate(config)))

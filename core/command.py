@@ -5,8 +5,8 @@ from __future__ import annotations
 import inspect
 import re
 import uuid
-from collections.abc import Callable
 
+from ..plugin import on_dispose
 from ..spec import (
     Command,
     CommandContext,
@@ -27,35 +27,26 @@ def parse_command(line: str) -> tuple[str, str] | None:
 
 
 class Commands:
-    """会话级命令目录；同一实例内 name/alias 不允许重复。"""
+    """会话级命令目录；同一实例内 name 不允许重复。"""
 
     def __init__(self) -> None:
         self._commands: dict[str, Command] = {}
-        self._aliases: dict[str, str] = {}
 
-    def register(self, command: Command) -> Callable[[], None]:
-        """注册命令；返回注销函数。名称或别名冲突时报错。"""
-        names = [command.name, *command.aliases]
-        for name in names:
-            if name in self._commands or name in self._aliases:
-                raise ValueError(f"command '{name}' already registered")
+    def register(self, command: Command) -> None:
+        """注册命令；名称冲突时报错。"""
+        if command.name in self._commands:
+            raise ValueError(f"command '{command.name}' already registered")
         self._commands[command.name] = command
-        for alias in command.aliases:
-            self._aliases[alias] = command.name
 
         def off() -> None:
             if self._commands.get(command.name) is command:
                 del self._commands[command.name]
-            for alias in command.aliases:
-                if self._aliases.get(alias) == command.name:
-                    del self._aliases[alias]
 
-        return off
+        on_dispose(off)
 
     def find(self, name: str) -> Command | None:
-        """按名称或别名查找命令。"""
-        real = self._aliases.get(name, name)
-        return self._commands.get(real)
+        """按名称查找命令。"""
+        return self._commands.get(name)
 
     def list(self) -> list[CommandDescriptor]:
         """全部命令的只读描述。"""
@@ -63,7 +54,6 @@ class Commands:
             CommandDescriptor(
                 name=command.name,
                 description=command.description,
-                aliases=command.aliases,
                 input_hint=command.input_hint,
             )
             for command in self._commands.values()

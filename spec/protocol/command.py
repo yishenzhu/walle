@@ -25,7 +25,6 @@ class Command:
     name: str
     description: str
     handler: CommandHandler
-    aliases: tuple[str, ...] = ()
     input_hint: str | None = None
 
 
@@ -33,7 +32,7 @@ class Command:
 class CommandService(Protocol):
     """会话命令目录：注册 / 查找 / 列表 / 分发。"""
 
-    def register(self, command: Command) -> Callable[[], None]: ...
+    def register(self, command: Command) -> None: ...
 
     def find(self, name: str) -> Command | None: ...
 

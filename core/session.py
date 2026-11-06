@@ -8,11 +8,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from ..conf import ToolConfig
+from ..conf import TimeoutConfig
 from ..infra import (
     EventBus,
-    MessageDeltaEvent,
-    MessageEndEvent,
     OpenAIProvider,
     Skills,
     Tools,
@@ -23,7 +21,7 @@ from ..messages import (
     list_sessions,
     list_workspaces,
 )
-from ..plugin import Context, Plugin, PluginHost
+from ..plugin import Plugin, PluginHost
 from ..spec import (
     LLM,
     AgentService,
@@ -32,8 +30,10 @@ from ..spec import (
     Delta,
     DeltaEnd,
     Error,
+    ExecutorService,
     Job,
     Message,
+    MessageEndEvent,
     Messages,
     NotificationUnion,
     PromptService,
@@ -41,15 +41,14 @@ from ..spec import (
     SessionInit,
     SessionView,
     SkillService,
-    ToolCallPrepareEvent,
-    ToolPrepare,
     ToolService,
     TurnEndEvent,
     UserInput,
 )
 from .agent import Agent
+from .channel import channel_plugin
 from .command import Commands
-from .executor import ToolExecutor
+from .executor import executor_plugin
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
 
@@ -68,22 +67,13 @@ class SessionRuntime:
     """会话级运行时：每会话一套，由装配方构造后注入 Session。"""
 
     bus: EventBus
-    executor: ToolExecutor
     tools: Tools
     skills: Skills
-    tool_config: ToolConfig
 
     @classmethod
-    def build(cls, tool_config: ToolConfig | None = None) -> SessionRuntime:
-        """按配置构造默认运行时（装配根与测试共用）。"""
-        config = tool_config or ToolConfig()
-        return cls(
-            bus=EventBus(),
-            executor=ToolExecutor(config),
-            tools=Tools(),
-            skills=Skills(),
-            tool_config=config,
-        )
+    def build(cls) -> SessionRuntime:
+        """构造默认运行时（装配根与测试共用）。"""
+        return cls(bus=EventBus(), tools=Tools(), skills=Skills())
 
 
 class SessionBusyError(RuntimeError):
@@ -101,9 +91,10 @@ class Session:
         self,
         session_id: str,
         history: Messages,
-        tool_config: ToolConfig | None = None,
+        timeout: TimeoutConfig | None = None,
         runtime: SessionRuntime | None = None,
         plugins: list[Plugin] | None = None,
+        plugin_configs: dict[str, dict[str, Any]] | None = None,
         transport: Channel | None = None,
         provider: LLM | None = None,
         cwd: str | None = None,
@@ -117,25 +108,23 @@ class Session:
         self.created_at = created_at if created_at is not None else time.time()
         # 会话工作目录：bash 执行位置 + 沙箱可写区（无则工具不设 cwd）
         self._cwd = cwd
-        # 会话级运行时由装配方注入；未注入时按 tool_config 构造默认实现
-        runtime = runtime or SessionRuntime.build(tool_config)
+        # 会话级运行时由装配方注入；tool_config 只用于配置内置插件
+        runtime = runtime or SessionRuntime.build()
         self._runtime = runtime
-        self._tool_config = runtime.tool_config
-        self._plugins = plugins or []
+        self._timeout = timeout or TimeoutConfig()
+        self._plugins: list[Plugin] = plugins or []
+        self._plugin_configs = plugin_configs or {}
         self._host: PluginHost | None = None
-        self._plugin_ctx: Context | None = None
         self._prompt: PromptService | None = None
         self._commands: Commands | None = None
 
         # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
         self._bus = runtime.bus  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
-        self._agent_runner = Runner(executor=runtime.executor)  # 执行器只交给 Runner
+        self._agent_runner = Runner()  # 执行器由 executor 插件提供，run 时经 context 注入
         self._tools = runtime.tools  # 会话级工具表
         self._skills = runtime.skills  # 会话级技能表
-        # Runner 只发事件，推送给 channel 由会话监听转发（流式增量/结束标记）
-        self._bus.on(MessageDeltaEvent, self._on_delta)
-        self._bus.on(MessageEndEvent, self._on_message_end)
-        self._bus.on(ToolCallPrepareEvent, self._on_tool_prepare)
+        self._executor: ExecutorService | None = None
+        # 断线补发缓冲由 transport 自己维护；展示映射见 channel 插件
         self._bus.on(TurnEndEvent, self._on_turn_end)
 
         # agent 一律按名从 .agent/agents/ 加载（缺省 default），会话内可切换。
@@ -161,12 +150,9 @@ class Session:
         self._cancel_reason: str | None = None
 
     async def start(self) -> None:
-        """启动插件运行时：把服务适配到本会话，再执行插件 apply。"""
-        if not self._plugins:
-            return
+        """启动插件运行时：注册会话服务，再执行内置插件与用户插件。"""
         host = PluginHost(self._bus)
         self._host = host
-        self._plugin_ctx = host.root
         self._commands = Commands()
         await host.root.register(CommandService, self._commands)
         await host.root.register(Channel, self)
@@ -175,12 +161,14 @@ class Session:
         await host.root.register(ToolService, self._tools)
         await host.root.register(PromptService, Prompts())
         await host.root.register(SkillService, self._skills)
-        await host.launch(
-            self._plugins,
-            {
-                "approval": {"config": self._tool_config.approval},
-            },
-        )
+        plugins = list(self._plugins)
+        for builtin in (channel_plugin, executor_plugin):
+            if all(p.name != builtin.name for p in plugins):
+                plugins.insert(0, builtin)  # 默认实现；同名插件可替换
+        configs = {"executor": {"timeout": self._timeout.model_dump()}}
+        configs.update(self._plugin_configs)
+        await host.launch(plugins, configs)
+        self._executor = host.root.get(ExecutorService)
         self._prompt = host.root.get(PromptService)
 
     @property
@@ -194,6 +182,7 @@ class Session:
             jobs=self._jobs,
             tools=self._tools,  # 工具执行期动态注册通道
             skills=self._skills,  # 技能清单（提示词）
+            executor=self._executor,  # 工具执行器（executor 插件）
             cwd=self._cwd,
             agents=self._agents,  # handoff/subagent 按名查表
             bus=self._bus,  # 会话事件总线（Runner 发事件 + 工具钩子共用）
@@ -250,10 +239,6 @@ class Session:
         """当前 agent。"""
         return self._agent
 
-    def get_agent(self, name: str) -> Agent:
-        """按名加载并缓存 agent。"""
-        return self._build_agent(name)
-
     def set_agent(self, name: str = "default") -> None:
         """按名切换 agent（重新加载 frontmatter）；缺省用 default。"""
         self._agent = self._build_agent(name)
@@ -295,21 +280,9 @@ class Session:
             for notification in rest:
                 await transport.notify(notification)
 
-    async def _on_delta(self, evt: MessageDeltaEvent) -> None:
-        """流式增量事件 → 当前连接；断连期间进入缓冲。"""
-        await self.notify(Delta(delta=evt.delta))
-
-    async def _on_tool_prepare(self, evt: ToolCallPrepareEvent) -> None:
-        """模型开始生成工具参数 → 先告诉客户端，工具尚未执行。"""
-        await self.notify(ToolPrepare(tool_name=evt.tool_name))
-
-    async def _on_turn_end(self, evt: TurnEndEvent) -> None:
+    async def _on_turn_end(self, _evt: TurnEndEvent) -> None:
         """一个 turn 已落库，清掉该 turn 的实时通知缓冲。"""
         self._pending.clear()
-
-    async def _on_message_end(self, evt: MessageEndEvent) -> None:
-        """run 终态 → DeltaEnd；reason 为机器可读终态原因（正常结束为 None）。"""
-        await self.notify(DeltaEnd(reason=evt.reason))
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
@@ -346,7 +319,7 @@ class Session:
     async def _run(self, content: str) -> None:
         """执行一次 run；异常回报当前 transport，结束后恢复 idle。"""
         try:
-            await self._execute(content)
+            await self._dispatch(content)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -380,12 +353,12 @@ class Session:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
-    async def _execute(self, content: str) -> None:
+    async def _dispatch(self, content: str) -> None:
         try:
             # 命令执行上下文：暴露 transport（推送/提问）、事件总线与会话状态
             # （messages/provider），命令 handler 按需自取。
-            if self._commands is not None and self._plugin_ctx is not None:
-                result = await self._commands.execute(content, self._plugin_ctx)
+            if self._commands is not None and self._host is not None:
+                result = await self._commands.execute(content, self._host.root)
                 if result is not None:
                     if result.text:
                         await self.notify(Delta(delta=result.text))
@@ -425,6 +398,12 @@ class Session:
             self._state = SessionState.IDLE
         return True
 
+    async def unload_plugin(self, name: str) -> bool:
+        """中途卸载插件：其工具/技能/事件订阅随之回收。"""
+        if self._host is None:
+            return False
+        return await self._host.unload(name)
+
     async def close(self) -> None:
         """真正销毁：取消当前 run / 后台作业，关消息存储。"""
         if self._state is SessionState.CLOSED:
@@ -454,14 +433,16 @@ class SessionManager:
 
     def __init__(
         self,
-        tool_config: ToolConfig | None = None,
+        timeout: TimeoutConfig | None = None,
         plugins: list[Plugin] | None = None,
+        plugin_configs: dict[str, dict[str, Any]] | None = None,
         provider: LLM | None = None,
         storage: str = "file",
         path: str | None = None,
     ) -> None:
-        self._tool_config = tool_config
-        self._plugins = plugins or []
+        self._timeout = timeout
+        self._plugins: list[Plugin] = plugins or []
+        self._plugin_configs = plugin_configs or {}
         self._provider = provider
         self._storage = storage
         self._path = path
@@ -473,17 +454,7 @@ class SessionManager:
         plugin_names: list[str] | None = None,
     ) -> Session:
         """新建会话并注册。"""
-        plugins = self.select_plugins(plugin_names)
-        model_cfg = conn.model
-        provider = (
-            OpenAIProvider(
-                api_key=model_cfg.api_key,
-                base_url=model_cfg.base_url,
-                model=model_cfg.model,
-            )
-            if model_cfg is not None
-            else self._provider
-        )
+        plugins = self._select_plugins(plugin_names)
         session = Session(
             session_id=conn.session_id,
             history=build_history(
@@ -492,9 +463,11 @@ class SessionManager:
                 conn.session_id,
                 cwd=conn.cwd,
             ),
-            runtime=SessionRuntime.build(self._tool_config),
+            runtime=SessionRuntime.build(),
+            timeout=self._timeout,
             plugins=plugins,
-            provider=provider,
+            plugin_configs=self._plugin_configs,
+            provider=self._provider_for(conn),
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
             agent=conn.agent,  # 客户端指定 agent（None = default）
         )
@@ -502,7 +475,18 @@ class SessionManager:
         self.register(session)
         return session
 
-    def select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
+    def _provider_for(self, conn: SessionInit) -> LLM | None:
+        """客户端带模型配置时新建会话级 provider，否则沿用进程默认。"""
+        cfg = conn.model
+        if cfg is None:
+            return self._provider
+        return OpenAIProvider(
+            api_key=cfg.api_key,
+            base_url=cfg.base_url,
+            model=cfg.model,
+        )
+
+    def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
         """从插件声明池按名单挑选（默认全部）。"""
         if plugin_names is None:
             return list(self._plugins)
@@ -567,4 +551,4 @@ class Agents:
         return self._session.agent
 
     def get(self, name: str) -> Agent:
-        return self._session.get_agent(name)
+        return self._session._build_agent(name)

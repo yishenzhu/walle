@@ -1,4 +1,4 @@
-"""插件发现：扫描目录，把模块约定（apply/inject/provides）装载为 Plugin 声明。"""
+"""插件发现：扫描目录，把模块约定（apply/inject/config）装载为 Plugin 声明。"""
 
 from __future__ import annotations
 

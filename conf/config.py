@@ -80,11 +80,6 @@ class TimeoutConfig(BaseModel):
         return self.default
 
 
-class ToolConfig(BaseModel):
-    approval: ApprovalConfig = ApprovalConfig()
-    timeout: TimeoutConfig = TimeoutConfig()
-
-
 class SessionConfig(BaseModel):
     """会话持久化配置：历史存储后端与路径。"""
 
@@ -103,7 +98,8 @@ class PluginConfig(BaseModel):
 class Config(BaseModel):
     log: LogConfig
     telemetry: TelemetryConfig = TelemetryConfig()
-    tool: ToolConfig = ToolConfig()
+    timeout: TimeoutConfig = TimeoutConfig()
+    approval: ApprovalConfig = ApprovalConfig()
     session: SessionConfig = SessionConfig()
     plugin: PluginConfig = PluginConfig()
 

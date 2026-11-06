@@ -1,7 +1,6 @@
 from .ask_user import ask_user
 from .bash import bash
 from .canvas import canvas
-from .defined_tool import define_tool
 from .edit import edit
 from .history import history, new_window
 from .job import background, job_result
@@ -17,7 +16,6 @@ __all__ = [
     "read",
     "edit",
     "write",
-    "define_tool",
     "history",
     "new_window",
 ]

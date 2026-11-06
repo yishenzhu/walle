@@ -53,7 +53,7 @@ Walle 的默认使用方式是 AI 辅助学习：
 ```mermaid
 flowchart TD
     Main["main.py<br/>组装插件声明 · 启动"]
-    Plugins["插件声明<br/>apply(ctx, config)<br/>builtin / sandbox / mcp / skill / approval / learning<br/>+ .agent/plugins/ 用户插件"]
+    Plugins["插件声明<br/>apply(ctx, config)<br/>channel / executor 内置<br/>builtin / sandbox / mcp / skill / approval / learning<br/>+ .agent/plugins/ 用户插件"]
     SessionManager["SessionManager<br/>会话管理器 · 工厂<br/>持插件声明池 / tool_config"]
     S["Session<br/>会话运行时容器<br/>bus · host · runner · tool table"]
     Host["PluginHost<br/>每会话插件运行时<br/>Context 作用域 · 依赖驱动激活"]
@@ -61,7 +61,7 @@ flowchart TD
     R["Runner<br/>Agent 循环 · 流式增量事件"]
     E["ToolExecutor<br/>preflight 屏障 · 并发 · 超时"]
     A["Agent<br/>定义 · tool_filter · 技能白名单"]
-    T["tools 工具<br/>内置 / MCP / 动态 define_tool"]
+    T["tools 工具<br/>内置 / MCP / 插件"]
     Ch["Channel<br/>notify / call<br/>Web 多会话"]
 
     Main --> Plugins
@@ -256,22 +256,22 @@ telemetry:
     insecure: true
   console_export: false
 
-tool:
-  timeout:
-    default: 30                       # 全局默认超时（秒）
-    overrides:
-      ask_user: null                  # None = 豁免超时（等人回答不设时限）
-  approval:
-    rules:
-      - [deny, bash(cmd=rm -rf /)]    # 危险命令直接拒绝
-      - [allow, bash(cmd=ls -la *)]   # 安全命令自动放行
-      - [allow, ask_user]             # 提问工具自动放行
-      - [allow, canvas]               # 画布 HTML 在 sandbox iframe 内渲染，自动放行
-      - [allow, create_course]        # 课程包写入 data/courses
-      - [allow, write_lesson]         # 课节 md 写入 data/courses
-      - [allow, read_course]          # 课程答疑只读
-      - [allow, read]                 # 读文件自动放行（技能按需加载全文）
-    default: ask                      # 默认需人工审批
+timeout:                              # executor 插件配置
+  default: 30                         # 全局默认超时（秒）
+  overrides:
+    ask_user: null                    # None = 豁免超时（等人回答不设时限）
+
+approval:                             # approval 插件配置
+  rules:
+    - [deny, bash(cmd=rm -rf /)]      # 危险命令直接拒绝
+    - [allow, bash(cmd=ls -la *)]     # 安全命令自动放行
+    - [allow, ask_user]               # 提问工具自动放行
+    - [allow, canvas]                 # 画布 HTML 在 sandbox iframe 内渲染，自动放行
+    - [allow, create_course]          # 课程包写入 data/courses
+    - [allow, write_lesson]           # 课节 md 写入 data/courses
+    - [allow, read_course]            # 课程答疑只读
+    - [allow, read]                   # 读文件自动放行（技能按需加载全文）
+  default: ask                        # 默认需人工审批
 
 session:
   storage: "file"                     # file | sqlite | memory
@@ -297,7 +297,7 @@ plugin:
 
 示例匹配：`bash`（全部 bash）、`bash(cmd=rm -rf *)`（特定参数）、`ask_user`（工具名）。
 
-工具超时：全局 `tool.timeout.default` 生效，`tool.timeout.overrides` 按工具名覆盖（`None` 豁免超时，如 `ask_user` 等人回答）。
+工具超时：`timeout.default` 全局生效，`timeout.overrides` 按工具名覆盖（`None` 豁免超时，如 `ask_user` 等人回答）。
 
 ### `.agent/` — 运行时持久化
 
@@ -305,7 +305,6 @@ plugin:
 |---|---|---|
 | `.agent/agents/` | Agent 定义（frontmatter Markdown，文件名即 agent 名） | 手动编辑 |
 | `.agent/skills/` | 技能（SKILL.md + 可选 scripts/assets） | `skill-creator` 或手动 |
-| `.agent/tools/` | 模型定义的代码工具 | `define_tool` |
 | `.agent/plugins/` | 用户插件（`plugin.py` 定义 `apply(ctx, config)`，可同名覆盖内置工具） | 手动编辑 |
 | `.agent/note.md` | 工作笔记（todo / goal / 决策；位于会话工作目录下） | 模型 `read` / `edit` |
 | `.agent/mcp.yaml` | MCP Server 配置 | 手动编辑 |
@@ -392,10 +391,11 @@ async def builtin_plugin(ctx, config) -> None:
         tools.add(Tool.from_function(fn))
 ```
 
-- `inject` / `provides`：声明依赖与提供的服务，`PluginHost` 依赖驱动激活
+- 插件配置按插件名从装配根注入：`SessionManager(plugin_configs={"approval": conf.approval.model_dump()})`，由 `host.launch` 传给 `apply(ctx, config)`
+- `inject`：声明依赖的服务，`PluginHost` 按依赖激活
 - `ctx.register(Service, impl)`：注册能力，作用域销毁时自动回滚
 - `ctx.on(Event, handler)`：订阅事件，handler 签名为 `(event)`
-- `ctx.child()` / `ctx.scope(key)`：作用域分层（覆盖全局能力）
+- `ctx.child()`：派生子作用域（effect 随父作用域回滚）
 - 插件加载顺序无关；失败单项隔离，不影响其他插件
 
 插件还可以注册**动态提示词段**：每次模型调用前按会话 `metadata` 求值，
@@ -484,18 +484,6 @@ http-server:
   enabled: false
 ```
 
-### 动态定义工具
-
-Agent 用 `define_tool` 提交代码（顶层 `async def` + docstring 即描述），立即生效并持久化到 `.agent/tools/`：
-
-```python
-async def weather(city: str) -> str:
-    """查询指定城市天气"""
-    return f"{city} 晴 25°C"
-```
-
-重启自动恢复，无需手动配置。
-
 ### 🪟 上下文窗口管理（模型主动换窗口，对齐 note.md + history 思路）
 
 工作笔记 = 工作目录下**普通文件** `.agent/note.md`（共享、可手动编辑、可 git 管理）：todo / goal / 决策用 markdown 结构自由组织。窗口切换**由模型自己决定**：觉得会话太长、阶段完成时，先 `read` + `edit` 把要点维护进 note.md，再调 `new_window` **硬切**——切点推进，旧轮移出模型视野，窗口只剩当前轮。旧原文在会话 JSONL 中全量保留（切点持久化，重启不失效），需要时用 `history` 工具回源。无压缩插件、无 token 阈值自动折叠。
@@ -552,7 +540,7 @@ data/courses/<course_id>/
 from walle.core import Agent, Handoff
 from walle.tools import Tool
 
-# 工具源：返回工具列表的 callable（运行期新增的 define_tool 工具实时反映）
+# 工具源：返回工具列表的 callable（每轮实时取）
 def all_tools() -> list[Tool]:
     return [search_tool, write_tool]
 
@@ -582,7 +570,7 @@ writer = Agent(
 walle/
 ├── main.py                    # 入口（装配根）
 ├── plugin/                   # 插件运行时（EventBus / Context / PluginHost）
-│   ├── events.py              #   事件类 + 分发（emit / bail / parallel）
+│   ├── events.py              #   事件类 + 分发（emit / bail）
 │   ├── runtime.py             #   Plugin / Context 作用域 / PluginHost 生命周期
 │   └── discovery.py           #   目录与包内 plugin.py 发现
 ├── conf.yaml.example          # 配置模板
@@ -609,7 +597,8 @@ walle/
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器（查找 / 裁决 / 超时 / 通知）
+│   ├── executor.py            #   工具执行器 + executor 插件（查找 / 裁决 / 超时 / 通知）
+│   ├── channel.py             #   内置 channel 插件（事件 → 客户端通知）
 │   ├── command.py             #   CommandService 默认实现（Commands）
 │   ├── prompt.py              #   PromptService 默认实现（Prompts）
 │   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
@@ -638,7 +627,6 @@ walle/
 │       ├── ask_user.py        #     向用户提问
 │       ├── canvas.py          #     Web 画布（spec/HTML 落盘 + CanvasResult）
 │       ├── paths.py           #     文件工具路径解析（会话 cwd）
-│       ├── defined_tool.py    #     define_tool 动态定义工具
 │       ├── job.py             #     后台作业（background / job_result）
 │       ├── history.py         #     会话历史（history / new_window）
 │       └── plugin.py          #     builtin 插件（向 ToolService 注册工具）
@@ -685,7 +673,6 @@ walle/
 ├── .agent/                    # Agent 运行时持久化
 │   ├── agents/                #   Agent 定义（frontmatter Markdown）
 │   ├── skills/                #   技能（skill-creator 生成）
-│   ├── tools/                 #   模型定义的工具（define_tool）
 │   ├── plugins/               #   用户插件（plugin.py，可同名覆盖内置）
 │   ├── note.md                #   工作笔记（模型 read/edit 维护，运行时生成）
 │   └── mcp.yaml               #   MCP Server 配置（手动编辑）
@@ -717,13 +704,12 @@ walle/
 `eval/` 是自建的能力评测套件：无头执行（真实 LLM + 内置工具，无人工交互），
 按域覆盖核心引擎能力，自动评分并生成报告。
 
-### 任务域（14 任务）
+### 任务域（12 任务）
 
 | 域 | 任务数 | 覆盖能力 |
 |---|---|---|
 | bash | 5 | shell 统计 / 文件读写 |
 | combined | 3 | bash 多工具流水线 |
-| define_tool | 2 | 模型运行期定义工具并立即使用 |
 | background | 2 | 后台作业派发 → job_result 取回 |
 | handoff | 2 | 多智能体链式移交 |
 

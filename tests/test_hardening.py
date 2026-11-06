@@ -7,7 +7,6 @@ import pytest
 
 from ..channel import SessionConn, SessionServer
 from ..channel.server import MAX_FRAME
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import Session, SessionBusyError, SessionManager
 from ..messages import build_history
 from ..spec import (
@@ -25,9 +24,6 @@ def make_session(session_id: str, db_path: str) -> Session:
     return Session(
         session_id=session_id,
         history=build_history("memory", db_path, session_id),
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        ),
         transport=FakeChannel(),
     )
 
@@ -76,7 +72,7 @@ async def test_handle_rejects_when_busy(tmp_path):
         started.set()
         await release.wait()
 
-    s._execute = slow  # type: ignore[method-assign]
+    s._dispatch = slow  # type: ignore[method-assign]
     first = asyncio.create_task(s.handle(UserInput(content="one")))
     try:
         await asyncio.wait_for(started.wait(), 1)
@@ -105,7 +101,7 @@ async def test_run_error_goes_to_current_transport(tmp_path):
         await release.wait()
         raise RuntimeError("boom")
 
-    s._execute = boom  # type: ignore[method-assign]
+    s._dispatch = boom  # type: ignore[method-assign]
     task = s.submit(UserInput(content="hi"))
     try:
         await asyncio.wait_for(started.wait(), 1)
@@ -129,6 +125,7 @@ async def test_cancel_emits_terminal(tmp_path):
         await asyncio.sleep(10)
 
     s._agent_runner.run = slow_run  # type: ignore[method-assign]
+    await s.start()
     task = asyncio.create_task(s.handle(UserInput(content="hi")))
     try:
         await asyncio.wait_for(started.wait(), 1)
@@ -143,6 +140,7 @@ async def test_cancel_emits_terminal(tmp_path):
 
 async def test_max_turns_emits_terminal(tmp_path):
     s = make_session("max", str(tmp_path / "s.db"))
+    await s.start()
     try:
         await s._bus.emit(
             MessageEndEvent(output=None, session_id=s.id, reason="max_turns")
@@ -169,9 +167,6 @@ async def test_detach_ignores_stale_transport(tmp_path):
 async def test_attach_takeover_keeps_old_run(tmp_path):
     """新连接接管：旧 run 继续跑，新连接接收后续事件。"""
     manager = SessionManager(
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-        ),
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
@@ -236,9 +231,6 @@ async def test_attach_takeover_keeps_old_run(tmp_path):
 async def test_attach_keeps_run(tmp_path):
     """重连接管：旧 run 继续执行，新连接接收后续事件。"""
     manager = SessionManager(
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-        ),
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
@@ -309,9 +301,6 @@ async def test_attach_keeps_run(tmp_path):
 async def test_attach_switches_agent_and_keeps_history(tmp_path):
     """重连场景：attach 现有会话时按 hello 里的 agent 切配置，历史不丢。"""
     manager = SessionManager(
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-        ),
         storage="memory",
         path=str(tmp_path / "s.db"),
     )
@@ -358,9 +347,6 @@ async def test_attach_switches_agent_and_keeps_history(tmp_path):
 async def test_server_switches_agent_on_same_connection(tmp_path):
     """学习模式/课程切换走 session.* 帧：同一连接内切换，不触发 reattach。"""
     manager = SessionManager(
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-        ),
         storage="memory",
         path=str(tmp_path / "s.db"),
     )

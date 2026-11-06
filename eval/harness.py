@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
+from ..conf import TimeoutConfig
 from ..core import Agent, EventBus, Tools
 from ..core.agent import ToolFilter
 from ..core.executor import ToolExecutor
@@ -18,12 +18,10 @@ from ..infra import OpenAIProvider, Tool
 from ..messages import InMemoryMessages
 from ..spec import Usage
 from ..tools.builtin import background, bash, job_result
-from ..tools.builtin.defined_tool import DefinedTool, ToolCodeError
 from .graders import grade
 from .spec import TaskSpec
 
 EVAL_ROOT = Path(__file__).resolve().parent
-DEFINED_ROOT = EVAL_ROOT / ".agent-tools"  # define_tool 评测隔离目录
 OUT_DIR = EVAL_ROOT / "data" / "out"  # 任务写文件的目标目录
 
 
@@ -89,8 +87,8 @@ class TrackedProvider:
 class RecordingExecutor(ToolExecutor):
     """记录每次工具调用（名字/参数/结果）与工具级错误数。"""
 
-    def __init__(self, config: ToolConfig | None = None):
-        super().__init__(config)
+    def __init__(self, timeout: TimeoutConfig | None = None):
+        super().__init__(timeout)
         self.calls: list[dict[str, Any]] = []
         self.tool_errors = 0
 
@@ -114,29 +112,15 @@ class RecordingExecutor(ToolExecutor):
 
 
 def build_tool_source() -> Callable[[], list[Tool]]:
-    """构造评测工具集：内置工具 + 动态 define_tool（持久化隔离目录）。"""
-
-    defined = DefinedTool(root=DEFINED_ROOT)
-    defined_tools: dict[str, Tool] = {}
-
-    async def define_tool(name: str, code: str) -> str:
-        """用代码定义一个可复用工具，立即生效（评测隔离目录持久化）。"""
-        try:
-            tool = defined.create(name, code)
-        except (ToolCodeError, OSError, ValueError) as e:
-            return f"定义失败: {e}"
-        defined_tools[name] = tool
-        return f"工具已定义并生效: {name}"
-
+    """构造评测工具集：内置工具。"""
     base = [
         Tool.from_function(background),
         Tool.from_function(job_result),
         Tool.from_function(bash),
-        Tool.from_function(define_tool, name="define_tool"),
     ]
 
     def source() -> list[Tool]:
-        return base + list(defined_tools.values())
+        return list(base)
 
     return source
 
@@ -170,16 +154,14 @@ async def run_task(
     """执行单个任务一次，返回完整结果。"""
     tracked = TrackedProvider(provider)
     executor = RecordingExecutor(
-        ToolConfig(
-            approval=ApprovalConfig(rules=[], default=ApprovalDecision.ALLOW),
-            timeout=TimeoutConfig(default=60.0),
-        )
+        TimeoutConfig(default=60.0)
     )
-    # 会话工具表：初集注册进来，define_tool 等运行时动态注册也落这里
+    # 会话工具表：初集注册进来
     # （tools 随 env 传给工具）
     bus = EventBus()
     tools = Tools()
-    tools.add(*tool_source())
+    for tool in tool_source():
+        tools.add(tool)
     agent, agents = build_agent(task)
     env = SessionContext(
         provider=tracked,

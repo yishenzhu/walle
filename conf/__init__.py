@@ -13,7 +13,6 @@ from .config import (
     SessionConfig,
     TelemetryConfig,
     TimeoutConfig,
-    ToolConfig,
     resolve_path,
 )
 
@@ -27,7 +26,6 @@ __all__ = [
     "ApprovalDecision",
     "ApprovalRuleSpec",
     "TimeoutConfig",
-    "ToolConfig",
     "SessionConfig",
     "PluginConfig",
     "PROJECT_ROOT",

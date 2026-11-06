@@ -1,7 +1,7 @@
 """插件架构：事件总线 + Plugin（声明）+ 运行时（Context / PluginHost）。"""
 
 from .discovery import discover, discover_packages
-from .events import Event, EventBus, Handler
+from .events import EventBus, Handler
 from .runtime import (
     Context,
     Plugin,
@@ -9,11 +9,11 @@ from .runtime import (
     PluginHost,
     PluginState,
     ServiceError,
+    on_dispose,
     plugin,
 )
 
 __all__ = [
-    "Event",
     "EventBus",
     "Handler",
     "Plugin",
@@ -22,6 +22,7 @@ __all__ = [
     "discover_packages",
     "Context",
     "ServiceError",
+    "on_dispose",
     "PluginHost",
     "PluginEntry",
     "PluginState",

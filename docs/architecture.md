@@ -93,7 +93,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
 > 提供 `include_router` / `mount_static` / `register_ui`：插件自己挂路由、静态
 > 资源和 UI 清单；Shell 拉取 `/api/web/plugins` 后注入导航并加载插件脚本。
 > Web 通道只注册宿主实现，不认识具体领域插件。
-> 插件入口统一为 `apply(ctx, config)`，依赖经 `inject`/`provides` 声明。
+> 插件入口统一为 `apply(ctx, config)`，依赖经 `inject` 声明。
 
 ## 3. 统一协议清单（`spec/protocol/`）
 
@@ -129,7 +129,7 @@ core      ──▶ conf, plugin, infra, messages, spec       （含装配根 Se
   `OpenAIProvider` 作为其实现之一，由装配根注入。
 
 ### 事件总线（`events.py`）
-- `EventBus`（on / off / emit / bail / parallel）—— Runner / Executor / 插件共用；实现位于 `plugin/events.py`，`infra` 只做转发导出。
+- `EventBus`（on / emit / bail）—— Runner / Executor / 插件共用；实现位于 `plugin/events.py`，`infra` 只做转发导出。
 
 > 事件**载荷**（`TurnEndEvent` 等 dataclass）是纯数据，定义在
 > `spec/schemas/events.py`，不在 `spec/protocol/`。二者勿混：
@@ -142,14 +142,15 @@ SessionManager.create(conn)                 # 装配根
 ├─ build_history(storage, db, session_id)    # messages.factory：投影包装
 ├─ provider（conn.model 新建 / 沿用进程默认）  # 均为 spec.LLM
 └─ Session(session_id, history, runtime, plugins, transport, cwd)
-    ├─ _runtime        SessionRuntime  # bus / executor / tools / skills / tool_config（装配注入）
+    ├─ _runtime        SessionRuntime  # bus / tools / skills（装配注入）
     ├─ _bus            EventBus        # 会话唯一事件总线（Runner / Executor / PluginHost 共用）
     ├─ _host           PluginHost      # 每会话插件运行时（start 时 launch）
     ├─ _plugins        list[Plugin]    # 本会话选中的插件声明
     ├─ _prompt         PromptService   # 插件提示段（Runner 组装 system）
-    ├─ _agent_runner   Runner          # 构造注入按会话新建的 ToolExecutor
+    ├─ _agent_runner   Runner          # run 时经 context 注入 executor
     ├─ _tools          Tools           # 会话工具表（ToolService 落点）
     ├─ _skills         Skills          # 会话技能表（SkillService 落点）
+    ├─ _executor       ExecutorService # 工具执行器（executor 插件提供）
     ├─ _agent          Agent           # 当前 agent（set_agent 可切换）
     ├─ _provider       LLM             # 装配注入，Runner 只见协议
     ├─ _history        Messages        # 装配注入（投影包装），Session 不自行 new
@@ -160,9 +161,13 @@ SessionManager.create(conn)                 # 装配根
         context ──────▶ property：现造 SessionContext 视图（对外访问统一入口）
 ```
 
-`start()` 先注册会话级服务适配器（ToolService / PromptService / SkillService），
-再 `PluginHost.launch(plugins)`；插件 `apply(ctx, config)` 只经 ctx 注册，
-`Session.close()` 时随 host 作用域逆序回收。
+`start()` 先注册会话级服务（ToolService / PromptService / SkillService），
+再注入内置插件（`channel` 展示映射、`executor` 工具执行）与用户插件；
+`Session.close()` 时随 host 作用域逆序回收。审批插件由装配根注入配置。
+
+注册方法（add / section / register）返回注销函数，并在注册时经 `on_dispose` 登记到
+当前插件作用域；`Session.unload_plugin(name)` / `PluginHost.unload(name)` 中途卸载时
+随作用域销毁回收（同名被后来者覆盖的不误删）。
 
 各零件持有**同一 `_bus` 引用**：Runner / Executor / PluginHost /
 `tool_context` / CommandContext 共用会话唯一总线。工具预执行由 executor
@@ -197,8 +202,8 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
   job_result 读）。
 - **metadata**：唯一事实源 `Session._metadata`；客户端经
   `session.set_metadata` 合并，核心不解释键名，插件在 PromptService 段里读取。
-- **工具表**：插件经 ToolService 注册，落到会话 `Tools`（define_tool
-  动态注册实时反映到下一轮）；Agent 不持有工具源。插件 apply 期间注册的工具/
+- **工具表**：插件经 ToolService 注册，落到会话 `Tools`（每轮实时取）；
+  Agent 不持有工具源。插件 apply 期间注册的工具/
   技能随插件卸载回收（按实例摘除，同名被覆盖时不误删）。
 - **provider**：进程默认由装配根构造一次注入 SessionManager；会话自带 `model` 配置时
   由 SessionManager 就地新建，其余沿用进程默认。
@@ -212,9 +217,11 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
 
 | 事件 | 生产者 | 消费者 |
 |---|---|---|
-| `MessageDeltaEvent` | Runner 流式增量 | Session → transport.notify(Delta) |
-| `MessageEndEvent` | Runner 文本完成 | Session → transport.notify(DeltaEnd)（output 非 None 时） |
-| `PreExecuteToolEvent` | executor | 审批 / guard 插件（ctx.bail） |
+| `MessageDeltaEvent` | Runner 流式增量 | `channel` 插件 → transport.notify(Delta) |
+| `MessageEndEvent` | Runner 文本完成 | `channel` 插件 → transport.notify(DeltaEnd) |
+| `ToolCallPrepareEvent` | Runner 工具参数生成 | `channel` 插件 → transport.notify(ToolPrepare) |
+| `TurnEndEvent` | Runner 本轮结束 | Session（清断线补发缓冲）/ 观测方 |
+| `PreExecuteToolEvent` | executor | 审批 / guard 插件（executor bail） |
 | `ToolExecutionEndEvent` | executor | 观测型插件 |
 | `ToolExecutionStartEvent` | —（legacy） | 保留给旧插件导入；核心不再发出 |
 | `ToolResultEvent` | 工具服务 | 插件观测方 |
@@ -224,8 +231,10 @@ run task 由 Session 持有；transport 断开只影响事件投递，不取消 
 > `tool_context` 取，事件本身不塞 `Messages` / `LLM` 等能力对象——否则
 > schemas 会反向依赖 protocol 而成环。
 >
-> 核心循环不持有推送协议；工具执行通知（ToolStart/ToolResult）目前由 executor
-> 直发 channel，与 TOOL_EXECUTION 事件并存 —— 见下节待收敛点。
+> 核心循环不持有推送协议；`channel` 是 `Session.start()` 注入的内置插件
+> （事件 → 客户端通知的展示策略），`Session` 只保留 transport 的 notify/call/缓冲。
+> 工具执行通知（ToolStart/ToolResult）目前由 executor 直发 channel，与
+> TOOL_EXECUTION 事件并存 —— 见下节待收敛点。
 
 ## 8. 待收敛耦合清单（后续实施 checkpoint）
 

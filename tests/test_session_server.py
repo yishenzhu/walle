@@ -7,7 +7,6 @@ import pytest
 
 from ..channel import SessionConn, SessionServer
 from ..channel.server import CALL_TIMEOUT
-from ..conf import ApprovalConfig, ApprovalDecision, ToolConfig
 from ..core import SessionManager
 from ..spec import (
     ApprovalRequest,
@@ -308,9 +307,6 @@ class ServerHarness:
 
     def __init__(self, db_path: str, storage: str = "memory", path: str | None = None):
         self.manager = SessionManager(
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-            ),
             storage=storage,
             path=path or db_path,
         )

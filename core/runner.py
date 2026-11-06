@@ -20,6 +20,7 @@ from ..spec import (
     AssembleContext,
     AssistantMessage,
     Channel,
+    ExecutorService,
     Job,
     MessageDeltaEvent,
     MessageEndEvent,
@@ -68,6 +69,7 @@ class SessionContext:
     jobs: dict[str, Job] = field(default_factory=dict)  # 后台作业表（跨轮存活）
     tools: ToolService | None = None  # 会话工具表（每轮工具源）
     skills: SkillService | None = None  # 会话技能表（提示词清单）
+    executor: ExecutorService | None = None  # 工具执行器（插件提供）
     cwd: str | None = None  # 会话工作目录（无则不设，工具继承进程 cwd）
     agents: dict[str, Agent] = field(default_factory=dict)  # agent 注册表（按名解析）
     depth: int = 0  # 子 agent 派发深度（0=顶层；>=1 不再挂派发工具）
@@ -91,9 +93,9 @@ class Runner:
 
     def __init__(
         self,
-        executor: ToolExecutor | None = None,
+        executor: ExecutorService | None = None,
     ) -> None:
-        # provider / bus 不经构造——run 时由 env 提供
+        # provider / bus / 插件执行器不经构造——run 时由 env 提供
         self._executor = executor or ToolExecutor()
 
     async def run(
@@ -111,6 +113,7 @@ class Runner:
             )
         history = env.history
         bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造（仅测试）
+        executor = env.executor or self._executor  # 插件执行器优先，构造注入仅测试
         stream = options.stream
         session_id = env.session_id
         # run = 一次会话交互：session 边界 + 本条用户消息边界
@@ -153,14 +156,14 @@ class Runner:
                 tool_context.set(env)
                 if stream:
                     completion, message, tool_results = await self._run_turn_streaming(
-                        agent, messages, tools, provider, bus
+                        agent, messages, tools, provider, bus, executor
                     )
                 else:
                     completion, message, tool_results = await self._run_turn(
-                        agent, messages, tools, provider
+                        agent, messages, tools, provider, executor
                     )
                 # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
-                await self._executor.launch_pending_jobs(tools)
+                await executor.launch_pending_jobs(tools)
 
                 usage = Usage.model_validate(completion.usage)
                 message = AssistantMessage.from_response(message)
@@ -245,6 +248,7 @@ class Runner:
         tools: dict[str, Tool],
         provider,
         bus: EventBus,
+        executor: ExecutorService,
     ):
         # 流式增量只发事件——推给 channel 由监听者负责
         prepared: set[int] = set()
@@ -262,7 +266,7 @@ class Runner:
                         await bus.emit(ToolCallPrepareEvent(tool_name=event.name))
 
             completion = await stream.get_final_completion()
-        message, tool_results = await self._collect_tool_results(completion, tools)
+        message, tool_results = await self._collect_tool_results(completion, tools, executor)
         return completion, message, tool_results
 
     async def _run_turn(
@@ -271,20 +275,23 @@ class Runner:
         messages: list,
         tools: dict[str, Tool],
         provider,
+        executor: ExecutorService,
     ):
         completion = await provider.create(
             **self._request_params(agent, messages, tools)
         )
-        message, tool_results = await self._collect_tool_results(completion, tools)
+        message, tool_results = await self._collect_tool_results(completion, tools, executor)
         return completion, message, tool_results
 
-    async def _collect_tool_results(self, completion, tools: dict[str, Tool]):
+    async def _collect_tool_results(
+        self, completion, tools: dict[str, Tool], executor: ExecutorService
+    ):
         """解包 completion 并发执行本轮工具调用（流式/非流式共用）。"""
         message = completion.choices[0].message
         tool_results: list = []
         if message.tool_calls:
             tool_results = [
-                r async for r in self._executor.execute_tool_calls(message.tool_calls, tools)
+                r async for r in executor.execute_tool_calls(message.tool_calls, tools)
             ]
         return message, tool_results
 

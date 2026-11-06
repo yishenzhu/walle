@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tau_bench.types import Action
 
-from ...conf import ApprovalConfig, ApprovalDecision, TimeoutConfig, ToolConfig
+from ...conf import TimeoutConfig
 from ...core import EventBus, Tools
 from ...core.agent import Agent
 from ...core.runner import Runner, RunOptions, SessionContext
@@ -88,14 +88,12 @@ async def run_tau_case(
 
     tracked = TrackedProvider(agent_provider)
     executor = RecordingExecutor(
-        ToolConfig(
-            approval=ApprovalConfig(rules=[], default=ApprovalDecision.ALLOW),
-            timeout=TimeoutConfig(default=120.0),
-        )
+        TimeoutConfig(default=120.0)
     )
     bus = EventBus()
     tools = Tools()
-    tools.add(*tool_source())
+    for tool in tool_source():
+        tools.add(tool)
     walle_env = SessionContext(
         provider=tracked,
         channel=None,

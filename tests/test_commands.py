@@ -1,4 +1,4 @@
-"""命令服务测试：注册 / 查找 / 执行 / 别名 / 错误结果。"""
+"""命令服务测试：注册 / 查找 / 执行 / 错误结果。"""
 
 import pytest
 
@@ -25,7 +25,7 @@ async def test_parse_command():
     assert parse_command("/Review") is None
 
 
-async def test_register_find_list_and_alias():
+async def test_register_find_and_list():
     async def handler(request, ctx):
         return CommandResult(text=request.raw_input)
 
@@ -34,20 +34,14 @@ async def test_register_find_list_and_alias():
         name="review",
         description="审查当前分支",
         handler=handler,
-        aliases=("r",),
         input_hint="branch",
     )
-    off = commands.register(command)
+    commands.register(command)
     assert commands.find("review") is command
-    assert commands.find("r") is command
     assert commands.list()[0].input_hint == "branch"
 
     with pytest.raises(ValueError):
-        commands.register(Command(name="r", description="dup", handler=handler))
-
-    off()
-    assert commands.find("review") is None
-    assert commands.find("r") is None
+        commands.register(Command(name="review", description="dup", handler=handler))
 
 
 async def test_execute_passes_request_and_context():

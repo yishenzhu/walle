@@ -14,7 +14,7 @@ from .prompt import (
     PromptService,
 )
 from .skill import SkillService
-from .tool import ToolService
+from .tool import ExecutorService, ToolService
 from .view import SessionView
 from .web import WebService
 
@@ -28,6 +28,7 @@ __all__ = [
     "SessionInit",
     "Sessions",
     "ToolService",
+    "ExecutorService",
     "SkillService",
     "PromptService",
     "PromptOrder",

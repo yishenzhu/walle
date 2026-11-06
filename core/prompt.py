@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
+from ..plugin import on_dispose
 from ..spec import (
     AssembleContext,
     PromptAssembly,
@@ -20,16 +19,16 @@ class Prompts:
         self._base = base
         self._sections: dict[str, PromptSection] = {}  # 本层段（重名报错）
 
-    def section(self, section: PromptSection) -> Callable[[], None]:
+    def section(self, section: PromptSection) -> None:
         """注册 prompt 段到**本层**；本层重名报错（可掩盖 base 的同名段）。"""
         if section.name in self._sections:
             raise ValueError(f"prompt 段重名: {section.name}")
         self._sections[section.name] = section
 
-        def _off() -> None:
+        def off() -> None:
             self._sections.pop(section.name, None)
 
-        return _off
+        on_dispose(off)
 
     def _all_sections(self) -> dict[str, PromptSection]:
         """本层 ⊕ base（本层掩盖同名）。"""

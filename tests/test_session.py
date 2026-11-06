@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec, ToolConfig
+from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec
 from ..core import Session, SessionManager
 from ..infra import MessageDeltaEvent, MessageEndEvent
 from ..messages import (
@@ -36,9 +36,6 @@ def make_session(
             session_id,
             cwd=cwd or base / "workspace",
         ),
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        ),
         transport=transport or FakeChannel(),
     )
 
@@ -46,9 +43,6 @@ def make_session(
 def make_manager(db_path: str) -> SessionManager:
     """构造带 Session 构造参数的 manager（register 测试用）。"""
     return SessionManager(
-        tool_config=ToolConfig(
-            approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-        ),
         storage="memory",
         path=db_path,
     )
@@ -122,9 +116,6 @@ class TestSessionMetadata:
         s = Session(
             session_id="meta-1",
             history=build_history("memory", str(tmp_path / "s.db"), "meta-1"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
         )
         try:
             s.update_metadata({"course_id": "c1", "lesson_id": "l1"})
@@ -197,9 +188,6 @@ class TestSessionManager:
         sessions = tmp_path / "sessions"
         project = tmp_path / "project"
         manager = SessionManager(
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW),
-            ),
             path=str(sessions),
         )
 
@@ -285,9 +273,6 @@ class TestSessionCommandDispatch:
         s = Session(
             session_id="cmd-1",
             history=build_history("memory", str(tmp_path / "s.db"), "cmd-1"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             plugins=[cli],
             transport=ch,
         )
@@ -319,9 +304,6 @@ class TestSessionCommandDispatch:
         s = Session(
             session_id="cmd-2",
             history=build_history("memory", str(tmp_path / "s.db"), "cmd-2"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             plugins=[cli],
             transport=ch,
         )
@@ -345,9 +327,6 @@ class TestSessionModelConfig:
 
     def _manager(self, tmp_path):
         return SessionManager(
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             storage="memory",
             path=str(tmp_path / "s.db"),
         )
@@ -400,21 +379,19 @@ class TestSessionModelConfig:
 
 
 class TestSessionStreamForward:
-    """Runner 只发事件，Session 监听 MESSAGE_DELTA/END 转发给 transport。"""
+    """Runner 只发事件，channel 插件把 MESSAGE_DELTA/END 转成客户端通知。"""
 
     def _session(self, tmp_path, ch: FakeChannel) -> Session:
         return Session(
             session_id="stream-1",
             history=build_history("memory", str(tmp_path / "s.db"), "stream-1"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             transport=ch,
         )
 
     async def test_delta_and_end_forwarded_to_transport(self, tmp_path):
         ch = FakeChannel()
         s = self._session(tmp_path, ch)
+        await s.start()
         try:
             await s._bus.emit(MessageDeltaEvent(delta="你好"))
             await s._bus.emit(MessageEndEvent(output="你好", session_id=None))
@@ -428,6 +405,7 @@ class TestSessionStreamForward:
         """MESSAGE_END output=None 也是 run 终态 → 必须发 DeltaEnd（防客户端挂起）。"""
         ch = FakeChannel()
         s = self._session(tmp_path, ch)
+        await s.start()
         try:
             await s._bus.emit(MessageEndEvent(output=None, session_id=None))
             assert [type(e).__name__ for e in ch.events] == ["DeltaEnd"]
@@ -459,9 +437,6 @@ class TestSessionStreamForward:
             )
 
         return SessionManager(
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             plugins=[plugin_a, plugin_b],
             storage="memory",
             path=str(tmp_path / "s.db"),
@@ -501,9 +476,6 @@ class TestSessionStreamForward:
         s = Session(
             session_id="plugin-1",
             history=build_history("memory", str(tmp_path / "s.db"), "plugin-1"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             plugins=[builtin_plugin],
         )
         try:
@@ -519,16 +491,15 @@ class TestSessionStreamForward:
         from ..infra import Tool, tool_context
         from ..tools.approval import native_approval
 
+        approval_config = ApprovalConfig(
+            rules=[ApprovalRuleSpec(ApprovalDecision.DENY, "bash")],
+            default=ApprovalDecision.ALLOW,
+        )
         s = Session(
             session_id="plugin-approval",
             history=build_history("memory", str(tmp_path / "s.db"), "plugin-approval"),
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(
-                    rules=[ApprovalRuleSpec(ApprovalDecision.DENY, "bash")],
-                    default=ApprovalDecision.ALLOW,
-                )
-            ),
             plugins=[native_approval],
+            plugin_configs={"approval": approval_config.model_dump()},
         )
         try:
             await s.start()
@@ -539,7 +510,7 @@ class TestSessionStreamForward:
             tool = Tool(name="bash", description="b", parameters={}, fn=fn)
             token = tool_context.set(s.context)
             try:
-                _, result = await s._agent_runner._executor.execute_tool(
+                _, result = await s._executor.execute_tool(
                     "bash", {}, "tc1", {"bash": tool}
                 )
             finally:
@@ -571,9 +542,6 @@ class TestSessionStreamForward:
         mcp._clients.append(FakeMcpClient())
 
         manager = SessionManager(
-            tool_config=ToolConfig(
-                approval=ApprovalConfig(default=ApprovalDecision.ALLOW)
-            ),
             plugins=[mcp.plugin()],
             storage="memory",
             path=str(tmp_path / "s.db"),
