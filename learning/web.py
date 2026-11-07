@@ -10,13 +10,12 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from ..conf import CANVAS_ROOT as GLOBAL_CANVAS_ROOT
-from ..conf import PROJECT_ROOT
 from ..plugin import plugin
 from ..spec import SAFE_ID, WebService
 from .store import (
-    DEFAULT_COURSES_PATH,
     canvas_file,
     course_progress,
+    courses_root,
     html_title,
     lesson_canvas_ids,
     list_courses,
@@ -26,12 +25,10 @@ from .store import (
 )
 from .web_export import build_course_zip
 
-COURSES_ROOT = PROJECT_ROOT / DEFAULT_COURSES_PATH
-
 
 def _canvas_path(course_id: str, canvas_id: str) -> Path:
     """课程内画布优先，缺省回退全局画布。"""
-    path = canvas_file(course_id, canvas_id, COURSES_ROOT)
+    path = canvas_file(course_id, canvas_id, courses_root())
     return path if path.is_file() else GLOBAL_CANVAS_ROOT / f"{canvas_id}.html"
 
 
@@ -95,19 +92,19 @@ def create_router(
 
     @router.get("/api/courses")
     async def api_courses() -> dict:
-        return {"courses": list_courses(COURSES_ROOT)}
+        return {"courses": list_courses(courses_root())}
 
     @router.get("/api/courses/{course_id}")
     async def api_course(course_id: str) -> dict:
         _require_ids(course_id)
-        course = load_course(course_id, COURSES_ROOT)
+        course = load_course(course_id, courses_root())
         if course is None:
             raise HTTPException(status_code=404)
-        progress = course_progress(course_id, COURSES_ROOT)
+        progress = course_progress(course_id, courses_root())
         completed = set(progress["completed"])
         lessons = []
         for item in course.get("lessons") or []:
-            loaded = read_lesson(course_id, item["id"], COURSES_ROOT)
+            loaded = read_lesson(course_id, item["id"], courses_root())
             written = bool(loaded and (loaded.get("markdown") or "").strip())
             lessons.append(
                 {
@@ -131,9 +128,9 @@ def create_router(
                 course_id,
                 payload.lesson_id,
                 completed=payload.completed,
-                root=COURSES_ROOT,
+                root=courses_root(),
             )
-            progress = course_progress(course_id, COURSES_ROOT)
+            progress = course_progress(course_id, courses_root())
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"progress": progress}
@@ -141,7 +138,7 @@ def create_router(
     @router.get("/api/courses/{course_id}/lessons/{lesson_id}")
     async def api_lesson(course_id: str, lesson_id: str) -> dict:
         _require_ids(course_id, lesson_id)
-        lesson = read_lesson(course_id, lesson_id, COURSES_ROOT)
+        lesson = read_lesson(course_id, lesson_id, courses_root())
         if lesson is None:
             raise HTTPException(status_code=404)
         lesson["canvases"] = [
@@ -153,7 +150,7 @@ def create_router(
     @router.get("/courses/{course_id}")
     async def course_page(course_id: str) -> HTMLResponse:
         _require_ids(course_id)
-        if load_course(course_id, COURSES_ROOT) is None:
+        if load_course(course_id, courses_root()) is None:
             raise HTTPException(status_code=404)
         # 课程阅读同样是 Shell 视图：右侧主对话保持连接。
         return await shell()
@@ -162,7 +159,7 @@ def create_router(
     async def export_course(course_id: str) -> Response:
         _require_ids(course_id)
         try:
-            payload = build_course_zip(course_id, COURSES_ROOT, static_dir)
+            payload = build_course_zip(course_id, courses_root(), static_dir)
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return Response(

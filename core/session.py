@@ -11,15 +11,11 @@ from typing import Any
 from ..conf import TimeoutConfig
 from ..infra import (
     EventBus,
-    OpenAIProvider,
     Skills,
     Tools,
 )
 from ..messages import (
     build_ephemeral_history,
-    build_history,
-    list_sessions,
-    list_workspaces,
 )
 from ..plugin import Plugin, PluginHost
 from ..spec import (
@@ -38,7 +34,6 @@ from ..spec import (
     NotificationUnion,
     PromptService,
     RequestUnion,
-    SessionInit,
     SessionView,
     SkillService,
     ToolService,
@@ -46,9 +41,9 @@ from ..spec import (
     UserInput,
 )
 from .agent import Agent
-from .channel import channel_plugin
+from .builtins import channel_plugin, executor_plugin
 from .command import Commands
-from .executor import executor_plugin
+from .link import SessionClosedError, SessionLink
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
 
@@ -78,10 +73,6 @@ class SessionRuntime:
 
 class SessionBusyError(RuntimeError):
     code = "session_busy"
-
-
-class SessionClosedError(RuntimeError):
-    code = "session_closed"
 
 
 class Session:
@@ -120,6 +111,7 @@ class Session:
 
         # ── 会话级运行时（每会话独立：bus/agent 循环/插件激活）──
         self._bus = runtime.bus  # 会话私有事件总线（插件事件/工具钩子按会话隔离）
+
         self._agent_runner = Runner()  # 执行器由 executor 插件提供，run 时经 context 注入
         self._tools = runtime.tools  # 会话级工具表
         self._skills = runtime.skills  # 会话级技能表
@@ -136,14 +128,8 @@ class Session:
         self._history = history
         # 后台作业表：跨轮存活（background 写入 pending，executor 拉起，job_result 读取）
         self._jobs: dict[str, Job] = {}
-        # transport：连接端点（attach/detach 切换），唯一 channel 事实源
-        self._transport: Channel | None = transport
-        self._attached = asyncio.Event()
-        if transport is not None:
-            self._attached.set()
-        # 当前 turn 的通知缓冲：断连期间保留，重连后补发
-        self._pending: list[NotificationUnion] = []
-        self._replaying = False
+        # 连接端点：transport / 断线缓冲 / 重放
+        self._link = SessionLink(session_id, transport)
         # 单写者：一个会话同时只跑一个 run；忙时直接拒绝，不排队
         self._state = SessionState.IDLE  # 单写者状态机
         self._run_task: asyncio.Task | None = None
@@ -151,6 +137,8 @@ class Session:
 
     async def start(self) -> None:
         """启动插件运行时：注册会话服务，再执行内置插件与用户插件。"""
+        from .agents import Agents  # 局部导入：Agents 反向依赖 Session
+
         host = PluginHost(self._bus)
         self._host = host
         self._commands = Commands()
@@ -214,7 +202,7 @@ class Session:
     @property
     def attached(self) -> bool:
         """是否有活跃连接的 transport 绑定。"""
-        return self._transport is not None
+        return self._link.attached
 
     @property
     def state(self) -> SessionState:
@@ -226,7 +214,7 @@ class Session:
 
     @property
     def transport(self) -> Channel | None:
-        return self._transport
+        return self._link.transport
 
     async def conversation_history(self) -> list[Message]:
         """客户端可见的完整对话历史（含工具调用与结果，不含 system）。"""
@@ -245,71 +233,39 @@ class Session:
 
     async def notify(self, notification: NotificationUnion) -> None:
         """缓冲当前 turn 的通知并推给当前 transport。"""
-        self._pending.append(notification)
-        if self._replaying:
-            return
-        if self._transport is not None:
-            await self._transport.notify(notification)
+        await self._link.notify(notification)
 
     async def call(self, request: RequestUnion) -> Any:
         """向当前连接发起交互；断连时等待重连，连接失败则重试。"""
-        while True:
-            if self._state is SessionState.CLOSED:
-                raise SessionClosedError(f"session '{self.id}' is closed")
-            transport = self._transport
-            if transport is not None:
-                try:
-                    return await transport.call(request)
-                except ConnectionError:
-                    if self._state is SessionState.CLOSED:
-                        raise
-                    if self._transport is transport:
-                        self._attached.clear()
-            await self._attached.wait()
+        return await self._link.call(request)
 
     async def replay(self, transport: Channel) -> None:
         """把当前 turn 尚未确认的通知补发给新连接。"""
-        pending, self._pending = self._pending, []
-        self._replaying = True
-        try:
-            for notification in pending:
-                await transport.notify(notification)
-        finally:
-            self._replaying = False
-            rest, self._pending = self._pending, []
-            for notification in rest:
-                await transport.notify(notification)
+        await self._link.replay(transport)
 
     async def _on_turn_end(self, _evt: TurnEndEvent) -> None:
         """一个 turn 已落库，清掉该 turn 的实时通知缓冲。"""
-        self._pending.clear()
+        self._link.clear_pending()
 
     def attach(self, transport: Channel) -> None:
         """绑定新 transport（重连/接管）：换 channel 端点。"""
-        if self._state is SessionState.CLOSED:
-            raise SessionClosedError(f"session '{self.id}' is closed")
-        self._transport = transport
-        self._attached.set()
+        self._link.attach(transport)
 
     def detach(self, transport: Channel | None = None) -> bool:
         """解除 transport；给定旧端点时只解除当前端点，防止误伤新连接。"""
-        if transport is not None and transport is not self._transport:
-            return False
-        self._transport = None
-        self._attached.clear()
-        return True
+        return self._link.detach(transport)
 
     def submit(self, user_input: UserInput) -> asyncio.Task:
         """提交一次 run 并立即返回；忙时同步抛 SessionBusyError。"""
         if self._state is SessionState.CLOSED:
             raise SessionClosedError(f"session '{self.id}' is closed")
-        if self._transport is None:
+        if self._link.transport is None:
             raise SessionClosedError(f"session '{self.id}' is detached, attach first")
         if self._state in (SessionState.RUNNING, SessionState.CANCELLING):
             raise SessionBusyError(f"session '{self.id}' is busy ({self._state})")
 
         content = user_input.content or ""
-        self._pending.clear()
+        self._link.clear_pending()
         self._state = SessionState.RUNNING
         self._cancel_reason = None
         task = asyncio.create_task(self._run(content))
@@ -325,7 +281,7 @@ class Session:
         except Exception as exc:
             await self._report_error(exc)
         finally:
-            self._pending.clear()
+            self._link.clear_pending()
             if self._run_task is asyncio.current_task():
                 self._run_task = None
             if self._state is not SessionState.CLOSED:
@@ -410,8 +366,7 @@ class Session:
             return
         await self.cancel(reason="session closed")
         self._state = SessionState.CLOSED
-        self._attached.set()
-        self._pending.clear()
+        self._link.close()
         pending = [
             j.task
             for j in self._jobs.values()
@@ -426,129 +381,3 @@ class Session:
             await self._host.dispose()
             self._host = None
         await self._history.close()
-
-
-class SessionManager:
-    """进程级会话管理器 + 工厂：session_id → Session。"""
-
-    def __init__(
-        self,
-        timeout: TimeoutConfig | None = None,
-        plugins: list[Plugin] | None = None,
-        plugin_configs: dict[str, dict[str, Any]] | None = None,
-        provider: LLM | None = None,
-        storage: str = "file",
-        path: str | None = None,
-    ) -> None:
-        self._timeout = timeout
-        self._plugins: list[Plugin] = plugins or []
-        self._plugin_configs = plugin_configs or {}
-        self._provider = provider
-        self._storage = storage
-        self._path = path
-        self._sessions: dict[str, Session] = {}
-
-    def create(
-        self,
-        conn: SessionInit,
-        plugin_names: list[str] | None = None,
-    ) -> Session:
-        """新建会话并注册。"""
-        plugins = self._select_plugins(plugin_names)
-        session = Session(
-            session_id=conn.session_id,
-            history=build_history(
-                self._storage,
-                self._path,
-                conn.session_id,
-                cwd=conn.cwd,
-            ),
-            runtime=SessionRuntime.build(),
-            timeout=self._timeout,
-            plugins=plugins,
-            plugin_configs=self._plugin_configs,
-            provider=self._provider_for(conn),
-            cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
-            agent=conn.agent,  # 客户端指定 agent（None = default）
-        )
-        session.attach(conn)
-        self.register(session)
-        return session
-
-    def _provider_for(self, conn: SessionInit) -> LLM | None:
-        """客户端带模型配置时新建会话级 provider，否则沿用进程默认。"""
-        cfg = conn.model
-        if cfg is None:
-            return self._provider
-        return OpenAIProvider(
-            api_key=cfg.api_key,
-            base_url=cfg.base_url,
-            model=cfg.model,
-        )
-
-    def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
-        """从插件声明池按名单挑选（默认全部）。"""
-        if plugin_names is None:
-            return list(self._plugins)
-        wanted = set(plugin_names)
-        return [plugin for plugin in self._plugins if plugin.name in wanted]
-
-    def register(self, session: Session) -> None:
-        """注册新会话。同 id 已存在则报错（重连走 attach，不重建）。"""
-        if session.id in self._sessions:
-            raise ValueError(f"session '{session.id}' already registered")
-        self._sessions[session.id] = session
-
-    def get(self, session_id: str) -> Session | None:
-        return self._sessions.get(session_id)
-
-    def remove(self, session_id: str) -> Session | None:
-        """从管理器移除（不 close，调用方决定是否销毁）。"""
-        return self._sessions.pop(session_id, None)
-
-    def list(self) -> list[dict]:
-        """列出全部会话：id、attached 状态、创建时间。"""
-        return [
-            {
-                "session_id": sid,
-                "attached": s.attached,
-                "created_at": s.created_at,
-                "age_seconds": time.time() - s.created_at,
-            }
-            for sid, s in self._sessions.items()
-        ]
-
-    def list_workspaces(self) -> list[dict]:
-        """已登记的工作目录（file 后端）；其他后端暂不提供历史目录。"""
-        if self._storage != "file":
-            return []
-        return list_workspaces(self._path)
-
-    def list_sessions(self, cwd: str) -> list[dict]:
-        """某个工作目录下的历史会话（file 后端），按最近更新倒序。"""
-        if self._storage != "file" or not cwd:
-            return []
-        return list_sessions(cwd, self._path)
-
-    async def close(self) -> None:
-        """销毁全部会话（服务端停机）。"""
-        for s in self._sessions.values():
-            try:
-                await s.close()
-            except Exception:
-                pass
-        self._sessions.clear()
-
-
-class Agents:
-    """AgentService：当前 agent 与按名加载（会话视图）。"""
-
-    def __init__(self, session: Session) -> None:
-        self._session = session
-
-    @property
-    def current(self) -> Agent:
-        return self._session.agent
-
-    def get(self, name: str) -> Agent:
-        return self._session._build_agent(name)

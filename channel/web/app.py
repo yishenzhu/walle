@@ -34,17 +34,32 @@ async def index() -> HTMLResponse:
     )
 
 
-async def query_agent(frame: dict, timeout: float = 5.0) -> dict:
-    """向 agent 服务端发一个只读浏览帧并取回结果。"""
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(HOST, PORT, limit=MAX_FRAME), timeout
-        )
-    except (OSError, TimeoutError) as exc:
-        raise HTTPException(status_code=503, detail="agent 未启动") from exc
+BROWSE_TIMEOUT = 5.0
+
+
+async def _open_link(payload: dict, timeout: float | None = None) -> JSONLineConn:
+    """连上 agent 并发首帧；连接/写失败时关闭并抛出。"""
+    connect = asyncio.open_connection(HOST, PORT, limit=MAX_FRAME)
+    reader, writer = (
+        await connect if timeout is None else await asyncio.wait_for(connect, timeout)
+    )
     link = JSONLineConn(reader, writer)
     try:
-        await link.send(frame)
+        await link.send(payload)
+    except Exception:
+        link.close()
+        await link.wait_closed()
+        raise
+    return link
+
+
+async def query_agent(frame: dict, timeout: float = BROWSE_TIMEOUT) -> dict:
+    """向 agent 服务端发一个只读浏览帧并取回结果。"""
+    try:
+        link = await _open_link(frame, timeout)
+    except (OSError, TimeoutError) as exc:
+        raise HTTPException(status_code=503, detail="agent 未启动") from exc
+    try:
         reply = await asyncio.wait_for(link.recv(), timeout)
     except (OSError, ConnectionError, TimeoutError) as exc:
         raise HTTPException(status_code=503, detail="agent 未响应") from exc
@@ -196,17 +211,13 @@ async def chat(
     async def open_agent(payload: dict) -> tuple[JSONLineConn, dict | None] | None:
         """连上 agent 并发握手帧；连不上时回错误帧并返回 None。"""
         try:
-            reader, writer = await asyncio.open_connection(
-                HOST, PORT, limit=MAX_FRAME
-            )
+            conn = await _open_link(payload)
         except OSError as exc:
             await ws.send_json(
                 {"type": Frame.ERROR, "message": f"agent 未启动：{exc}"}
             )
             return None
-        conn = JSONLineConn(reader, writer)
         try:
-            await conn.send(payload)
             return conn, await conn.recv()
         except Exception:
             conn.close()

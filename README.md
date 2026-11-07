@@ -597,11 +597,14 @@ walle/
 ├── core/                      # 核心引擎
 │   ├── agent.py               #   Agent / Handoff 模型 + frontmatter 加载/工具筛选
 │   ├── runner.py              #   Agent 运行循环
-│   ├── executor.py            #   工具执行器 + executor 插件（查找 / 裁决 / 超时 / 通知）
-│   ├── channel.py             #   内置 channel 插件（事件 → 客户端通知）
+│   ├── executor.py            #   工具执行器（查找 / 裁决 / 超时 / 通知）
+│   ├── builtins.py            #   内置插件（channel 事件→通知 / executor 工具执行）
 │   ├── command.py             #   CommandService 默认实现（Commands）
 │   ├── prompt.py              #   PromptService 默认实现（Prompts）
-│   ├── session.py             #   Session + SessionManager（会话装配根 + 每会话 Host）
+│   ├── link.py                #   连接端点（transport / 断线缓冲 / 重放）
+│   ├── session.py             #   Session（状态机 / Agent / 插件生命周期）
+│   ├── manager.py             #   SessionManager（会话创建 / 注册 / 列表）
+│   ├── agents.py              #   AgentService 视图
 │   └── __init__.py            #   core 公共导出
 ├── channel/                   # 交互通道
 │   ├── transport.py           #   JSON-line 帧传输

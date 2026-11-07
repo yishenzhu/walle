@@ -10,6 +10,7 @@ from ..infra import (
 from .agent import Agent, Handoff
 from .command import Commands
 from .executor import ToolExecutor
+from .manager import SessionManager
 from .runner import (
     Runner,
     RunOptions,
@@ -20,7 +21,6 @@ from .session import (
     Session,
     SessionBusyError,
     SessionClosedError,
-    SessionManager,
     SessionRuntime,
     SessionState,
 )

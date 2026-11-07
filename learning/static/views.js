@@ -1018,7 +1018,7 @@
 
   function canvasUrl(state) {
     if (!state.courseId) return null;
-    return `/courses/${encodeURIComponent(state.courseId)}/canvas/${encodeURIComponent(state.id)}?v=${state.version}`;
+    return `/courses/${encodeURIComponent(state.courseId)}/canvas/${encodeURIComponent(state.id)}?v=${state.cache_buster}`;
   }
 
   function ownsPath(pathname) {

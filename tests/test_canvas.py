@@ -24,7 +24,7 @@ async def test_canvas_writes_global_html_and_returns_result(canvas_env):
     assert result.type == "canvas"
     assert result.title == "勾股定理"
     assert result.canvas_id
-    assert result.version > 0
+    assert result.cache_buster > 0
 
     path = canvas_env / f"{result.canvas_id}.html"
     assert path.read_text(encoding="utf-8") == "<html><body>a²+b²=c²</body></html>"
@@ -37,7 +37,7 @@ async def test_canvas_same_title_reuses_canvas(canvas_env):
     assert isinstance(first, CanvasResult)
     assert isinstance(second, CanvasResult)
     assert first.canvas_id == second.canvas_id
-    assert second.version > first.version
+    assert second.cache_buster > first.cache_buster
     path = canvas_env / f"{first.canvas_id}.html"
     assert path.read_text(encoding="utf-8") == "<html>v2</html>"
 

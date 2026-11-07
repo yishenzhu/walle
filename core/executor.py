@@ -19,9 +19,7 @@ from ..infra import (
     tool_context,
     tracer,
 )
-from ..plugin import plugin
 from ..spec import (
-    ExecutorService,
     PreExecuteToolEvent,
     ToolExecutionEndEvent,
     ToolResult,
@@ -201,9 +199,3 @@ class ToolExecutor:
         except Exception as exc:
             job.error = str(exc)
             job.status = JobStatus.ERROR
-
-
-@plugin(name="executor")
-async def executor_plugin(ctx, config) -> None:
-    """工具执行器插件：preflight / 超时 / 通知 / 后台作业。"""
-    await ctx.register(ExecutorService, ToolExecutor(TimeoutConfig.model_validate(config)))

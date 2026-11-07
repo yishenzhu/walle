@@ -56,7 +56,7 @@ class SessionConn:
         self._stop = asyncio.Event()
 
     # ── 传输 ──────────────────────────────────────────
-    async def send(self, msg: dict) -> None:
+    async def _send(self, msg: dict) -> None:
         await self._link.send(msg)
 
     # ── Channel 协议 ──────────────────────────────────
@@ -98,7 +98,7 @@ class SessionConn:
         finally:
             self._pending.pop(req_id, None)
 
-    def resolve(self, req_id: str, data) -> None:
+    def _resolve(self, req_id: str, data) -> None:
         fut = self._pending.get(req_id)
         if fut is not None and not fut.done():
             fut.set_result(data)
@@ -142,7 +142,7 @@ class SessionConn:
                 if msg is None:
                     break
                 if msg.get("type") == Frame.REPLY:
-                    self.resolve(msg.get("id", ""), msg.get("data"))
+                    self._resolve(msg.get("id", ""), msg.get("data"))
                     continue
                 try:
                     await on_inbound(msg)
@@ -222,134 +222,16 @@ class SessionServer:
             msg = await link.recv()
             if msg is None:
                 return
-
-            # 浏览帧：返回元数据后关闭，不进入会话循环
-            if msg.get("type") == Frame.LIST_ACTIVE:
-                await link.send(
-                    {"type": Frame.ACTIVE_SESSIONS, "sessions": self._sessions.list()}
-                )
+            if await self._handle_browse(link, msg):
                 return
-            if msg.get("type") == Frame.LIST_WORKSPACES:
-                await link.send(
-                    {
-                        "type": Frame.WORKSPACES,
-                        "current": os.getcwd(),
-                        "workspaces": self._sessions.list_workspaces(),
-                    }
-                )
+            opened = await self._open_session(msg, reader, writer, link)
+            if opened is None:
                 return
-            if msg.get("type") == Frame.LIST_SESSIONS:
-                cwd = msg.get("cwd") or ""
-                if not cwd or not Path(cwd).expanduser().is_dir():
-                    await link.send(_error_frame(ErrorCode.INVALID_CWD, f"工作目录不存在: {cwd}"))
-                    return
-                await link.send(
-                    {
-                        "type": Frame.SESSIONS,
-                        "cwd": cwd,
-                        "sessions": self._sessions.list_sessions(cwd),
-                    }
-                )
-                return
-
-            session_id = msg.get("session_id") or f"session-{uuid.uuid4().hex[:12]}"
-            attach = bool(msg.get("attach", False))
-            plugin_names = msg.get("plugins")  # 可选：本会话要激活的插件名（缺省=全部）
-            cwd = msg.get("cwd")  # 客户端工作目录（新会话的 bash/沙箱基准）
-            # 交互等待上限：缺省 CALL_TIMEOUT；显式 null = 不设上限
-            # （Web 端人机审批用；连接断开会 fail 挂起请求，页面另有停止按钮）
-            call_timeout: float | None = CALL_TIMEOUT
-            if "call_timeout" in msg:
-                raw_timeout = msg.get("call_timeout")
-                if raw_timeout is None:
-                    call_timeout = None
-                else:
-                    try:
-                        call_timeout = float(raw_timeout)
-                    except (TypeError, ValueError):
-                        logger.warning(f"ignoring invalid call_timeout: {raw_timeout}")
-            # 客户端模型配置（可选；非法/缺失回退进程默认 provider）
-            model = None
-            raw_model = msg.get("model")
-            if isinstance(raw_model, dict):
-                try:
-                    model = ModelConfig.model_validate(raw_model)
-                except Exception:
-                    logger.warning(f"ignoring invalid model config: {raw_model}")
-
-            conn = SessionConn(
-                session_id,
-                reader,
-                writer,
-                cwd=cwd,
-                model=model,
-                agent=msg.get("agent") or None,
-                call_timeout=call_timeout,
-                link=link,
+            session, conn = opened
+            session_id = conn.session_id
+            await conn.run(
+                lambda frame: self._on_inbound(session, conn, session_id, frame)
             )
-
-            if attach:
-                # resume：取已存在会话，绑定新 transport
-                session = self._sessions.get(session_id)
-                if session is None:
-                    await conn.send(
-                        _error_frame(ErrorCode.SESSION_NOT_FOUND, f"会话不存在: {session_id}")
-                    )
-                    return
-                # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
-                await conn.send(await self._welcome_frame(session))
-                old = session.transport
-                session.attach(conn)
-                # 先补发旧 turn 的通知，再通知旧连接退出
-                await session.replay(conn)
-                if isinstance(old, SessionConn) and old is not conn:
-                    await old.notify(
-                        Error(
-                            message="session attached elsewhere",
-                            code=ErrorCode.SESSION_TAKEN_OVER,
-                        )
-                    )
-                    old.close()
-                # 显式给了 agent 就切过去：同一个会话可以带着历史换 agent 配置
-                if conn.agent:
-                    session.set_agent(conn.agent)
-                logger.info(f"channel client reattached: {session_id}")
-            else:
-                # 新会话：sessions.create（按需激活指定插件）
-                session = self._sessions.create(conn, plugin_names)
-                await session.start()
-                # 新建也可能命中磁盘上同 id 的会话（如 Web 重启后恢复），
-                # 带上快照让客户端直接接续。
-                await conn.send(await self._welcome_frame(session))
-                logger.info(
-                    f"channel client connected: {session_id} agent={conn.agent or 'default'}"
-                )
-
-            async def on_inbound(frame: dict) -> None:
-                """解释非 reply 帧；已被接管的旧连接直接忽略。"""
-                if session.transport is not conn:
-                    return
-                kind = frame.get("type")
-                if kind == Frame.INPUT_CREATE:
-                    session.submit(
-                        UserInput(
-                            content=frame.get("content") or "",
-                            session_id=session_id,
-                        )
-                    )
-                elif kind == Frame.RUN_CANCEL:
-                    await session.cancel(reason="user_cancelled")
-                elif kind == Frame.SESSION_SET_AGENT:
-                    session.set_agent(str(frame.get("agent") or "default"))
-                elif kind == Frame.SESSION_SET_METADATA:
-                    values = frame.get("values")
-                    if not isinstance(values, dict):
-                        raise ValueError("session.set_metadata requires values object")
-                    session.update_metadata(values)
-                else:
-                    raise ValueError(f"unknown frame: {kind}")
-
-            await conn.run(on_inbound)
         except (OSError, ValueError, FrameTooLargeError) as exc:
             logger.debug(f"session conn {session_id} closed: {exc}")
         finally:
@@ -364,3 +246,145 @@ class SessionServer:
                 except Exception as exc:
                     logger.warning(f"session {session_id} detach failed: {exc}")
             await link.wait_closed()
+
+    async def _handle_browse(self, link: JSONLineConn, msg: dict) -> bool:
+        """只读浏览帧：回元数据后由调用方关连接；返回是否已处理。"""
+        kind = msg.get("type")
+        if kind == Frame.LIST_ACTIVE:
+            await link.send(
+                {"type": Frame.ACTIVE_SESSIONS, "sessions": self._sessions.list()}
+            )
+            return True
+        if kind == Frame.LIST_WORKSPACES:
+            await link.send(
+                {
+                    "type": Frame.WORKSPACES,
+                    "current": os.getcwd(),
+                    "workspaces": self._sessions.list_workspaces(),
+                }
+            )
+            return True
+        if kind == Frame.LIST_SESSIONS:
+            cwd = msg.get("cwd") or ""
+            if not cwd or not Path(cwd).expanduser().is_dir():
+                await link.send(
+                    _error_frame(ErrorCode.INVALID_CWD, f"工作目录不存在: {cwd}")
+                )
+                return True
+            await link.send(
+                {
+                    "type": Frame.SESSIONS,
+                    "cwd": cwd,
+                    "sessions": self._sessions.list_sessions(cwd),
+                }
+            )
+            return True
+        return False
+
+    async def _open_session(
+        self,
+        msg: dict,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        link: JSONLineConn,
+    ) -> tuple[Any, SessionConn] | None:
+        """建/取会话并回 welcome；失败时回错误帧并返回 None。"""
+        session_id = msg.get("session_id") or f"session-{uuid.uuid4().hex[:12]}"
+        conn = SessionConn(
+            session_id,
+            reader,
+            writer,
+            cwd=msg.get("cwd"),
+            model=self._model_config(msg),
+            agent=msg.get("agent") or None,
+            call_timeout=self._call_timeout(msg),
+            link=link,
+        )
+        if bool(msg.get("attach", False)):
+            session = self._sessions.get(session_id)
+            if session is None:
+                await conn._send(
+                    _error_frame(
+                        ErrorCode.SESSION_NOT_FOUND, f"会话不存在: {session_id}"
+                    )
+                )
+                return None
+            # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
+            await conn._send(await self._welcome_frame(session))
+            old = session.transport
+            session.attach(conn)
+            # 先补发旧 turn 的通知，再通知旧连接退出
+            await session.replay(conn)
+            if isinstance(old, SessionConn) and old is not conn:
+                await old.notify(
+                    Error(
+                        message="session attached elsewhere",
+                        code=ErrorCode.SESSION_TAKEN_OVER,
+                    )
+                )
+                old.close()
+            if conn.agent:
+                session.set_agent(conn.agent)
+            logger.info(f"channel client reattached: {session_id}")
+            return session, conn
+
+        # 新会话：sessions.create（按需激活指定插件）
+        session = self._sessions.create(conn, msg.get("plugins"))
+        await session.start()
+        await conn._send(await self._welcome_frame(session))
+        logger.info(
+            f"channel client connected: {session_id} agent={conn.agent or 'default'}"
+        )
+        return session, conn
+
+    async def _on_inbound(
+        self, session, conn: SessionConn, session_id: str, frame: dict
+    ) -> None:
+        """解释非 reply 帧；已被接管的旧连接直接忽略。"""
+        if session.transport is not conn:
+            return
+        kind = frame.get("type")
+        if kind == Frame.INPUT_CREATE:
+            session.submit(
+                UserInput(
+                    content=frame.get("content") or "",
+                    session_id=session_id,
+                )
+            )
+        elif kind == Frame.RUN_CANCEL:
+            await session.cancel(reason="user_cancelled")
+        elif kind == Frame.SESSION_SET_AGENT:
+            session.set_agent(str(frame.get("agent") or "default"))
+        elif kind == Frame.SESSION_SET_METADATA:
+            values = frame.get("values")
+            if not isinstance(values, dict):
+                raise ValueError("session.set_metadata requires values object")
+            session.update_metadata(values)
+        else:
+            raise ValueError(f"unknown frame: {kind}")
+
+    @staticmethod
+    def _call_timeout(msg: dict) -> float | None:
+        """交互等待上限：缺省 CALL_TIMEOUT；显式 null = 不设上限。"""
+        if "call_timeout" not in msg:
+            return CALL_TIMEOUT
+        raw = msg.get("call_timeout")
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            logger.warning(f"ignoring invalid call_timeout: {raw}")
+            return CALL_TIMEOUT
+
+    @staticmethod
+    def _model_config(msg: dict) -> ModelConfig | None:
+        """客户端模型配置（可选；非法/缺失回退进程默认 provider）。"""
+        raw = msg.get("model")
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ModelConfig.model_validate(raw)
+        except Exception:
+            logger.warning(f"ignoring invalid model config: {raw}")
+            return None

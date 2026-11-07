@@ -367,7 +367,7 @@ def make_course_bundle(tmp_path):
 
 def test_course_pages_and_apis(monkeypatch, tmp_path):
     root, course, lesson = make_course_bundle(tmp_path)
-    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
+    monkeypatch.setattr(learning_web, "courses_root", lambda: root)
     client = TestClient(web.app)
 
     listing = client.get("/courses")
@@ -451,7 +451,7 @@ def test_course_pages_and_apis(monkeypatch, tmp_path):
 
 def test_global_canvas_routes(monkeypatch, tmp_path):
     root, course, lesson = make_course_bundle(tmp_path)
-    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
+    monkeypatch.setattr(learning_web, "courses_root", lambda: root)
     global_root = tmp_path / "global-canvas"
     global_root.mkdir()
     (global_root / "shared.html").write_text(
@@ -478,7 +478,7 @@ def test_course_api_marks_unwritten_lessons(monkeypatch, tmp_path):
         root=root,
     )
     write_lesson(course["id"], "已写", "# 有内容", root=root)
-    monkeypatch.setattr(learning_web, "COURSES_ROOT", root)
+    monkeypatch.setattr(learning_web, "courses_root", lambda: root)
 
     data = TestClient(web.app).get(f"/api/courses/{course['id']}").json()
     assert [item["written"] for item in data["lessons"]] == [True, False]

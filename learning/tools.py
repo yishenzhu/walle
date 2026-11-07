@@ -16,7 +16,7 @@ class CourseResult(BaseModel):
     course_id: str
     title: str
     lesson_count: int
-    version: int
+    cache_buster: int
 
 
 class LessonResult(BaseModel):
@@ -25,7 +25,7 @@ class LessonResult(BaseModel):
     lesson_id: str
     title: str
     order: int
-    version: int
+    cache_buster: int
 
 
 async def create_course(
@@ -58,7 +58,7 @@ async def create_course(
         course_id=course["id"],
         title=course["title"],
         lesson_count=len(course.get("lessons") or []),
-        version=time.time_ns(),
+        cache_buster=time.time_ns(),
     )
 
 
@@ -88,7 +88,7 @@ async def write_lesson(
         lesson_id=entry["id"],
         title=entry["title"],
         order=entry.get("order") or 0,
-        version=time.time_ns(),
+        cache_buster=time.time_ns(),
     )
 
 

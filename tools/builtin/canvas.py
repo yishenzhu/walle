@@ -14,12 +14,12 @@ from ...spec import SAFE_ID
 
 
 class CanvasResult(BaseModel):
-    """Canvas result: id/title/version for the client entry card."""
+    """Canvas result: id/title/cache-buster for the client entry card."""
 
     type: Literal["canvas"] = "canvas"
     canvas_id: str
     title: str
-    version: int
+    cache_buster: int
 
 
 def spec_html(title: str, spec: str) -> str:
@@ -74,5 +74,5 @@ async def canvas(
     return CanvasResult(
         canvas_id=canvas_id,
         title=title,
-        version=time.time_ns(),
+        cache_buster=time.time_ns(),
     )
