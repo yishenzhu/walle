@@ -147,7 +147,7 @@ sequenceDiagram
 
 - **Python ≥ 3.12**（pyproject.toml 要求）
 - **bubblewrap**（可选，启用 OS 级沙箱：`apt install bubblewrap`；缺失时沙箱插件自动跳过）
-- **Docker + Docker Compose**（可选，用于可观测性栈）
+- **Docker + Docker Compose**（可选，用于容器化部署与可观测性栈）
 
 ### 安装
 
@@ -221,6 +221,49 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 会话是**持久实体**（跨连接/进程存活）：连接断开 → `detach` 保留状态，当前 run 继续执行；连接接入 → `attach` 绑定新传输并继续接收事件。Web 工作区可从工作目录浏览历史会话并恢复。真正销毁走服务端停机（`--stop`）。
 
 `read` / `write` / `edit` 的相对路径按会话工作目录解析，绝对路径原样使用；与 bash 和沙箱的可写基准一致。
+
+### 🐳 容器化部署
+
+```bash
+cp .env.example .env          # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
+docker compose up -d --build
+docker compose logs -f web    # 访问 http://<host>:8080
+```
+
+两个服务共用一个镜像，靠 `command` 区分：
+
+| 服务 | 职责 | 端口 |
+|---|---|---|
+| `agent` | 会话服务（JSON-line TCP） | 8899（仅集群内） |
+| `web` | FastAPI + WebSocket 前端 | 8080（对外） |
+
+环境变量：
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `WALLE_CONF` | 配置文件 | `conf.yaml` |
+| `WALLE_BIND_HOST` | agent 监听地址 | `127.0.0.1` |
+| `WALLE_AGENT_HOST` | web 连接 agent 的地址 | 同 `WALLE_BIND_HOST` |
+| `WALLE_AGENT_PORT` | agent 端口 | `8899` |
+| `WALLE_LOG_STDOUT` | 日志同时输出 stdout | 关 |
+| `WALLE_LOG_FILE` | 写 `logs/agent.log` | 开 |
+
+日志遵循容器惯例：容器内 `WALLE_LOG_FILE=0` + `WALLE_LOG_STDOUT=1`，只走 stdout，
+由 Docker 日志驱动收集，轮转交给 compose 里的 `max-size` / `max-file`；
+需要按文件采集时改回 `WALLE_LOG_FILE=1`，并把 `logs/` 挂到宿主机。
+
+数据卷：
+
+| 卷 | 挂载点 | 内容 |
+|---|---|---|
+| `walle-data` | `/opt/walle/data` | 会话、画布、课程 |
+| `walle-logs` | `/opt/walle/logs` | 文件日志（默认关闭） |
+| `walle-agent` | `/opt/walle/.agent` | agents / skills / note.md，首次从镜像初始化 |
+
+沙箱：镜像内置 bubblewrap，compose 给了 `SYS_ADMIN` + `seccomp=unconfined`；
+宿主不允许时去掉这两项，沙箱插件会自动跳过（此时 bash 无隔离，公网部署前需确认）。
+
+清空数据：`docker compose down -v`。
 
 ### 📊 可观测性面板
 

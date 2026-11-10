@@ -1,0 +1,41 @@
+log:
+  level: "INFO"
+  path: "logs/agent.log"
+  backup_count: 7
+
+telemetry:
+  enabled: false
+  service_name: "walle"
+  otlp:
+    endpoint: "http://otel-collector:4317"
+    insecure: true
+  console_export: false
+
+timeout:
+  default: 30
+  overrides:
+    ask_user: null
+
+approval:
+  rules:
+    - [allow, mcp_obsidian*]
+    - [allow, mcp_rag_list_knowledge]
+    - [allow, mcp_rag_search_knowledge]
+    - [allow, mcp_rag_search_memory]
+    - [ask, mcp_rag_add_memory]
+    - [allow, background]
+    - [deny, bash(cmd=rm -rf /)]
+    - [allow, bash(cmd=ls -la*)]
+    - [allow, ask_user]
+    - [allow, canvas]
+    - [allow, course_canvas]
+    - [allow, create_course]
+    - [allow, write_lesson]
+    - [allow, read_course]
+    - [allow, read]
+    - [allow, edit(path=.agent/note.md)]
+  default: ask
+
+session:
+  storage: "file"
+  path: "data/sessions"

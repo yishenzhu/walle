@@ -16,7 +16,7 @@ from ...conf import CANVAS_ROOT
 from ...plugin import PluginHost
 from ...spec import SAFE_ID, WebService
 from ..frames import ErrorCode, Frame
-from ..transport import HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
+from ..transport import CONNECT_HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 from .plugins import discover_web_plugins
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ BROWSE_TIMEOUT = 5.0
 
 async def _open_link(payload: dict, timeout: float | None = None) -> JSONLineConn:
     """连上 agent 并发首帧；连接/写失败时关闭并抛出。"""
-    connect = asyncio.open_connection(HOST, PORT, limit=MAX_FRAME)
+    connect = asyncio.open_connection(CONNECT_HOST, PORT, limit=MAX_FRAME)
     reader, writer = (
         await connect if timeout is None else await asyncio.wait_for(connect, timeout)
     )

@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 通道默认连接参数（服务端监听 / 客户端连接共用同一值，避免漂移）
-HOST = "127.0.0.1"
-PORT = 8899
+HOST = os.getenv("WALLE_BIND_HOST", "127.0.0.1")
+CONNECT_HOST = os.getenv("WALLE_AGENT_HOST", HOST)
+PORT = int(os.getenv("WALLE_AGENT_PORT", "8899"))
 
 # 单帧上限与写超时：慢消费者 / 超大帧都不能拖死 Agent 循环
 MAX_FRAME = 1 << 20

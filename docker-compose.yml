@@ -1,0 +1,71 @@
+name: walle
+
+services:
+  agent:
+    build:
+      context: .
+    image: walle:0.1.0
+    command: ["python", "-m", "walle.main"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WALLE_CONF: conf.prod.yaml
+      WALLE_LOG_STDOUT: "1"
+      WALLE_LOG_FILE: "0"
+      WALLE_BIND_HOST: "0.0.0.0"
+    volumes:
+      - walle-data:/opt/walle/data
+      - walle-logs:/opt/walle/logs
+      - walle-agent:/opt/walle/.agent
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8899), 2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+    image: walle:0.1.0
+    command: ["python", "-m", "walle.channel.web", "--host", "0.0.0.0", "--port", "8080"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WALLE_LOG_STDOUT: "1"
+      WALLE_LOG_FILE: "0"
+      WALLE_AGENT_HOST: agent
+    ports:
+      - "8080:8080"
+    depends_on:
+      agent:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  walle-data:
+  walle-logs:
+  walle-agent:

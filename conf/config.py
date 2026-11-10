@@ -1,4 +1,5 @@
 import logging
+import os
 from enum import StrEnum
 from pathlib import Path
 from typing import NamedTuple
@@ -104,7 +105,8 @@ class Config(BaseModel):
     plugin: PluginConfig = PluginConfig()
 
     @classmethod
-    def load(cls, path: str = "conf.yaml"):
+    def load(cls, path: str | None = None):
+        path = path or os.getenv("WALLE_CONF", "conf.yaml")
         with open(resolve_path(path), encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return cls.model_validate(data)
