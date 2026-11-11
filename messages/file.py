@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from ..conf import PROJECT_ROOT
+from ..conf import HOME
 from ..infra.jsonio import atomic_write, read_json, write_json_atomic
 from ..spec import SAFE_ID, Message, MessageAdapter
 from .search import keyword_hits
@@ -40,7 +40,7 @@ def sessions_root(path: str | Path | None = None) -> Path:
     """集中存储根；相对路径按项目根解析。"""
     root = Path(path) if path else Path(DEFAULT_SESSIONS_PATH)
     if not root.is_absolute():
-        root = PROJECT_ROOT / root
+        root = HOME / root
     root.mkdir(parents=True, exist_ok=True)
     return root
 

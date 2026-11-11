@@ -1,7 +1,4 @@
 from .config import (
-    AGENT_DIR,
-    CANVAS_ROOT,
-    PROJECT_ROOT,
     ApprovalConfig,
     ApprovalDecision,
     ApprovalRuleSpec,
@@ -14,6 +11,17 @@ from .config import (
     TelemetryConfig,
     TimeoutConfig,
     resolve_path,
+)
+from .paths import (
+    AGENT_DIR,
+    CANVAS_ROOT,
+    CONF_PATH,
+    DATA,
+    HOME,
+    LOGS,
+    PROJECT_ROOT,
+    SOURCE_ROOT,
+    TEMPLATES,
 )
 
 __all__ = [
@@ -28,8 +36,14 @@ __all__ = [
     "TimeoutConfig",
     "SessionConfig",
     "PluginConfig",
+    "SOURCE_ROOT",
     "PROJECT_ROOT",
+    "HOME",
+    "DATA",
+    "LOGS",
     "AGENT_DIR",
     "CANVAS_ROOT",
+    "CONF_PATH",
+    "TEMPLATES",
     "resolve_path",
 ]

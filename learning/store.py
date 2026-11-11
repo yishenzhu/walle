@@ -9,7 +9,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 
-from ..conf import PROJECT_ROOT
+from ..conf import HOME
 from ..infra.jsonio import read_json, write_json_atomic, write_text_atomic
 from ..spec import SAFE_ID
 
@@ -27,7 +27,7 @@ HTML_TAG = re.compile(r"<[^>]+>")
 def courses_root(path: str | Path | None = None) -> Path:
     root = Path(path) if path else Path(DEFAULT_COURSES_PATH)
     if not root.is_absolute():
-        root = PROJECT_ROOT / root
+        root = HOME / root
     root.mkdir(parents=True, exist_ok=True)
     return root
 

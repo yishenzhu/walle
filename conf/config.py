@@ -7,15 +7,13 @@ from typing import NamedTuple
 import yaml
 from pydantic import BaseModel, Field
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-AGENT_DIR = PROJECT_ROOT / ".agent"
-CANVAS_ROOT = PROJECT_ROOT / "data" / "canvas"
+from .paths import CONF_PATH, HOME, PROJECT_ROOT, SOURCE_ROOT
 
 
 def resolve_path(path: str) -> str:
     p = Path(path)
     if not p.is_absolute():
-        p = PROJECT_ROOT / p
+        p = HOME / p
     return str(p.resolve())
 
 
@@ -106,7 +104,12 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str | None = None):
-        path = path or os.getenv("WALLE_CONF", "conf.yaml")
-        with open(resolve_path(path), encoding="utf-8") as f:
+        raw = path or os.getenv("WALLE_CONF")
+        target = Path(raw) if raw else CONF_PATH
+        if not target.is_absolute():
+            target = SOURCE_ROOT / target
+        if not target.exists():
+            raise RuntimeError(f"配置文件不存在: {target}（先执行 deploy/init-home.sh）")
+        with open(target, encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return cls.model_validate(data)

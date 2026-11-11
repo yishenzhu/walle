@@ -7,10 +7,18 @@ LOG_DIR="$PROJECT_ROOT/logs"
 STATE_DIR="$LOG_DIR/.run"
 mkdir -p "$LOG_DIR" "$STATE_DIR"
 
+# 默认与源码目录同源，保持本地开发的文件布局不变
+: "${WALLE_HOME:=$PROJECT_ROOT}"
+export WALLE_HOME
+
 AGENT_PORT=8899
 WEB_HOST_DEFAULT=127.0.0.1
 WEB_PORT_DEFAULT=8080
 : "${READY_TIMEOUT:=20}"
+
+init_home() {
+    sh "$PROJECT_ROOT/deploy/init-home.sh"
+}
 
 VENV_PYTHON="$PROJECT_ROOT/.venv/bin/python3"
 if [ -n "${WALLE_PYTHON:-}" ]; then
