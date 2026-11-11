@@ -260,6 +260,9 @@ docker compose logs -f web    # 访问 http://<host>:8080
 | `walle-logs` | `/opt/walle/logs` | 文件日志（默认关闭） |
 | `walle-agent` | `/opt/walle/.agent` | agents / skills / note.md，首次从镜像初始化 |
 
+根文件系统只读（`read_only: true`），可写路径只有三个数据卷和 `/tmp`（tmpfs）：
+`docker diff <container>` 为空即表示没有意外写入。
+
 沙箱：镜像内置 bubblewrap，compose 给了 `SYS_ADMIN` + `seccomp=unconfined`；
 宿主不允许时去掉这两项，沙箱插件会自动跳过（此时 bash 无隔离，公网部署前需确认）。
 

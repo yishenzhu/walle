@@ -15,10 +15,14 @@ services:
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_BIND_HOST: "0.0.0.0"
+      HOME: /tmp
     volumes:
       - walle-data:/opt/walle/data
       - walle-logs:/opt/walle/logs
       - walle-agent:/opt/walle/.agent
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     cap_add:
       - SYS_ADMIN
     security_opt:
@@ -48,6 +52,10 @@ services:
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_AGENT_HOST: agent
+      HOME: /tmp
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     ports:
       - "8080:8080"
     depends_on:
