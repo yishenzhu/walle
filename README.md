@@ -241,7 +241,10 @@ docker compose logs -f web    # 访问 http://<host>:8080
 
 | 变量 | 作用 | 默认 |
 |---|---|---|
-| `WALLE_CONF` | 配置文件 | `conf.yaml` |
+| `WALLE_HOME` | 可写数据根目录（data / logs / .agent / conf.yaml） | 源码目录 |
+| `WALLE_TEMPLATES` | 默认 agents / skills / 配置模板 | 源码目录下 `templates/` |
+| `WALLE_INIT` | 入口脚本是否初始化 `WALLE_HOME` | `0`（compose 里 agent 设为 `1`） |
+| `WALLE_CONF` | 配置文件（相对路径按源码目录解析） | `$WALLE_HOME/conf.yaml` |
 | `WALLE_BIND_HOST` | agent 监听地址 | `127.0.0.1` |
 | `WALLE_AGENT_HOST` | web 连接 agent 的地址 | 同 `WALLE_BIND_HOST` |
 | `WALLE_AGENT_PORT` | agent 端口 | `8899` |
@@ -256,9 +259,11 @@ docker compose logs -f web    # 访问 http://<host>:8080
 
 | 卷 | 挂载点 | 内容 |
 |---|---|---|
-| `walle-data` | `/opt/walle/data` | 会话、画布、课程 |
-| `walle-logs` | `/opt/walle/logs` | 文件日志（默认关闭） |
-| `walle-agent` | `/opt/walle/.agent` | agents / skills / note.md，首次从镜像初始化 |
+| `walle-home` | `/var/lib/walle` | 全部运行期数据：`data/` `logs/` `.agent/` `conf.yaml` |
+
+初始化由入口脚本 `deploy/init-home.sh` 完成（容器里由 `deploy/entrypoint.sh` 调用，
+本地由 `./scripts/run.sh` 调用）：只补缺失文件，不覆盖已有内容；模板清单变化时
+自动补齐新增项，用户删掉的文件不会被复活。
 
 根文件系统只读（`read_only: true`），可写路径只有三个数据卷和 `/tmp`（tmpfs）：
 `docker diff <container>` 为空即表示没有意外写入。

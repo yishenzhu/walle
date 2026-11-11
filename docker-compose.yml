@@ -12,14 +12,15 @@ services:
         required: false
     environment:
       WALLE_CONF: conf.prod.yaml
+      WALLE_HOME: /var/lib/walle
+      WALLE_TEMPLATES: /opt/walle/templates
+      WALLE_INIT: "1"
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_BIND_HOST: "0.0.0.0"
       HOME: /tmp
     volumes:
-      - walle-data:/opt/walle/data
-      - walle-logs:/opt/walle/logs
-      - walle-agent:/opt/walle/.agent
+      - walle-home:/var/lib/walle
     read_only: true
     tmpfs:
       - /tmp:size=256m
@@ -49,10 +50,14 @@ services:
       - path: .env
         required: false
     environment:
+      WALLE_HOME: /var/lib/walle
+      WALLE_TEMPLATES: /opt/walle/templates
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_AGENT_HOST: agent
       HOME: /tmp
+    volumes:
+      - walle-home:/var/lib/walle
     read_only: true
     tmpfs:
       - /tmp:size=256m
@@ -74,6 +79,4 @@ services:
       start_period: 20s
 
 volumes:
-  walle-data:
-  walle-logs:
-  walle-agent:
+  walle-home:

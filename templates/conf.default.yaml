@@ -1,0 +1,43 @@
+log:
+  level: "DEBUG"
+  path: "logs/agent.log"
+  backup_count: 30
+
+telemetry:
+  enabled: true
+  service_name: "agent"
+  otlp:
+    endpoint: "http://localhost:4317"
+    insecure: true
+  console_export: false
+
+timeout:
+  default: 30
+  # 单工具覆盖：None = 豁免超时（ask_user 等人回答不设时限）；数值 = 覆盖全局
+  overrides:
+    ask_user: null
+
+approval:
+  rules:
+    - [allow, mcp_obsidian*]
+    - [allow, mcp_rag_list_knowledge]
+    - [allow, mcp_rag_search_knowledge]
+    - [allow, mcp_rag_search_memory]
+    - [ask, mcp_rag_add_memory]
+    - [allow, background]
+    - [deny, bash(cmd=rm -rf /)]
+    - [allow, bash(cmd=ls -la*)]
+    - [allow, ask_user] 
+    - [allow, canvas]     # 画布 HTML 在沙箱 iframe 内渲染，自动放行
+    - [allow, course_canvas]
+    - [allow, create_course]
+    - [allow, write_lesson]
+    - [allow, read_course]
+    - [allow, read]       # 读文件自动放行（技能按需加载全文）
+    - [allow, edit(path=.agent/note.md)] 
+  default: ask
+
+session:
+  storage: "file"
+  path: "data/sessions"
+

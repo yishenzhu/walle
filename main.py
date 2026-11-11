@@ -11,7 +11,8 @@ from .tools.approval import native_approval
 from .tools.builtin.plugin import builtin_plugin
 from .tools.skill import native_skill
 
-logger = logging.getLogger(__name__)
+# -m 方式下 __name__ 为 "__main__"，会继承 root 的 ERROR 级别，故显式命名
+logger = logging.getLogger("walle.main")
 
 
 async def main() -> None:

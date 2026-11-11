@@ -17,12 +17,13 @@ RUN python /tmp/install_deps.py pyproject.toml && rm /tmp/install_deps.py
 
 COPY . .
 
-RUN mkdir -p data/canvas data/sessions logs \
- && chown -R 10001:10001 /opt/walle
+RUN chmod +x deploy/*.sh \
+ && mkdir -p data/canvas data/sessions logs /var/lib/walle \
+ && chown -R 10001:10001 /opt/walle /var/lib/walle
 
 USER 10001:10001
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/walle/deploy/entrypoint.sh"]
 CMD ["python", "-m", "walle.main"]

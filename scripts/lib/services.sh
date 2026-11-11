@@ -45,6 +45,7 @@ start_agent_bg() {
 }
 
 ensure_agent_bg() {
+    init_home
     if port_in_use "$AGENT_PORT"; then
         info "agent 已在运行，直接连接"
         return 0
@@ -53,6 +54,7 @@ ensure_agent_bg() {
 }
 
 run_agent_foreground() {
+    init_home
     step "启动 walle agent ..."
     info "使用 Python: $PY"
     exec_py -m walle.main

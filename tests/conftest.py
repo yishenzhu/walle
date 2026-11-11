@@ -1,9 +1,26 @@
 """pytest 共享 mock 对象与测试辅助函数。"""
+import os
+import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from ..infra import OpenAIProvider
 from ..spec import ApprovalRequest, ApprovalResponse, Inquiry
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(scope="session", autouse=True)
+def seed_agent_defaults():
+    """.agent 不入库；测试前按模板补齐，保证新克隆可直接跑。"""
+    if not (ROOT / ".agent" / "agents").exists():
+        env = {**os.environ, "WALLE_HOME": str(ROOT)}
+        subprocess.run(
+            ["sh", str(ROOT / "deploy" / "init-home.sh")], env=env, check=True
+        )
 
 # ── Mock LLM 响应对象 ──────────────────────────────────
 
