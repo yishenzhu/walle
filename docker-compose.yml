@@ -91,6 +91,8 @@ services:
     depends_on:
       agent:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     read_only: true
     tmpfs:
       - /tmp:size=32m

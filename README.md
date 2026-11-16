@@ -264,8 +264,20 @@ docker compose logs -f web    # 访问 http://<host>:8080
 | `audit.jsonl` | agent | 审批决策 + 工具执行（JSON） | 独立审计存储 |
 
 `deploy/fluent-bit.conf` 按流配置了解析器：`app.log` 拆成结构化字段，
-`audit.jsonl` 直接按 JSON 解析，`access.log` 原文透传。当前输出到 stdout，
-替换 `[OUTPUT]` 段落即可接入 Loki / ES。
+`audit.jsonl` 直接按 JSON 解析，`access.log` 原文透传。三条流同时输出到
+stdout 和 Loki（`{job="walle", stream="app|access|audit"}`，保留 7 天）。
+
+多行日志（异常堆栈）在写文件时转义成单行（`\n`），保证一条记录一行，
+采集器不需要多行合并规则，堆栈也不会被拆散。
+
+日志查询示例（Grafana Explore → Loki）：
+
+```logql
+{job="walle", stream="app"} |= "timeout"
+{job="walle", stream="app"} | json | level="ERROR"
+{job="walle", stream="audit"} | json | status="blocked"
+{job="walle", stream="access"} |~ "GET /api .* 5\d\d"
+```
 
 agent 以 `WALLE_LOG_FILE=1` + `WALLE_LOG_STDOUT=0` 运行，日志只落盘、由边车输出；
 `docker compose logs logs` 看到的就是汇总后的三条流。
@@ -295,8 +307,13 @@ agent 以 `WALLE_LOG_FILE=1` + `WALLE_LOG_STDOUT=0` 运行，日志只落盘、�
 | Grafana | http://localhost:3000 | admin / admin |
 | Tempo | http://localhost:3200 | - |
 | Mimir | http://localhost:9009 | - |
+| Loki | http://localhost:3100 | - |
 
-可查看：Agent 每轮迭代耗时与 Span、工具调用次数/耗时/错误率、Handoff 事件。
+可查看：Agent 每轮迭代耗时与 Span、工具调用次数/耗时/错误率、Handoff 事件，
+以及三条日志流（Grafana Explore 里选 Loki）。
+
+日志由独立的 `logs` 边车投递，投递目标地址是 `host.docker.internal:3100`，
+所以主 compose 和观测栈可以分别启停；Loki 不在时边车会重试，业务不受影响。
 
 > 使用 `--no-obs` 启动 agent 时，若 `telemetry.enabled` 仍为 `true`，OTLP 导出会持续报
 > `DEADLINE_EXCEEDED`。不需要观测时把 `telemetry.enabled` 设为 `false`，或单独运行
