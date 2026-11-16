@@ -267,8 +267,10 @@ docker compose logs -f web    # 访问 http://<host>:8080
 `audit.jsonl` 直接按 JSON 解析，`access.log` 原文透传。三条流同时输出到
 stdout 和 Loki（`{job="walle", stream="app|access|audit"}`，保留 7 天）。
 
-多行日志（异常堆栈）在写文件时转义成单行（`\n`），保证一条记录一行，
-采集器不需要多行合并规则，堆栈也不会被拆散。
+多行日志（异常堆栈）由边车的 `app_multiline` 解析器合并：以时间戳前缀开头的行
+视为新记录，其余视为续行（用负向断言匹配，堆栈里的数字行不会被误判）。
+合并后的整条内容再交给 `app` 正则解析器拆字段，`Flush_Timeout 1000` 表示
+未闭合的多行缓冲最多等 1 秒。
 
 日志查询示例（Grafana Explore → Loki）：
 

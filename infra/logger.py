@@ -9,13 +9,6 @@ from ..conf import PROJECT_ROOT, LogConfig, resolve_path
 LOG_FORMAT = "%(asctime)s|%(levelname)-5s|trace_id=%(trace_id)s span_id=%(span_id)s|%(message)s"
 
 
-class SingleLineFormatter(logging.Formatter):
-    """多行消息（异常堆栈）转义成一行，保证一条日志一行、可被采集器解析。"""
-
-    def format(self, record: logging.LogRecord) -> str:
-        return super().format(record).replace("\n", "\\n")
-
-
 class TraceInjectingFilter(logging.Filter):
     def filter(self, record):
         from opentelemetry import trace
@@ -48,7 +41,7 @@ def setup_logger(conf: LogConfig):
             encoding="utf-8",
             delay=True,  # 懒创建：避免首启时空文件轮转报错
         )
-        handler.setFormatter(SingleLineFormatter(LOG_FORMAT))
+        handler.setFormatter(formatter)
         handler.addFilter(TraceInjectingFilter())
         root.addHandler(handler)
 
