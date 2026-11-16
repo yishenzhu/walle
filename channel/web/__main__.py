@@ -6,6 +6,7 @@ import asyncio
 import uvicorn
 
 from .app import app, install_web_plugins
+from .logconf import access_log_config
 
 
 def main() -> None:
@@ -14,7 +15,12 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     asyncio.run(install_web_plugins())  # 路由须在 serve 前挂好
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+    options = {"host": args.host, "port": args.port, "log_level": "info"}
+    log_config = access_log_config()
+    if log_config is not None:
+        options["log_config"] = log_config
+    uvicorn.run(app, **options)
 
 
 if __name__ == "__main__":

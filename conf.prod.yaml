@@ -1,6 +1,6 @@
 log:
   level: "INFO"
-  path: "logs/agent.log"
+  path: "logs/app.log"
   backup_count: 7
 
 telemetry:

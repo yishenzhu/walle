@@ -20,6 +20,7 @@ from ..spec import (
     TurnEndEvent,
     TurnStartEvent,
 )
+from .auditlog import audit
 from .logger import LogConfig, setup_logger
 from .metrics import (
     AGENT_ITERATIONS,
@@ -35,6 +36,7 @@ from .telemetry import meter, setup_telemetry, tracer
 from .tool import Tool, Tools, tool_context
 
 __all__ = [
+    "audit",
     # 事件总线（实现位于 plugin.events，infra 统一出口）
     "EventBus",
     "Handler",

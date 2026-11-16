@@ -249,11 +249,26 @@ docker compose logs -f web    # 访问 http://<host>:8080
 | `WALLE_AGENT_HOST` | web 连接 agent 的地址 | 同 `WALLE_BIND_HOST` |
 | `WALLE_AGENT_PORT` | agent 端口 | `8899` |
 | `WALLE_LOG_STDOUT` | 日志同时输出 stdout | 关 |
-| `WALLE_LOG_FILE` | 写 `logs/agent.log` | 开 |
+| `WALLE_LOG_FILE` | 写 `logs/app.log` | 开 |
+| `WALLE_ACCESS_LOG` | HTTP 访问日志写 `logs/access.log` | 关（compose 里 web 设为 `1`） |
+| `WALLE_AUDIT` | 审批与工具执行写 `logs/audit.jsonl` | 开 |
 
-日志遵循容器惯例：容器内 `WALLE_LOG_FILE=0` + `WALLE_LOG_STDOUT=1`，只走 stdout，
-由 Docker 日志驱动收集，轮转交给 compose 里的 `max-size` / `max-file`；
-需要按文件采集时改回 `WALLE_LOG_FILE=1`，并把 `logs/` 挂到宿主机。
+### 日志流
+
+三条流分开落盘，由 `logs` 边车（Fluent Bit）转发：
+
+| 流 | 生产者 | 内容 | 建议去向 |
+|---|---|---|---|
+| `app.log` | agent | 应用日志，含 trace_id | Loki / 诊断 |
+| `access.log` | web | HTTP 访问日志 | 流量分析 / 冷存 |
+| `audit.jsonl` | agent | 审批决策 + 工具执行（JSON） | 独立审计存储 |
+
+`deploy/fluent-bit.conf` 按流配置了解析器：`app.log` 拆成结构化字段，
+`audit.jsonl` 直接按 JSON 解析，`access.log` 原文透传。当前输出到 stdout，
+替换 `[OUTPUT]` 段落即可接入 Loki / ES。
+
+agent 以 `WALLE_LOG_FILE=1` + `WALLE_LOG_STDOUT=0` 运行，日志只落盘、由边车输出；
+`docker compose logs logs` 看到的就是汇总后的三条流。
 
 数据卷：
 
@@ -265,7 +280,7 @@ docker compose logs -f web    # 访问 http://<host>:8080
 本地由 `./scripts/run.sh` 调用）：只补缺失文件，不覆盖已有内容；模板清单变化时
 自动补齐新增项，用户删掉的文件不会被复活。
 
-根文件系统只读（`read_only: true`），可写路径只有三个数据卷和 `/tmp`（tmpfs）：
+根文件系统只读（`read_only: true`），可写路径只有 `walle-home` 数据卷和 `/tmp`（tmpfs）：
 `docker diff <container>` 为空即表示没有意外写入。
 
 沙箱：镜像内置 bubblewrap，compose 给了 `SYS_ADMIN` + `seccomp=unconfined`；

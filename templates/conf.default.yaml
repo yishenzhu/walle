@@ -1,6 +1,6 @@
 log:
   level: "DEBUG"
-  path: "logs/agent.log"
+  path: "logs/app.log"
   backup_count: 30
 
 telemetry:

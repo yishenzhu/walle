@@ -15,8 +15,9 @@ services:
       WALLE_HOME: /var/lib/walle
       WALLE_TEMPLATES: /opt/walle/templates
       WALLE_INIT: "1"
-      WALLE_LOG_STDOUT: "1"
-      WALLE_LOG_FILE: "0"
+      WALLE_LOG_FILE: "1"
+      WALLE_LOG_STDOUT: "0"
+      WALLE_AUDIT: "1"
       WALLE_BIND_HOST: "0.0.0.0"
       HOME: /tmp
     volumes:
@@ -31,8 +32,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "50m"
-        max-file: "5"
+        max-size: "10m"
+        max-file: "2"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8899), 2).close()"]
       interval: 30s
@@ -52,6 +53,7 @@ services:
     environment:
       WALLE_HOME: /var/lib/walle
       WALLE_TEMPLATES: /opt/walle/templates
+      WALLE_ACCESS_LOG: "1"
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_AGENT_HOST: agent
@@ -77,6 +79,26 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  logs:
+    image: docker.m.daocloud.io/fluent/fluent-bit:3.1
+    command: ["-c", "/fluent-bit/etc/walle.conf"]
+    restart: unless-stopped
+    volumes:
+      - walle-home:/walle:ro
+      - ./deploy/fluent-bit.conf:/fluent-bit/etc/walle.conf:ro
+      - ./deploy/fluent-bit-parsers.conf:/fluent-bit/etc/walle-parsers.conf:ro
+    depends_on:
+      agent:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   walle-home:

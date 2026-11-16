@@ -16,6 +16,7 @@ from ..infra import (
     JobStatus,
     SessionView,
     Tool,
+    audit,
     tool_context,
     tracer,
 )
@@ -64,6 +65,7 @@ class ToolExecutor:
         if ft is None:
             reason = f"Error: Unknown tool {name}"
             logger.warning(reason)
+            audit("tool", tool=name, status="unknown")
             return tc_id, reason
 
         # 会话上下文由调用方（runner 每轮 / run_job 后台任务）注入
@@ -97,6 +99,7 @@ class ToolExecutor:
                     if verdict.block:
                         blocked += f": {verdict.block}"
                     logger.info(blocked)
+                    audit("tool", tool=name, status="blocked", args=sorted(args))
                     return tc_id, await report_error(blocked)
                 if verdict.arguments is not None:
                     args = verdict.arguments
@@ -105,6 +108,7 @@ class ToolExecutor:
                     blocked = f"Tool '{name}' blocked by plugin"
                     blocked += f": {verdict['block']}"
                     logger.info(blocked)
+                    audit("tool", tool=name, status="blocked", args=sorted(args))
                     return tc_id, await report_error(blocked)
                 if isinstance(verdict.get("arguments"), dict):
                     args = verdict["arguments"]
@@ -135,6 +139,13 @@ class ToolExecutor:
             TOOL_ERRORS.add(1, attrs)
             error = await report_error(f"Error: {e}")
         finally:
+            audit(
+                "tool",
+                tool=name,
+                status="error" if error is not None else "ok",
+                ms=round(elapsed_ms, 1) if elapsed_ms is not None else None,
+                args=sorted(args),
+            )
             # after_tool_call 通知（非阻断）：携带结果 / 错误 / 耗时供观测型插件。
             # 工具未找到 / 审批拒绝 / 被插件阻止的路径不经过 try，不发 after。
             if ctx is not None and ctx.bus is not None:

@@ -6,6 +6,7 @@ set -eu
 TEMPLATES="${WALLE_TEMPLATES:-$(cd "$(dirname "$0")/.." && pwd)/templates}"
 
 mkdir -p "$WALLE_HOME/data/canvas" "$WALLE_HOME/logs" "$WALLE_HOME/.agent"
+touch "$WALLE_HOME/logs/app.log" "$WALLE_HOME/logs/access.log" "$WALLE_HOME/logs/audit.jsonl"
 
 if [ -f "$TEMPLATES/conf.default.yaml" ] && [ ! -f "$WALLE_HOME/conf.yaml" ]; then
     cp "$TEMPLATES/conf.default.yaml" "$WALLE_HOME/conf.yaml"

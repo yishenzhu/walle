@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..conf import ApprovalConfig, ApprovalDecision, ApprovalRuleSpec
-from ..infra import HookVerdict, tool_context
+from ..infra import HookVerdict, audit, tool_context
 from ..plugin import plugin
 from ..spec import ApprovalRequest, ApprovalResponse, Channel, PreExecuteToolEvent
 
@@ -123,6 +123,7 @@ class Approval:
         tc_id = evt.tool_call_id
 
         decision = self._policy.evaluate(name, args)
+        audit("approval", tool=name, decision=decision.value, source="policy")
         if decision == ApprovalDecision.DENY:
             return HookVerdict(block=f"Tool '{name}' denied by policy")
         if decision == ApprovalDecision.ALLOW:
@@ -131,15 +132,19 @@ class Approval:
         # ASK：经执行上下文（tool_context 提前注入）的 channel 问用户
         session = tool_context.get()
         if session is None or session.channel is None:
+            audit("approval", tool=name, decision="deny", source="channel-missing")
             return HookVerdict(block=f"Tool '{name}' denied: no approval channel")
         try:
             response = await ChannelApprover(session.channel).ask(name, args, tc_id)
         except Exception as exc:
             logger.warning(f"approval for '{name}' failed: {exc}")
+            audit("approval", tool=name, decision="deny", source="error")
             return HookVerdict(block=f"Tool '{name}' denied: approval failed ({exc})")
         if response.approved:
+            audit("approval", tool=name, decision="allow", source="user")
             return None
         reason = f"Tool '{name}' denied by user"
+        audit("approval", tool=name, decision="deny", source="user", reason=response.reason)
         return HookVerdict(
             block=f"{reason}: {response.reason}" if response.reason else reason
         )
