@@ -521,3 +521,9 @@ def test_bridge_forwards_approval_reply_and_cancel(monkeypatch):
             }
     finally:
         agent.stop()
+
+
+def test_healthz():
+    response = TestClient(web.app).get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

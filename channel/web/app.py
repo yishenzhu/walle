@@ -26,6 +26,11 @@ STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/")
 async def index() -> HTMLResponse:
     return HTMLResponse(

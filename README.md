@@ -226,16 +226,27 @@ PYTHONPATH=.. python -m walle.channel.web   # 也可单独启动，默认 http:/
 
 ```bash
 cp .env.example .env          # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
-docker compose up -d --build
-docker compose logs -f web    # 访问 http://<host>:8080
+./scripts/deploy.sh up        # 访问 http://<host>/
 ```
 
-两个服务共用一个镜像，靠 `command` 区分：
+四个服务，agent 与 web 共用一个镜像：
 
 | 服务 | 职责 | 端口 |
 |---|---|---|
 | `agent` | 会话服务（JSON-line TCP） | 8899（仅集群内） |
-| `web` | FastAPI + WebSocket 前端 | 8080（对外） |
+| `web` | FastAPI + WebSocket 前端 | 127.0.0.1:8080（仅本机） |
+| `logs` | Fluent Bit 边车 | 无 |
+| `caddy` | 反向代理 / TLS / 压缩 | 80 / 443（对外） |
+
+对外只暴露 Caddy，web 只监听本机回环，避免绕过代理直接访问。
+配好域名后把 `WALLE_SITE` 设成域名（如 `walle.example.com`），Caddy 会自动申请证书：
+
+```bash
+WALLE_SITE=walle.example.com ./scripts/deploy.sh up
+```
+
+服务都设了内存与 CPU 上限（agent 1g/1c、web 512m/0.5c、logs 256m/0.5c、caddy 128m/0.25c），
+按 2C4G 的小机器估算，可按需在 compose 里调整。
 
 环境变量：
 
@@ -300,7 +311,21 @@ agent 以 `WALLE_LOG_FILE=1` + `WALLE_LOG_STDOUT=0` 运行，日志只落盘、�
 沙箱：镜像内置 bubblewrap，compose 给了 `SYS_ADMIN` + `seccomp=unconfined`；
 宿主不允许时去掉这两项，沙箱插件会自动跳过（此时 bash 无隔离，公网部署前需确认）。
 
-清空数据：`docker compose down -v`。
+运维命令：
+
+```bash
+./scripts/deploy.sh up            # 构建并启动
+./scripts/deploy.sh ps            # 状态
+./scripts/deploy.sh logs caddy    # 跟踪某个服务日志
+./scripts/deploy.sh backup        # 打包数据卷到 backups/
+./scripts/deploy.sh restore backups/walle-20260101-120000.tar.gz
+./scripts/deploy.sh upgrade       # git pull 后重建
+./scripts/deploy.sh down          # 停止，保留数据
+./scripts/deploy.sh down -v       # 停止并删除数据卷
+```
+
+`backup` 用与镜像相同的 uid 打包，`restore` 以 root 解包后把属主改回 10001，
+备份文件在 `backups/`（已加入 `.gitignore`）。
 
 ### 📊 可观测性面板
 
