@@ -89,7 +89,8 @@ class CourseDriver:
     async def scan(self) -> None:
         """扫描本会话的课程：续跑暂停的、推进生成中的。"""
         for item in list_courses(self._root):
-            if item.get("session_id") not in (None, self._session_id):
+            # 只驱动自己会话创建的课程：多个标签页/无人会话不会抢同一门课
+            if item.get("session_id") != self._session_id:
                 continue
             course = load_course(item["id"], self._root)
             if course is None:

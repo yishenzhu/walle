@@ -33,6 +33,19 @@ async def test_create_course_and_write_lesson(courses, context):
     assert not isinstance(result, str)
     assert result.type == "course"
     assert result.lesson_count == 2
+    # 大纲先等确认：确认后驱动器才写正文
+    assert course_store.load_course(result.course_id)["status"] == "awaiting_outline"
+    assert isinstance(
+        await write_lesson(
+            result.course_id,
+            "时域与频域",
+            "# 正文",
+            objective="能画出对应关系",
+            practice=[{"prompt": "分解方波", "answer": "基频 + 奇次谐波"}],
+        ),
+        str,
+    )
+    course_store.mark_course(result.course_id, "generating")
 
     lesson = await write_lesson(
         result.course_id,
@@ -65,6 +78,7 @@ async def test_write_lesson_unknown_course(courses, context):
 
 async def test_read_course_uses_session_context(courses, tmp_path):
     created = await create_course("课程", goal="目标", lessons=["第一课"])
+    course_store.mark_course(created.course_id, "generating")
     lesson = await write_lesson(
         created.course_id, "第一课", "# 正文\n细节",
         objective="能复述正文", practice=[{"prompt": "复述", "answer": "细节"}],
@@ -104,3 +118,15 @@ def test_tool_schema_requires_pedagogy_fields():
     assert practice.get("type") == "array"
     assert practice["items"].get("$ref") == "#/$defs/Practice"
     assert set(schema["$defs"]["Practice"]["required"]) == {"prompt", "answer"}
+
+
+async def test_confirm_gate_can_be_disabled(courses, context, monkeypatch):
+    monkeypatch.setenv("WALLE_COURSE_CONFIRM", "0")
+    created = await create_course("课程", lessons=["第一课"])
+
+    lesson = await write_lesson(
+        created.course_id, "第一课", "# 正文",
+        objective="能复述", practice=[{"prompt": "复述", "answer": "正文"}],
+    )
+
+    assert not isinstance(lesson, str)

@@ -20,6 +20,7 @@ from .store import (
     lesson_canvas_ids,
     list_courses,
     load_course,
+    mark_course,
     read_lesson,
     update_progress,
 )
@@ -119,6 +120,17 @@ def create_router(
             "written_count": sum(1 for item in lessons if item["written"]),
             "progress": progress,
         }
+
+    @router.post("/api/courses/{course_id}/start")
+    async def api_start_course(course_id: str) -> dict:
+        """确认大纲：把课程交给驱动器按章节生成。"""
+        _require_ids(course_id)
+        course = mark_course(
+            course_id, "generating", root=courses_root(), last_error=None
+        )
+        if course is None:
+            raise HTTPException(status_code=404)
+        return {"status": course["status"]}
 
     @router.post("/api/courses/{course_id}/progress")
     async def api_update_progress(course_id: str, payload: ProgressUpdate) -> dict:

@@ -610,3 +610,48 @@ body.course-resizing iframe { pointer-events: none; }
     border-top: 1px solid var(--border);
   }
 }
+
+/* 课程状态：生成中 / 已暂停 / 等待确认大纲 */
+.course-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.course-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #2a2a2a);
+  color: var(--muted, #888);
+  white-space: nowrap;
+}
+
+.course-badge[data-status="generating"] {
+  color: #4ade80;
+  border-color: #2f6f45;
+}
+
+.course-badge[data-status="awaiting_outline"] {
+  color: #fbbf24;
+  border-color: #7a5b12;
+}
+
+.course-badge[data-status="paused"] {
+  color: #f87171;
+  border-color: #7a2a2a;
+}
+
+.course-start {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line, #2a2a2a);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.course-start:hover {
+  border-color: var(--muted, #888);
+}

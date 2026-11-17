@@ -6,8 +6,16 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..infra import tool_context
+from .store import (
+    confirm_required,
+    load_course,
+    mark_course,
+    next_pending_lesson,
+    outline_lines,
+    read_lesson,
+    save_course,
+)
 from .store import create_course as create_course_entry
-from .store import load_course, outline_lines, read_lesson, save_course
 from .store import write_lesson as write_lesson_entry
 
 
@@ -53,6 +61,7 @@ async def create_course(
     be verified by at least one lesson practice. `goal` is a one-line summary.
     `learner_level` / `time_budget` calibrate difficulty and scope.
     Pass `course_id` to update an existing course."""
+    previous = load_course(course_id) if course_id else None
     try:
         course = create_course_entry(
             title=title,
@@ -72,6 +81,17 @@ async def create_course(
         if ctx.cwd:
             course["workspace"] = str(ctx.cwd)
         save_course(course)
+
+    # 新大纲先等用户确认，避免一头扎进去写一整门课；
+    # 正在生成的课程改大纲不打断，交给驱动继续
+    was_generating = bool(previous and previous.get("status") == "generating")
+    if (
+        confirm_required()
+        and not was_generating
+        and next_pending_lesson(course) is not None
+    ):
+        mark_course(course["id"], "awaiting_outline")
+        course["status"] = "awaiting_outline"
 
     return CourseResult(
         course_id=course["id"],
@@ -100,6 +120,16 @@ async def write_lesson(
     reference `answer` (and optional `check`). `assessment` is the self-check
     the learner uses to judge mastery. Supports Markdown, LaTeX and
     `{{canvas:<id>}}` on its own line."""
+    course = load_course(course_id)
+    if (
+        course is not None
+        and course.get("status") == "awaiting_outline"
+        and confirm_required()
+    ):
+        return (
+            "Error: 大纲尚未确认，不能写正文。"
+            "请让用户确认大纲；确认后系统会按章节自动生成。"
+        )
     try:
         entry = write_lesson_entry(
             course_id=course_id,

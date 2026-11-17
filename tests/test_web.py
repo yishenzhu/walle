@@ -532,3 +532,20 @@ def test_healthz():
     response = TestClient(web.app).get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_start_course_endpoint(monkeypatch, tmp_path):
+    root, course, lesson = make_course_bundle(tmp_path)
+    monkeypatch.setattr(learning_web, "courses_root", lambda: root)
+    client = TestClient(web.app)
+
+    from ..learning.store import load_course, mark_course
+
+    mark_course(course["id"], "awaiting_outline", root=root)
+    detail = client.get(f"/api/courses/{course['id']}").json()
+    assert detail["status"] == "awaiting_outline"
+
+    started = client.post(f"/api/courses/{course['id']}/start")
+    assert started.status_code == 200
+    assert started.json()["status"] == "generating"
+    assert load_course(course["id"], root)["status"] == "generating"

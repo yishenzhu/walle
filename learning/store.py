@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 from html import unescape
@@ -21,6 +22,13 @@ PROGRESS_FILE = "progress.json"
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
 MAX_OUTCOMES = 5
 MAX_PRACTICES = 5
+
+# 大纲确认：写完大纲先停一下，最便宜的人工检查点（对齐 OpenMAIC）
+CONFIRM_ENV = "WALLE_COURSE_CONFIRM"
+
+
+def confirm_required() -> bool:
+    return os.getenv(CONFIRM_ENV, "1").lower() not in ("0", "false", "no", "off")
 
 
 def next_pending_lesson(course: dict[str, Any], root: str | Path | None = None) -> dict | None:
@@ -336,6 +344,7 @@ def list_courses(root: str | Path | None = None) -> list[dict[str, Any]]:
                 "title": course.get("title") or entry.name,
                 "goal": course.get("goal") or "",
                 "status": course.get("status") or "draft",
+                "session_id": course.get("session_id"),
                 "lesson_count": len(lessons),
                 "completed_count": len(completed),
                 "last_lesson": last_lesson,

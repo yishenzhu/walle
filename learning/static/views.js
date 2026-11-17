@@ -88,6 +88,9 @@
     const title = container.querySelector("#course-title");
     const progressText = container.querySelector("#course-progress-text");
     const progressFill = container.querySelector("#course-progress-fill");
+    const statusBox = container.querySelector("#course-status");
+    const statusText = container.querySelector("#course-status-text");
+    const startButton = container.querySelector("#course-start");
     const lessonPicker = container.querySelector("#lesson-picker");
     const lessonTrigger = container.querySelector("#lesson-trigger");
     const lessonTriggerLabel = container.querySelector("#lesson-trigger-label");
@@ -391,6 +394,49 @@
       completeButton.textContent = lesson.completed ? "已完成 ✓" : "标记完成";
     }
 
+    const STATUS_TEXT = {
+      draft: "草稿",
+      awaiting_outline: "等待确认大纲",
+      generating: "生成中",
+      paused: "已暂停",
+      done: "已完成",
+    };
+
+    function updateStatusUI() {
+      const course = state.course;
+      const status = (course && course.status) || "";
+      if (!status || status === "done") {
+        statusBox.hidden = true;
+        startButton.hidden = true;
+        return;
+      }
+      statusBox.hidden = false;
+      statusText.textContent = STATUS_TEXT[status] || status;
+      statusText.dataset.status = status;
+      const resumable = status === "awaiting_outline" || status === "paused";
+      startButton.hidden = !resumable;
+      startButton.textContent =
+        status === "paused" ? "继续生成" : "确认大纲，开始生成";
+      startButton.title = (course.driver && course.driver.last_error) || "";
+    }
+
+    async function startGeneration() {
+      startButton.disabled = true;
+      try {
+        const response = await fetch(
+          `/api/courses/${encodeURIComponent(state.courseId)}/start`,
+          { method: "POST" },
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        state.course.status = "generating";
+        updateStatusUI();
+      } catch (err) {
+        startButton.title = `启动失败：${err.message}`;
+      } finally {
+        startButton.disabled = false;
+      }
+    }
+
     function updateProgressUI() {
       const lessons = state.course?.lessons || [];
       const total = lessons.length;
@@ -404,6 +450,7 @@
         : "";
       progressFill.style.width = total ? `${(completed / total) * 100}%` : "0%";
       updateCompleteButton();
+      updateStatusUI();
     }
 
     function updateActions() {
@@ -802,6 +849,7 @@
       setPanel("chat");
       onContinueLesson(canvasPrompt(currentLesson()));
     });
+    startButton.addEventListener("click", startGeneration);
     prev.addEventListener("click", () => {
       const lessons = state.course?.lessons || [];
       const index = lessons.findIndex((item) => item.id === state.lessonId);
@@ -853,6 +901,10 @@
             <div class="course-progress">
               <span id="course-progress-text" class="course-progress-text"></span>
               <span class="course-progress-track"><i id="course-progress-fill"></i></span>
+            </div>
+            <div id="course-status" class="course-status" hidden>
+              <span id="course-status-text" class="course-badge"></span>
+              <button id="course-start" class="course-start" type="button" hidden>开始生成</button>
             </div>
           </div>
           <div id="lesson-picker" class="lesson-picker">

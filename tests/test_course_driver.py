@@ -45,8 +45,11 @@ def root(tmp_path):
     return tmp_path / "courses"
 
 
-def make_course(root, lessons=("第一课", "第二课")):
-    return store.create_course("测试课程", lessons=list(lessons), root=root)
+def make_course(root, lessons=("第一课", "第二课"), session_id="s1"):
+    course = store.create_course("测试课程", lessons=list(lessons), root=root)
+    course["session_id"] = session_id
+    store.save_course(course, root)
+    return course
 
 
 async def write_next(course_id, root):
@@ -117,6 +120,18 @@ async def test_scan_resumes_restarted_course(root):
 
     assert store.load_course(course["id"], root)["status"] == "done"
     assert len(scheduler.prompts) == 1
+
+
+async def test_scan_skips_other_sessions_course(root):
+    course = make_course(root, lessons=("第一课",), session_id="other")
+
+    scheduler = FakeScheduler(lambda: None)
+    driver = CourseDriver(scheduler, "s1", root=root)
+
+    await driver.scan()
+
+    assert scheduler.prompts == []
+    assert store.load_course(course["id"], root)["status"] == "generating"
 
 
 async def test_scan_does_not_resume_failed_course(root):
