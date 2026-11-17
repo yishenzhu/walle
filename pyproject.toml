@@ -21,6 +21,7 @@ dependencies = [
     # Web 通道运行期依赖
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "websockets>=12",
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",

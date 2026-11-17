@@ -90,7 +90,9 @@ cmd_auth() {
     docker compose build caddy >/dev/null
     hash=$(docker compose run --rm --no-deps --entrypoint caddy caddy \
         hash-password --plaintext "$password" | tr -d '\r')
-    printf 'WALLE_AUTH_USER=%s\nWALLE_AUTH_HASH=%s\n' "$user" "$hash"
+    # Compose 会对 .env 做插值，$ 需写成 $$ 才是字面量
+    escaped=$(printf '%s' "$hash" | sed 's/\$/$$/g')
+    printf 'WALLE_AUTH_USER=%s\nWALLE_AUTH_HASH=%s\n' "$user" "$escaped"
 }
 
 case "${1:-}" in
