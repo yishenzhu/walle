@@ -132,6 +132,7 @@
       background: rgba(4, 8, 14, .66);
     }
     .modal[hidden] { display: none; }
+    .model-error { color: #f87171; font-size: 12px; line-height: 1.5; }
     .modal-card {
       width: min(680px, 100%); max-height: min(82vh, 720px); overflow: auto;
       padding: 16px; background: var(--panel);
@@ -777,6 +778,7 @@
           autocomplete="off" spellcheck="false">
         <input id="model-name" type="text" placeholder="gpt-4o-mini"
           autocomplete="off" spellcheck="false">
+        <div id="model-error" class="model-error" hidden></div>
         <div style="display: flex; gap: 8px;">
           <button class="primary" type="submit">保存</button>
           <button id="model-clear" class="ghost" type="button">清除</button>
@@ -831,6 +833,7 @@
     const modelApiKey = document.getElementById("model-api-key");
     const modelName = document.getElementById("model-name");
     const modelClear = document.getElementById("model-clear");
+    const modelError = document.getElementById("model-error");
     const agentModeButton = document.getElementById("agent-mode");
     const workspaceModal = document.getElementById("workspace-modal");
     const workspaceClose = document.getElementById("workspace-close");
@@ -1880,6 +1883,7 @@
       modelBaseUrl.value = cfg ? cfg.base_url : "";
       modelApiKey.value = cfg ? cfg.api_key : "";
       modelName.value = cfg ? cfg.model : "";
+      modelError.hidden = true;
       modelModal.hidden = false;
     }
 
@@ -1932,12 +1936,24 @@
         api_key: modelApiKey.value.trim(),
         model: modelName.value.trim(),
       };
-      if (!cfg.base_url || !cfg.api_key || !cfg.model) {
-        note("模型配置需要 base_url、api_key、model 三项", true);
+      const missing = [
+        [cfg.base_url, modelBaseUrl],
+        [cfg.api_key, modelApiKey],
+        [cfg.model, modelName],
+      ].find(([value]) => !value);
+      if (missing) {
+        modelError.textContent = "base_url、api_key、model 三项都要填";
+        modelError.hidden = false;
+        missing[1].focus();
         return;
       }
       localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(cfg));
-      if (conversation.isOpen) conversation.setModel(cfg);
+      modelError.hidden = true;
+      try {
+        if (conversation.isOpen) conversation.setModel(cfg);
+      } catch (err) {
+        console.error(err);
+      }
       setModelLabel();
       closeModelModal();
     });
