@@ -847,7 +847,12 @@
       store: conversationStore,
       onMessage: handle,
       onStatus: (text, cls) => setStatus(text, cls),
-      onOpen: () => updateComposer(),
+      onOpen: () => {
+        updateComposer();
+        // 连接（含重连）后立即下发模型配置：下一轮生效，无需额外接口
+        const cfg = readModelConfig();
+        if (cfg) conversation.setModel(cfg);
+      },
       onBeforeConnect: () => resetChat(),
       onSessionChange: (cwd, sessionId) => {
         workspaceState.cwd = cwd || "";
@@ -1869,24 +1874,6 @@
       modelButton.title = cfg ? cfg.base_url : "配置模型（BYOK）";
     }
 
-    async function pushModelConfig(sessionId) {
-      const cfg = readModelConfig();
-      if (!cfg) return true;
-      try {
-        const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/model`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(cfg),
-        });
-        if (res.ok) return true;
-        const detail = await res.json().catch(() => ({}));
-        note("模型配置未生效：" + (detail.detail || res.status), true);
-        return false;
-      } catch (err) {
-        note("模型配置发送失败：" + err.message, true);
-        return false;
-      }
-    }
 
     function openModelModal() {
       const cfg = readModelConfig();
@@ -1900,9 +1887,8 @@
       modelModal.hidden = true;
     }
 
-    async function connect(cwd, sessionId, attach) {
+    function connect(cwd, sessionId, attach) {
       const targetSession = sessionId || newSessionId();
-      if (!(await pushModelConfig(targetSession))) return;
       conversation.connect(cwd, targetSession, attach);
     }
 

@@ -315,69 +315,6 @@ class TestSessionCommandDispatch:
             await s.close()
 
 
-class TestSessionModelConfig:
-    """客户端随握手提供模型配置 → 会话级 provider（可指向不同端点）。"""
-
-    class Conn:
-        def __init__(self, session_id, model=None):
-            self.session_id = session_id
-            self.cwd = None
-            self.model = model
-            self.agent = None
-
-    def _manager(self, tmp_path):
-        return SessionManager(
-            storage="memory",
-            path=str(tmp_path / "s.db"),
-        )
-
-    async def test_conn_model_creates_session_provider(self, tmp_path):
-        manager = self._manager(tmp_path)
-        cfg = ModelConfig(
-            api_key="sk-a", base_url="https://a.example/v1", model="model-a"
-        )
-        s = manager.create(self.Conn("cfg-1", cfg))
-        try:
-            p = s.context.provider
-            assert p is not None
-            assert p.model == "model-a"
-            # 客户端配置优先于进程默认 provider
-            assert p is not manager._provider
-        finally:
-            await s.close()
-
-    async def test_no_conn_model_uses_default(self, tmp_path):
-        manager = self._manager(tmp_path)
-        s = manager.create(self.Conn("cfg-2"))
-        try:
-            assert s.context.provider is manager._provider
-        finally:
-            await s.close()
-
-    async def test_sessions_isolated_providers(self, tmp_path):
-        """两个会话各自的模型配置互不影响。"""
-        manager = self._manager(tmp_path)
-        s1 = manager.create(
-            self.Conn(
-                "iso-1",
-                ModelConfig(api_key="k1", base_url="https://a/v1", model="m1"),
-            )
-        )
-        s2 = manager.create(
-            self.Conn(
-                "iso-2",
-                ModelConfig(api_key="k2", base_url="https://b/v1", model="m2"),
-            )
-        )
-        try:
-            assert s1.context.provider.model == "m1"
-            assert s2.context.provider.model == "m2"
-            assert s1.context.provider is not s2.context.provider
-        finally:
-            await s1.close()
-            await s2.close()
-
-
 class TestSessionStreamForward:
     """Runner 只发事件，channel 插件把 MESSAGE_DELTA/END 转成客户端通知。"""
 

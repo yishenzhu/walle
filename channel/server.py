@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from ..infra.upstream import validate_upstream
 from ..spec import (
     DeltaEnd,
     Error,
@@ -40,14 +41,12 @@ class SessionConn:
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
         cwd: str | None = None,
-        model: ModelConfig | None = None,
         agent: str | None = None,
         call_timeout: float | None = CALL_TIMEOUT,
         link: JSONLineConn | None = None,
     ) -> None:
         self.session_id = session_id
         self.cwd = cwd  # 客户端工作目录（会话 bash 执行位置 / 沙箱可写区）
-        self.model = model  # 客户端模型配置（会话级 provider；None = 进程默认）
         self.agent = agent  # 客户端指定 agent 名（None = default）
         self._link = link or JSONLineConn(reader, writer)
         self._pending: dict[str, asyncio.Future] = {}
@@ -295,7 +294,6 @@ class SessionServer:
             reader,
             writer,
             cwd=msg.get("cwd"),
-            model=self._model_config(msg),
             agent=msg.get("agent") or None,
             call_timeout=self._call_timeout(msg),
             link=link,
@@ -309,10 +307,6 @@ class SessionServer:
                     )
                 )
                 return None
-            # attach 时客户端带了模型配置：补上/替换会话 provider，
-            # 否则先建会话后配 BYOK 的场景会一直沿用默认（可能为 None）。
-            if conn.model is not None:
-                session.set_provider(self._sessions.provider_for(conn.model))
             # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
             await conn._send(await self._welcome_frame(session))
             old = session.transport
@@ -360,12 +354,19 @@ class SessionServer:
         elif kind == Frame.SESSION_SET_AGENT:
             session.set_agent(str(frame.get("agent") or "default"))
         elif kind == Frame.SESSION_SET_MODEL:
-            # 会话中途切换模型：下一轮生效；model 为 null 时回落到进程默认
+            # 连接建立/切换模型：下一轮生效；model 为 null 时回落到进程默认
             raw = frame.get("model")
-            cfg = None if raw is None else self._model_config(frame)
-            if raw is not None and cfg is None:
-                raise ValueError("session.set_model requires a valid model config")
-            session.set_provider(self._sessions.provider_for(cfg))
+            if raw is None:
+                session.set_provider(self._sessions.provider_for(None))
+            else:
+                try:
+                    cfg = ModelConfig.model_validate(raw)
+                except Exception as exc:
+                    raise ValueError(
+                        "session.set_model requires a valid model config"
+                    ) from exc
+                await validate_upstream(cfg.base_url)
+                session.set_provider(self._sessions.provider_for(cfg))
         elif kind == Frame.SESSION_SET_METADATA:
             values = frame.get("values")
             if not isinstance(values, dict):
@@ -388,14 +389,3 @@ class SessionServer:
             logger.warning(f"ignoring invalid call_timeout: {raw}")
             return CALL_TIMEOUT
 
-    @staticmethod
-    def _model_config(msg: dict) -> ModelConfig | None:
-        """客户端模型配置（可选；非法/缺失回退进程默认 provider）。"""
-        raw = msg.get("model")
-        if not isinstance(raw, dict):
-            return None
-        try:
-            return ModelConfig.model_validate(raw)
-        except Exception:
-            logger.warning("ignoring invalid model config (fields invalid or missing)")
-            return None

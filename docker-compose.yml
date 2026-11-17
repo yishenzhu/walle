@@ -19,6 +19,7 @@ services:
       WALLE_LOG_STDOUT: "0"
       WALLE_AUDIT: "1"
       WALLE_BIND_HOST: "0.0.0.0"
+      WALLE_ALLOW_PRIVATE_UPSTREAM: "${WALLE_ALLOW_PRIVATE_UPSTREAM:-0}"
       HOME: /tmp
     volumes:
       - walle-home:/var/lib/walle
@@ -61,7 +62,6 @@ services:
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_AGENT_HOST: agent
-      WALLE_ALLOW_PRIVATE_UPSTREAM: "${WALLE_ALLOW_PRIVATE_UPSTREAM:-0}"
       HOME: /tmp
     volumes:
       - walle-home:/var/lib/walle

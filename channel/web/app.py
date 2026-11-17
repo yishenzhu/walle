@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
-import os
 import re
-import socket
-import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -19,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ...conf import CANVAS_ROOT
 from ...plugin import PluginHost
-from ...spec import SAFE_ID, ModelConfig, WebService
+from ...spec import SAFE_ID, WebService
 from ..frames import ErrorCode, Frame
 from ..transport import CONNECT_HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 from .plugins import discover_web_plugins
@@ -29,70 +24,6 @@ app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
 STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
-
-# 会话级模型配置：内存暂存，握手后即丢弃，不落盘、不写日志。
-PENDING_MODELS: dict[str, tuple[float, dict]] = {}
-MODEL_TTL = 300.0
-
-
-def allow_private_upstream() -> bool:
-    return os.getenv("WALLE_ALLOW_PRIVATE_UPSTREAM", "0").lower() in ("1", "true", "yes", "on")
-
-
-def private_host(host: str) -> bool:
-    """解析主机名并判断是否指向内网/回环/链路本地地址。"""
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return True
-    for info in infos:
-        try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return True
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-        ):
-            return True
-    return False
-
-
-async def validate_upstream(base_url: str) -> None:
-    parts = urlsplit(base_url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise HTTPException(400, "base_url 必须是 http(s) 地址")
-    if allow_private_upstream():
-        return
-    if await asyncio.to_thread(private_host, parts.hostname):
-        raise HTTPException(400, "base_url 指向内网地址，未启用 WALLE_ALLOW_PRIVATE_UPSTREAM")
-
-
-def pending_model(session_id: str) -> dict | None:
-    now = time.monotonic()
-    for key, (born, _) in list(PENDING_MODELS.items()):
-        if now - born > MODEL_TTL:
-            PENDING_MODELS.pop(key, None)
-    entry = PENDING_MODELS.get(session_id)
-    return entry[1] if entry else None
-
-
-@app.post("/api/session/{session_id}/model")
-async def register_model(session_id: str, payload: dict) -> dict[str, str]:
-    """登记会话级模型配置：只在内存保留到握手，用于 BYOK。"""
-    if not SAFE_ID.fullmatch(session_id):
-        raise HTTPException(400, "会话 id 非法")
-    try:
-        cfg = ModelConfig.model_validate(payload)
-    except Exception:
-        raise HTTPException(400, "api_key / base_url / model 都必须是非空字符串") from None
-    await validate_upstream(cfg.base_url)
-    PENDING_MODELS[session_id] = (time.monotonic(), cfg.model_dump())
-    return {"status": "ok"}
-
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
@@ -302,7 +233,6 @@ async def chat(
         hello = {
             "type": Frame.HELLO,
             "session_id": session_id,
-            "model": pending_model(session_id),
             "attach": attach,
             "cwd": str(working_dir),
             "agent": agent,
@@ -331,7 +261,6 @@ async def chat(
                 return
             link, welcome = opened
 
-        PENDING_MODELS.pop(session_id, None)
         if welcome is None:
             await ws.send_json({"type": Frame.ERROR, "message": "agent 未响应"})
             return

@@ -20,7 +20,6 @@ class SessionSpec(BaseModel):
 
     session_id: str
     cwd: str | None  # 客户端工作目录（bash 执行 / 沙箱可写区基准）
-    model: ModelConfig | None  # 模型接入配置（None = 用默认）
     agent: str | None = None  # agent 名（None = default）；创建会话时按名加载
 
 

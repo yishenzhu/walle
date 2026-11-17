@@ -254,9 +254,11 @@ WALLE_SITE=walle.example.com ./scripts/deploy.sh up
 用户可以用自己的 OpenAI 兼容端点，不需要服务端持有密钥：
 
 1. 顶栏「模型」→ 填 `base_url` / `api_key` / `model`，只存在浏览器 `localStorage`
-2. 建立连接前，前端把配置 `POST /api/session/{id}/model`（JSON body，不走 URL）
-3. web 在内存暂存 5 分钟，握手时放进 hello，agent 用**会话级 provider**
-4. 握手完成即从内存删除，不落盘、不写日志
+2. 连接建立后，前端把配置作为**首帧** `session.set_model` 下发（走 WebSocket，不进 URL）
+3. agent 校验后替换**会话级 provider**，下一轮生效
+4. 只有连接和切换时传一次，不落盘、不写日志
+
+HTTP 侧没有额外接口：模型配置只有 `session.set_model` 这一条路径。
 
 所以 `base_url` 可以填 OpenAI、DeepSeek、Kimi、Ollama、vLLM 等任意兼容端点。
 

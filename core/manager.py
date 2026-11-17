@@ -52,7 +52,7 @@ class SessionManager:
             timeout=self._timeout,
             plugins=plugins,
             plugin_configs=self._plugin_configs,
-            provider=self._provider_for(conn),
+            provider=self._provider,
             cwd=conn.cwd,  # 客户端工作目录（连接握手携带）
             agent=conn.agent,  # 客户端指定 agent（None = default）
         )
@@ -69,10 +69,6 @@ class SessionManager:
             base_url=cfg.base_url,
             model=cfg.model,
         )
-
-    def _provider_for(self, conn: SessionInit) -> LLM | None:
-        """客户端带模型配置时新建会话级 provider，否则沿用进程默认。"""
-        return self.provider_for(conn.model)
 
     def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
         """从插件声明池按名单挑选（默认全部）。"""

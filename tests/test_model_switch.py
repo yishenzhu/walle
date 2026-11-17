@@ -7,7 +7,7 @@ import pytest
 from ..channel.frames import Frame
 from ..channel.server import SessionServer
 
-CFG = {"api_key": "k", "base_url": "https://api.example.com/v1", "model": "m2"}
+CFG = {"api_key": "k", "base_url": "https://8.8.8.8/v1", "model": "m2"}
 
 
 class FakeSessions:
@@ -56,3 +56,30 @@ async def test_set_model_rejects_invalid_config():
             "s1",
             {"type": Frame.SESSION_SET_MODEL, "model": {"api_key": "k"}},
         )
+
+
+class TestUpstreamValidation:
+    async def test_rejects_private(self, monkeypatch):
+        from ..infra.upstream import validate_upstream
+
+        monkeypatch.delenv("WALLE_ALLOW_PRIVATE_UPSTREAM", raising=False)
+        with pytest.raises(ValueError, match="内网"):
+            await validate_upstream("http://127.0.0.1:11434/v1")
+
+    async def test_rejects_bad_scheme(self):
+        from ..infra.upstream import validate_upstream
+
+        with pytest.raises(ValueError, match="http"):
+            await validate_upstream("ftp://8.8.8.8/v1")
+
+    async def test_allows_public(self, monkeypatch):
+        from ..infra.upstream import validate_upstream
+
+        monkeypatch.delenv("WALLE_ALLOW_PRIVATE_UPSTREAM", raising=False)
+        await validate_upstream("https://8.8.8.8/v1")
+
+    async def test_allow_private_env(self, monkeypatch):
+        from ..infra.upstream import validate_upstream
+
+        monkeypatch.setenv("WALLE_ALLOW_PRIVATE_UPSTREAM", "1")
+        await validate_upstream("http://127.0.0.1:11434/v1")
