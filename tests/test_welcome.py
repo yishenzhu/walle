@@ -19,6 +19,7 @@ class FakeSession:
     def __init__(self, state: str):
         self.id = "s1"
         self.state = state
+        self.seq = 7
 
     async def conversation_history(self):
         return [FakeMessage()]
@@ -27,6 +28,7 @@ class FakeSession:
 async def test_welcome_reports_running():
     frame = await SessionServer(FakeSessions())._welcome_frame(FakeSession("running"))
     assert frame["running"] is True
+    assert frame["seq"] == 7
     assert frame["history"][0]["role"] == "user"
 
 

@@ -176,6 +176,11 @@ class Session:
         return self._provider is not None
 
     @property
+    def seq(self) -> int:
+        """通知序号（握手里回给客户端，便于判断回放边界）。"""
+        return self._link.seq
+
+    @property
     def last_error(self) -> str | None:
         """最近一次 run 的失败原因；成功开始时清空。"""
         return self._last_error
@@ -260,9 +265,9 @@ class Session:
         """向当前连接发起交互；断连时等待重连，连接失败则重试。"""
         return await self._link.call(request)
 
-    async def replay(self, transport: Channel) -> None:
+    async def replay(self, transport: Channel, last_seq: int | None = None) -> None:
         """把当前 turn 尚未确认的通知补发给新连接。"""
-        await self._link.replay(transport)
+        await self._link.replay(transport, last_seq)
 
     async def _on_turn_end(self, _evt: TurnEndEvent) -> None:
         """一个 turn 已落库，清掉该 turn 的实时通知缓冲。"""

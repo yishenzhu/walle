@@ -6,8 +6,9 @@ import asyncio
 
 from ..spec import Channel, NotificationUnion, RequestUnion
 
-# 断连期间的补发缓冲上限：无人连接时会累积大量 delta，只保留最近一批
-PENDING_LIMIT = 200
+# 断连补发缓冲：按条数和字符数双上限，长时间 turn 也不至于丢开头
+BUFFER_LIMIT = 2000
+BUFFER_CHARS = 256 * 1024
 
 
 class SessionClosedError(RuntimeError):
@@ -23,7 +24,10 @@ class SessionLink:
         self._attached = asyncio.Event()
         if transport is not None:
             self._attached.set()
-        self._pending: list[NotificationUnion] = []
+        # (seq, notification)：seq 单调递增，供重连按断点回放
+        self._pending: list[tuple[int, NotificationUnion]] = []
+        self._pending_chars = 0
+        self._seq = 0
         self._replaying = False
         self._closed = False
 
@@ -35,11 +39,22 @@ class SessionLink:
     def attached(self) -> bool:
         return self._transport is not None
 
+    @property
+    def seq(self) -> int:
+        """已发出的最后一条通知序号。"""
+        return self._seq
+
     async def notify(self, notification: NotificationUnion) -> None:
         """缓冲当前 turn 的通知并推给当前 transport。"""
-        self._pending.append(notification)
-        if len(self._pending) > PENDING_LIMIT:
-            del self._pending[: PENDING_LIMIT // 2]
+        self._seq += 1
+        size = len(repr(notification))
+        self._pending.append((self._seq, notification))
+        self._pending_chars += size
+        while self._pending and (
+            len(self._pending) > BUFFER_LIMIT or self._pending_chars > BUFFER_CHARS
+        ):
+            _, dropped = self._pending.pop(0)
+            self._pending_chars -= len(repr(dropped))
         if self._replaying:
             return
         if self._transport is not None:
@@ -61,17 +76,21 @@ class SessionLink:
                         self._attached.clear()
             await self._attached.wait()
 
-    async def replay(self, transport: Channel) -> None:
-        """把当前 turn 尚未确认的通知补发给新连接。"""
+    async def replay(self, transport: Channel, last_seq: int | None = None) -> None:
+        """补发断连期间的通知；给了 last_seq 就只发它之后的部分。"""
         pending, self._pending = self._pending, []
+        self._pending_chars = 0
         self._replaying = True
         try:
-            for notification in pending:
+            for seq, notification in pending:
+                if last_seq is not None and seq <= last_seq:
+                    continue
                 await transport.notify(notification)
         finally:
             self._replaying = False
             rest, self._pending = self._pending, []
-            for notification in rest:
+            self._pending_chars = 0
+            for _, notification in rest:
                 await transport.notify(notification)
 
     def attach(self, transport: Channel) -> None:
@@ -92,6 +111,7 @@ class SessionLink:
     def clear_pending(self) -> None:
         """清掉当前 turn 的实时通知缓冲。"""
         self._pending.clear()
+        self._pending_chars = 0
 
     def close(self) -> None:
         """会话销毁：唤醒等待重连的调用方。"""

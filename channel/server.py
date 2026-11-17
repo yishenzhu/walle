@@ -204,6 +204,8 @@ class SessionServer:
             "history": await self._client_history(session),
             # 客户端据此区分「还在跑」和「上一轮已中断」
             "running": session.state == "running",
+            # 通知序号：客户端据此判断自己是否漏帧
+            "seq": session.seq,
         }
 
     async def _client_history(self, session) -> list[dict]:
@@ -366,8 +368,9 @@ class SessionServer:
             await conn._send(await self._welcome_frame(session))
             old = session.transport
             session.attach(conn)
-            # 先补发旧 turn 的通知，再通知旧连接退出
-            await session.replay(conn)
+            # 先补发旧 turn 的通知，再通知旧连接退出；
+            # last_seq 是客户端已收到的最后一条，缺省则整段重放
+            await session.replay(conn, msg.get("last_seq"))
             if isinstance(old, SessionConn) and old is not conn:
                 await old.notify(
                     Error(
