@@ -1,6 +1,4 @@
 {$WALLE_SITE::80} {
-	import /tmp/auth.caddy
-
 	rate_limit {
 		zone per_ip {
 			key    {remote_host}

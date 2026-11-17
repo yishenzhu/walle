@@ -236,7 +236,7 @@ cp .env.example .env          # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MO
 | `agent` | 会话服务（JSON-line TCP） | 8899（仅集群内） |
 | `web` | FastAPI + WebSocket 前端 | 127.0.0.1:8080（仅本机） |
 | `logs` | Fluent Bit 边车 | 无 |
-| `caddy` | 反向代理 / TLS / 压缩 / 认证 / 限流 | 80 / 443（对外） |
+| `caddy` | 反向代理 / TLS / 压缩 / 限流 | 80 / 443（对外） |
 | `backup` | 定时打包数据卷 | 无 |
 
 对外只暴露 Caddy，web 只监听本机回环，避免绕过代理直接访问。
@@ -266,47 +266,6 @@ WALLE_SITE=walle.example.com ./scripts/deploy.sh up
   `WALLE_ALLOW_PRIVATE_UPSTREAM=1`
 - 密钥只在 HTTPS 下传输（Caddy 终结 TLS）
 - 配置只对新会话生效；已有会话沿用内存里的 provider
-
-### 访问控制
-
-```bash
-./scripts/deploy.sh auth admin '你的密码'   # 输出两行，追加到 .env
-docker compose up -d caddy
-```
-
-设置 `WALLE_AUTH_HASH` 后启用 HTTP Basic 认证，不设则不启用。
-密码只保存 bcrypt 摘要，`.env` 里不要提交明文。
-
-限流在 Caddy 层按客户端 IP 计数，默认 120 次/分钟，超限返回 `429` 并带
-`Retry-After`：
-
-```bash
-WALLE_RATE_EVENTS=60
-WALLE_RATE_WINDOW=1m
-```
-
-计数在唯一的 Caddy 实例内，所以 `web` 扩容不影响限额准确性；多 Caddy 场景
-可以打开插件的 `distributed` 模式共享计数。
-
-> Caddy 标准镜像不含限流模块，`deploy/Dockerfile.caddy` 用 `xcaddy` 编译
-> `github.com/mholt/caddy-ratelimit` 后替换二进制，构建时通过 `goproxy.cn`
-> 拉取 Go 模块。CI 会同时构建应用镜像和这个 Caddy 镜像，main/tag 推送到 GHCR。
-
-环境变量：
-
-| 变量 | 作用 | 默认 |
-|---|---|---|
-| `WALLE_HOME` | 可写数据根目录（data / logs / .agent / conf.yaml） | 源码目录 |
-| `WALLE_TEMPLATES` | 默认 agents / skills / 配置模板 | 源码目录下 `templates/` |
-| `WALLE_INIT` | 入口脚本是否初始化 `WALLE_HOME` | `0`（compose 里 agent 设为 `1`） |
-| `WALLE_CONF` | 配置文件（相对路径按源码目录解析） | `$WALLE_HOME/conf.yaml` |
-| `WALLE_BIND_HOST` | agent 监听地址 | `127.0.0.1` |
-| `WALLE_AGENT_HOST` | web 连接 agent 的地址 | 同 `WALLE_BIND_HOST` |
-| `WALLE_AGENT_PORT` | agent 端口 | `8899` |
-| `WALLE_LOG_STDOUT` | 日志同时输出 stdout | 关 |
-| `WALLE_LOG_FILE` | 写 `logs/app.log` | 开 |
-| `WALLE_ACCESS_LOG` | HTTP 访问日志写 `logs/access.log` | 关（compose 里 web 设为 `1`） |
-| `WALLE_AUDIT` | 审批与工具执行写 `logs/audit.jsonl` | 开 |
 
 ### 日志流
 
