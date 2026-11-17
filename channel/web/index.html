@@ -150,6 +150,9 @@
       border: 1px solid var(--border); background: #0b0f14;
       color: var(--text); font-family: var(--mono); font-size: 12px;
     }
+    .workspace-form textarea {
+      height: 32px; min-height: 32px; line-height: 14px; resize: vertical;
+    }
     .workspace-recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
     .workspace-recent button { padding: 5px 9px; font-size: 12px; }
     .workspace-recent button.active { border-color: var(--accent); color: #cfe3ff; }
@@ -778,7 +781,7 @@
           autocomplete="off" spellcheck="false">
         <input id="model-name" type="text" placeholder="gpt-4o-mini"
           autocomplete="off" spellcheck="false">
-        <textarea id="model-headers" rows="2"
+        <textarea id="model-headers" rows="1"
           placeholder="额外请求头，每行一个 Name: Value（可选，如 x-opencode-session: 任意字符串）"
           spellcheck="false"></textarea>
         <div id="model-error" class="model-error" hidden></div>
