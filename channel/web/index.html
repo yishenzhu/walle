@@ -1121,7 +1121,7 @@
       scroll();
     }
 
-    function renderHistorySnapshot(items) {
+    function renderHistorySnapshot(items, running) {
       approvals.clear();
       tools.clear();
       prepareRow = null;
@@ -1131,6 +1131,11 @@
       log.replaceChildren(chatEmpty);
       chatEmpty.hidden = false;
       renderHistory(items);
+      const list = items || [];
+      const last = list[list.length - 1];
+      if (!running && last && last.role === "user") {
+        note("上一轮没有完成（连接中断或 agent 重启），可以重新发送", true);
+      }
       refreshPending();
       updateComposer();
     }
@@ -1809,7 +1814,7 @@
       }
       if (msg.type === "welcome") {
         setStatus("已连接", "on");
-        renderHistorySnapshot(msg.history);
+        renderHistorySnapshot(msg.history, msg.running);
         return;
       }
       if (msg.type === "error") {

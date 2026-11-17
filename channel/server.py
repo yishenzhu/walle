@@ -201,6 +201,8 @@ class SessionServer:
             "type": Frame.WELCOME,
             "session_id": session.id,
             "history": await self._client_history(session),
+            # 客户端据此区分「还在跑」和「上一轮已中断」
+            "running": session.state == "running",
         }
 
     async def _client_history(self, session) -> list[dict]:
