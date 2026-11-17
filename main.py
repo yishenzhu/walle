@@ -5,6 +5,8 @@ from .channel import SessionServer
 from .conf import Config
 from .core import SessionManager
 from .infra import OpenAIProvider, setup_logger, setup_telemetry
+from .infra.model_store import load_model
+from .learning.resume import resume_pending_courses
 from .learning.store import pause_stale_courses
 from .plugin import Plugin, discover, discover_packages
 from .tools import MCPManager, Sandbox
@@ -21,10 +23,12 @@ async def main() -> None:
     conf = Config.load()
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
-    # 上次进程没跑完的课程：标为暂停，等客户端重新下发模型后由驱动续跑
-    paused = pause_stale_courses()
-    if paused:
-        logger.info(f"courses paused after restart: {paused}")
+    # 服务端存了 key：重启后直接续跑；否则只能标暂停等客户端
+    saved_model = load_model()
+    if saved_model is None:
+        paused = pause_stale_courses()
+        if paused:
+            logger.info(f"courses paused after restart: {paused}")
     OpenAIProvider.load_env()
     # 进程默认模型：装配根构造一次并注入管理器（会话无自带 model 配置时沿用）
     provider = OpenAIProvider.get_default()
@@ -58,6 +62,12 @@ async def main() -> None:
         storage=conf.session.storage,
         path=conf.session.path,
     )
+    if saved_model is not None:
+        # 没有浏览器也要继续：先重建会话，驱动会立刻接手
+        resumed = await resume_pending_courses(sessions, saved_model)
+        if resumed:
+            logger.info(f"courses resumed after restart: {resumed}")
+
     server = SessionServer(sessions=sessions)
     await server.start()
 

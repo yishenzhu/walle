@@ -21,6 +21,11 @@ class Frame(StrEnum):
     WORKSPACES = "workspaces"
     LIST_SESSIONS = "list_sessions"
     SESSIONS = "sessions"
+    # 服务端模型配置（key 不落浏览器）
+    MODEL_GET = "model_get"
+    MODEL_SET = "model_set"
+    MODEL_CLEAR = "model_clear"
+    MODEL = "model"
     # 会话 / 运行控制
     INPUT_CREATE = "input.create"
     RUN_CANCEL = "run.cancel"
@@ -35,6 +40,7 @@ class ErrorCode(StrEnum):
     INVALID_CWD = "invalid_cwd"
     SESSION_NOT_FOUND = "session_not_found"
     SESSION_TAKEN_OVER = "session_taken_over"
+    INVALID_MODEL = "invalid_model"
 
 
 # 会话/运行控制帧的前缀：用于把控制类异常与普通断连区分开

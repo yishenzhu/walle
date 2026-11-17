@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ...conf import CANVAS_ROOT
+from ...infra.model_store import load_model
 from ...infra.upstream import upstream_headers, validate_upstream
 from ...plugin import PluginHost
 from ...spec import SAFE_ID, ModelConfig, WebService
@@ -30,8 +31,16 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 @app.post("/api/model/test")
 async def test_model(payload: dict) -> dict[str, str]:
     """用最小请求验证 base_url / api_key / model 是否可用。"""
+    raw = dict(payload)
+    stored = load_model()
+    if stored is not None:
+        # 前端不再回显 key：留空时用服务端存的那份测
+        if not raw.get("api_key"):
+            raw["api_key"] = stored.api_key
+        if "headers" not in raw:
+            raw["headers"] = stored.headers
     try:
-        cfg = ModelConfig.model_validate(payload)
+        cfg = ModelConfig.model_validate(raw)
     except Exception:
         raise HTTPException(400, "base_url / api_key / model 都需要填写") from None
     try:
@@ -57,6 +66,26 @@ async def test_model(payload: dict) -> dict[str, str]:
         detail = response.text.strip().replace("\n", " ")[:200]
         raise HTTPException(502, f"上游 {response.status_code}：{detail}")
     return {"status": "ok"}
+
+
+@app.get("/api/model")
+async def get_model() -> dict:
+    """读取服务端模型配置（不含 key 明文）。"""
+    reply = await query_agent({"type": "model_get"})
+    return {key: value for key, value in reply.items() if key != "type"}
+
+
+@app.put("/api/model")
+async def put_model(payload: dict) -> dict:
+    """保存模型配置：api_key 省略表示沿用已存的那份。"""
+    reply = await query_agent({"type": "model_set", "model": payload})
+    return {key: value for key, value in reply.items() if key != "type"}
+
+
+@app.delete("/api/model")
+async def delete_model() -> dict:
+    reply = await query_agent({"type": "model_clear"})
+    return {key: value for key, value in reply.items() if key != "type"}
 
 
 @app.get("/healthz")

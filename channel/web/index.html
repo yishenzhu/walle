@@ -860,10 +860,8 @@
       onMessage: handle,
       onStatus: (text, cls) => setStatus(text, cls),
       onOpen: () => {
+        // 模型由服务端在会话建立时自动补上，客户端不再下发
         updateComposer();
-        // 连接（含重连）后立即下发模型配置：下一轮生效，无需额外接口
-        const cfg = readModelConfig();
-        if (cfg) conversation.setModel(cfg);
       },
       onBeforeConnect: () => resetChat(),
       onSessionChange: (cwd, sessionId) => {
@@ -1872,11 +1870,13 @@
       }
     }
 
-    const MODEL_STORAGE_KEY = "walle.model";
+    // 模型配置存在服务端（WALLE_HOME/data/model.json），浏览器不再留 key 明文
+    const LEGACY_MODEL_KEY = "walle.model";
+    const modelState = { configured: false, base_url: "", model: "", key_tail: "", headers: [] };
 
-    function readModelConfig() {
+    function legacyModelConfig() {
       try {
-        const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+        const raw = localStorage.getItem(LEGACY_MODEL_KEY);
         if (!raw) return null;
         const cfg = JSON.parse(raw);
         if (!cfg || !cfg.api_key || !cfg.base_url || !cfg.model) return null;
@@ -1907,18 +1907,56 @@
     }
 
     function setModelLabel() {
-      const cfg = readModelConfig();
-      modelButton.textContent = cfg ? `模型 · ${cfg.model}` : "模型";
-      modelButton.title = cfg ? cfg.base_url : "配置模型（BYOK）";
+      modelButton.textContent = modelState.configured ? `模型 · ${modelState.model}` : "模型";
+      modelButton.title = modelState.configured
+        ? `${modelState.base_url}（已保存到服务端）`
+        : "配置模型（保存在服务端）";
     }
 
+    async function saveServerModel(payload) {
+      const res = await fetch("/api/model", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      Object.assign(modelState, { configured: true, key_tail: "", headers: [] }, data);
+      setModelLabel();
+      return modelState;
+    }
+
+    async function loadServerModel() {
+      try {
+        const data = await fetch("/api/model", { cache: "no-store" })
+          .then((res) => res.json())
+          .catch(() => ({}));
+        if (data && data.configured) {
+          Object.assign(modelState, data);
+        } else {
+          // 一次性迁移：把浏览器里的旧配置搬到服务端，再删掉本地明文
+          const legacy = legacyModelConfig();
+          if (legacy) await saveServerModel(legacy);
+          localStorage.removeItem(LEGACY_MODEL_KEY);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      setModelLabel();
+    }
 
     function openModelModal() {
-      const cfg = readModelConfig();
-      modelBaseUrl.value = cfg ? cfg.base_url : "";
-      modelApiKey.value = cfg ? cfg.api_key : "";
-      modelName.value = cfg ? cfg.model : "";
-      modelHeaders.value = cfg ? headerLines(cfg.headers) : "";
+      modelBaseUrl.value = modelState.configured ? modelState.base_url : "";
+      modelApiKey.value = "";
+      modelApiKey.placeholder = modelState.configured
+        ? `已保存（尾号 ${modelState.key_tail || "****"}，留空不修改）`
+        : "sk-...";
+      modelName.value = modelState.configured ? modelState.model : "";
+      modelHeaders.value = "";
+      modelHeaders.placeholder =
+        modelState.configured && modelState.headers.length
+          ? `已保存 ${modelState.headers.length} 个请求头（留空不修改）：${modelState.headers.join(", ")}`
+          : "额外请求头，每行一个 Name: Value（可选；opencode.ai 自动补会话头，其它端点可用 {{session_id}}）";
       modelError.hidden = true;
       modelModal.hidden = false;
     }
@@ -2006,9 +2044,16 @@
     modelModal.addEventListener("click", (event) => {
       if (event.target === modelModal) closeModelModal();
     });
-    modelClear.addEventListener("click", () => {
-      localStorage.removeItem(MODEL_STORAGE_KEY);
-      if (conversation.isOpen) conversation.setModel(null);
+    modelClear.addEventListener("click", async () => {
+      try {
+        await fetch("/api/model", { method: "DELETE" });
+      } catch (err) {
+        console.error(err);
+      }
+      Object.assign(modelState, {
+        configured: false, base_url: "", model: "", key_tail: "", headers: [],
+      });
+      localStorage.removeItem(LEGACY_MODEL_KEY);
       setModelLabel();
       closeModelModal();
     });
@@ -2051,34 +2096,47 @@
       }
     });
 
-    modelForm.addEventListener("submit", (event) => {
+    modelForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const cfg = {
+      const payload = {
         base_url: modelBaseUrl.value.trim(),
-        api_key: modelApiKey.value.trim(),
         model: modelName.value.trim(),
-        headers: parseHeaderLines(modelHeaders.value),
       };
+      const key = modelApiKey.value.trim();
+      if (key) payload.api_key = key;
+      const headerText = modelHeaders.value.trim();
+      if (headerText) payload.headers = parseHeaderLines(headerText);
+
       const missing = [
-        [cfg.base_url, modelBaseUrl],
-        [cfg.api_key, modelApiKey],
-        [cfg.model, modelName],
+        [payload.base_url, modelBaseUrl],
+        [payload.model, modelName],
       ].find(([value]) => !value);
       if (missing) {
-        modelError.textContent = "base_url、api_key、model 三项都要填";
+        modelError.textContent = "base_url、model 两项必填";
         modelError.hidden = false;
         missing[1].focus();
         return;
       }
-      localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(cfg));
-      modelError.hidden = true;
-      try {
-        if (conversation.isOpen) conversation.setModel(cfg);
-      } catch (err) {
-        console.error(err);
+      if (!key && !modelState.configured) {
+        modelError.textContent = "首次配置需要填写 api_key";
+        modelError.hidden = false;
+        modelApiKey.focus();
+        return;
       }
-      setModelLabel();
-      closeModelModal();
+
+      const submitButton = modelForm.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      try {
+        await saveServerModel(payload);
+        modelError.hidden = true;
+        closeModelModal();
+      } catch (err) {
+        modelError.style.color = "#f87171";
+        modelError.textContent = err.message;
+        modelError.hidden = false;
+      } finally {
+        submitButton.disabled = false;
+      }
     });
     agentModeButton.addEventListener("click", () => {
       applyAgentMode(agentMode ? "" : "learning", true);
@@ -2233,6 +2291,7 @@
     }
 
     setModelLabel();
+    loadServerModel();
     init();
     updateComposer();
     refreshPending();

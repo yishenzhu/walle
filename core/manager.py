@@ -61,6 +61,34 @@ class SessionManager:
         self.register(session)
         return session
 
+    def create_headless(
+        self,
+        session_id: str,
+        cwd: str | None,
+        agent: str | None = None,
+        provider: LLM | None = None,
+    ) -> Session:
+        """无连接会话：启动时为未完成课程重建，等客户端 attach 接管。"""
+        session = Session(
+            session_id=session_id,
+            history=build_history(self._storage, self._path, session_id, cwd),
+            runtime=SessionRuntime.build(),
+            timeout=self._timeout,
+            plugins=list(self._plugins),
+            plugin_configs=self._plugin_configs,
+            provider=provider or self._provider,
+            cwd=cwd,
+            agent=agent,
+        )
+        self.register(session)
+        return session
+
+    def apply_model(self, cfg: ModelConfig | None) -> int:
+        """把配置应用到全部在线会话；None 表示回落到进程默认。"""
+        for session in self._sessions.values():
+            session.set_provider(self.provider_for(cfg, session.id))
+        return len(self._sessions)
+
     def provider_for(self, cfg: ModelConfig | None, session_id: str = "") -> LLM | None:
         """按客户端模型配置构造 provider；None 表示沿用进程默认。"""
         if cfg is None:

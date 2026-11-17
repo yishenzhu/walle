@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from ..infra.model_store import clear_model, load_model, masked_model, save_model
 from ..infra.upstream import validate_upstream
 from ..spec import (
     DeltaEnd,
@@ -251,6 +252,18 @@ class SessionServer:
     async def _handle_browse(self, link: JSONLineConn, msg: dict) -> bool:
         """只读浏览帧：回元数据后由调用方关连接；返回是否已处理。"""
         kind = msg.get("type")
+        if kind == Frame.MODEL_GET:
+            await link.send({"type": Frame.MODEL, **masked_model()})
+            return True
+        if kind == Frame.MODEL_SET:
+            await self._save_model_frame(link, msg)
+            return True
+        if kind == Frame.MODEL_CLEAR:
+            clear_model()
+            self._sessions.apply_model(None)
+            logger.info("model config cleared")
+            await link.send({"type": Frame.MODEL, **masked_model()})
+            return True
         if kind == Frame.LIST_ACTIVE:
             await link.send(
                 {"type": Frame.ACTIVE_SESSIONS, "sessions": self._sessions.list()}
@@ -281,6 +294,46 @@ class SessionServer:
             )
             return True
         return False
+
+    async def _save_model_frame(self, link: JSONLineConn, msg: dict) -> None:
+        """保存模型配置：key 只进服务端文件，响应不回传明文。"""
+        raw = dict(msg.get("model") or {})
+        stored = load_model()
+        if stored is not None:
+            # 留空 = 不修改，避免前端每次都要重新输入 key
+            if not raw.get("api_key"):
+                raw["api_key"] = stored.api_key
+            if "headers" not in raw:
+                raw["headers"] = stored.headers
+        try:
+            cfg = ModelConfig.model_validate(raw)
+        except Exception:
+            await link.send(
+                _error_frame(
+                    ErrorCode.INVALID_MODEL,
+                    "模型配置不完整：base_url / api_key / model 都需要填写",
+                )
+            )
+            return
+        try:
+            await validate_upstream(cfg.base_url)
+        except ValueError as exc:
+            await link.send(_error_frame(ErrorCode.INVALID_MODEL, str(exc)))
+            return
+        save_model(cfg)
+        count = self._sessions.apply_model(cfg)
+        logger.info(f"model saved: {cfg.model} (applied to {count} sessions)")
+        await link.send({"type": Frame.MODEL, **masked_model()})
+
+    def _apply_saved_model(self, session) -> None:
+        """新会话/重连时补上服务端配置，客户端不必再下发。"""
+        if session.has_model:
+            return
+        cfg = load_model()
+        if cfg is None:
+            return
+        session.set_provider(self._sessions.provider_for(cfg, session.id))
+        logger.info(f"session model restored: {session.id} -> {cfg.model}")
 
     async def _open_session(
         self,
@@ -325,12 +378,14 @@ class SessionServer:
                 old.close()
             if conn.agent:
                 session.set_agent(conn.agent)
+            self._apply_saved_model(session)
             logger.info(f"channel client reattached: {session_id}")
             return session, conn
 
         # 新会话：sessions.create（按需激活指定插件）
         session = self._sessions.create(conn, msg.get("plugins"))
         await session.start()
+        self._apply_saved_model(session)
         await conn._send(await self._welcome_frame(session))
         logger.info(
             f"channel client connected: {session_id} agent={conn.agent or 'default'}"
