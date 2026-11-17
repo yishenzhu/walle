@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 
-from ..spec import Scheduler
+from ..spec import Scheduler, SessionView
 from .store import (
     lesson_file,
     list_courses,
@@ -19,6 +21,29 @@ logger = logging.getLogger(__name__)
 
 BACKOFF = (5.0, 15.0, 45.0)
 
+# 这些失败重试没有意义：密钥无效、无权限、模型不存在、上下文超限、配额耗尽
+FATAL = re.compile(
+    r"\b(400|401|403|404)\b"
+    r"|invalid.?_?api.?_?key|unauthoriz|authenticat|permission"
+    r"|insufficient.?_?quota|context.{0,12}(length|window)|model_not_found",
+    re.IGNORECASE,
+)
+
+
+def is_retryable(error: str | None) -> bool:
+    """上游失败是否值得退避重试；未知错误按可重试处理。"""
+    if not error:
+        return True
+    return FATAL.search(error) is None
+
+
+def course_tick() -> float:
+    return float(os.getenv("WALLE_COURSE_TICK", "60"))
+
+
+def course_stall() -> float:
+    return float(os.getenv("WALLE_COURSE_STALL", "900"))
+
 
 class CourseDriver:
     """按课程状态推进生成：空闲时提交「只写一课」的 run，写完再推进下一课。"""
@@ -27,16 +52,18 @@ class CourseDriver:
         self,
         scheduler: Scheduler,
         session_id: str,
+        view: SessionView | None = None,
         root=None,
-        tick: float = 60.0,
-        stall: float = 900.0,
+        tick: float | None = None,
+        stall: float | None = None,
         max_attempts: int = 3,
     ):
         self._scheduler = scheduler
         self._session_id = session_id
+        self._view = view
         self._root = root
-        self._tick = tick
-        self._stall = stall
+        self._tick = course_tick() if tick is None else tick
+        self._stall = course_stall() if stall is None else stall
         self._max_attempts = max_attempts
         self._task: asyncio.Task | None = None
 
@@ -71,7 +98,9 @@ class CourseDriver:
             if status == "paused":
                 if not self._resumable(course):
                     continue
-                course = mark_course(item["id"], "generating", root=self._root, last_error=None)
+                course = mark_course(
+                    item["id"], "generating", root=self._root, last_error=None
+                )
                 if course is None:
                     continue
             elif status != "generating":
@@ -114,8 +143,10 @@ class CourseDriver:
             if count:
                 await asyncio.sleep(BACKOFF[min(count - 1, len(BACKOFF) - 1)])
 
-            prompt = self._prompt(course, pending)
-            task = self._scheduler.submit_background(prompt)
+            # 每课一个干净窗口：模型只看到课程计划 + 本课要求，不背前几课全文
+            await self._reset_window()
+
+            task = self._scheduler.submit_background(self._prompt(course, pending))
             if task is None:
                 return  # 会话忙或已关闭，下一轮再试
 
@@ -133,17 +164,67 @@ class CourseDriver:
             except TimeoutError:
                 logger.warning(f"course lesson stalled: {course_id}/{lesson_id}")
                 task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+            if lesson_file(course_id, lesson_id, self._root).exists():
+                continue
+
+            error = self._scheduler.last_error
+            if not is_retryable(error):
+                mark_course(
+                    course_id,
+                    "paused",
+                    root=self._root,
+                    current=lesson_id,
+                    last_error=f"模型不可用，已停止：{(error or '')[:120]}",
+                )
+                logger.warning(f"course paused on fatal error: {course_id}: {error!r}")
+                return
+            logger.info(f"lesson retry {count + 1}/{self._max_attempts}: {lesson_id}")
+
+    async def _reset_window(self) -> None:
+        """把历史切到当前点：旧轮移出模型视野，原文仍在磁盘。"""
+        history = getattr(self._view, "history", None)
+        setter = getattr(history, "set_projection", None)
+        if setter is None:
+            return
+        try:
+            await setter(await history.count())
+        except Exception as exc:  # noqa: BLE001 - 切窗口失败不该中断生成
+            logger.warning(f"course window reset failed: {exc!r}")
 
     def _prompt(self, course: dict, lesson: dict) -> str:
         written, total = written_progress(course, self._root)
-        return (
-            f"只完成课程《{course.get('title')}》（course_id={course['id']}）的"
-            f"第 {lesson.get('order')} 课《{lesson.get('title')}》。\n"
-            "要求：正文（场景 / 可运行示例 / 1-3 个概念拆解 / 一个常见错误）"
-            "+ objective + 1-3 个 practice（含参考答案）+ assessment。\n"
-            "调用 write_lesson 成功后立即停止，不要开始下一课，也不要写长篇总结。\n"
-            f"当前进度：{written}/{total}。"
+        lines = [
+            f"课程《{course.get('title')}》（course_id={course['id']}），"
+            f"共 {total} 课，已写 {written} 课。"
+        ]
+        if course.get("goal"):
+            lines.append(f"目标：{course['goal']}")
+        outcomes = (course.get("outcome") or {}).get("can_do") or []
+        if outcomes:
+            lines.append("学完能做到：" + "；".join(outcomes))
+        lines.append("大纲：")
+        lessons = sorted(
+            course.get("lessons") or [], key=lambda item: item.get("order") or 0
         )
+        for item in lessons:
+            done = lesson_file(course["id"], item.get("id"), self._root).exists()
+            mark = "已完成" if done else ("本轮" if item["id"] == lesson["id"] else "待写")
+            lines.append(f"- [{mark}] {item.get('order')}. {item.get('title')}")
+        lines.extend(
+            [
+                "",
+                f"本轮只写第 {lesson.get('order')} 课《{lesson.get('title')}》"
+                f"（lesson_id={lesson['id']}）。",
+                "要求：正文（场景 / 可运行示例 / 1-3 个概念拆解 / 一个常见错误）"
+                "+ objective + 1-3 个 practice（含参考答案）+ assessment。",
+                "调用 write_lesson 成功后立即停止：不要重写已完成章节，"
+                "不要开始下一课，不要写长篇总结。",
+                "需要前文细节时调用 read_course，不要依赖对话历史。",
+            ]
+        )
+        return "\n".join(lines)
 
 
 def lesson_exists(course_id: str, lesson_id: str, root=None) -> bool:

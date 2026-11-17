@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 # 单轮模型调用上限：流式挂死或上游不响应时尽快失败，而不是一直转圈
 LLM_TIMEOUT = float(os.getenv("WALLE_LLM_TIMEOUT", "300"))
+# 首字上限：连接建立后长时间没有任何事件，视为上游挂死（300s 只兜住整轮）
+FIRST_EVENT_TIMEOUT = float(os.getenv("WALLE_LLM_FIRST_EVENT_TIMEOUT", "120"))
 
 DEFAULT_MAX_TURNS = 64
 
@@ -263,7 +265,19 @@ class Runner:
             async with provider.stream(
                 **self._request_params(agent, messages, tools)
             ) as stream:
-                async for event in stream:
+                events = stream.__aiter__()
+                first = True
+                while True:
+                    try:
+                        # 首字单独设限：连上了但一个字都不吐，比慢更可能已经死了
+                        if first:
+                            async with asyncio.timeout(FIRST_EVENT_TIMEOUT):
+                                event = await anext(events)
+                        else:
+                            event = await anext(events)
+                    except StopAsyncIteration:
+                        break
+                    first = False
                     if event.type == "content.delta":
                         await bus.emit(MessageDeltaEvent(delta=event.delta))
                     elif event.type == "tool_calls.function.arguments.delta":

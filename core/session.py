@@ -138,6 +138,8 @@ class Session:
         self._state = SessionState.IDLE  # 单写者状态机
         self._run_task: asyncio.Task | None = None
         self._cancel_reason: str | None = None
+        # 最近一次 run 的失败原因：调度器据此判断是否值得重试
+        self._last_error: str | None = None
 
     async def start(self) -> None:
         """启动插件运行时：注册会话服务，再执行内置插件与用户插件。"""
@@ -172,6 +174,11 @@ class Session:
     def has_model(self) -> bool:
         """会话是否已有可用模型（供调度器判断能否续跑）。"""
         return self._provider is not None
+
+    @property
+    def last_error(self) -> str | None:
+        """最近一次 run 的失败原因；成功开始时清空。"""
+        return self._last_error
 
     @property
     def context(self) -> SessionContext:
@@ -290,6 +297,7 @@ class Session:
         return self._start_run(content)
 
     def _start_run(self, content: str) -> asyncio.Task:
+        self._last_error = None
         self._link.clear_pending()
         self._state = SessionState.RUNNING
         self._cancel_reason = None
@@ -307,6 +315,7 @@ class Session:
             logger.info(f"run cancelled: {self.id} after {time.monotonic() - started:.1f}s")
             raise
         except Exception as exc:
+            self._last_error = f"{exc.__class__.__name__}: {exc}"
             logger.warning(
                 f"run failed: {self.id} after {time.monotonic() - started:.1f}s: {exc!r}"
             )

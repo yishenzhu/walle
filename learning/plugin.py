@@ -57,6 +57,7 @@ async def learning_plugin(ctx, config) -> None:
     driver = CourseDriver(
         scheduler=ctx.get(Scheduler),
         session_id=view.session_id or "",
+        view=view,
     )
     driver.start()
     ctx.effect(driver.stop)
