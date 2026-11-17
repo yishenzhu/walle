@@ -1,4 +1,15 @@
 {$WALLE_SITE::80} {
+	import /tmp/auth.caddy
+
+	rate_limit {
+		zone per_ip {
+			key    {remote_host}
+			events {$WALLE_RATE_EVENTS:120}
+			window {$WALLE_RATE_WINDOW:1m}
+		}
+		log_key
+	}
+
 	encode gzip zstd
 
 	header {

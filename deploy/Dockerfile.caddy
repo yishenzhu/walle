@@ -1,0 +1,6 @@
+FROM docker.m.daocloud.io/library/caddy:2.8-builder AS builder
+ENV GOPROXY=https://goproxy.cn,direct
+RUN xcaddy build v2.8.4 --with github.com/mholt/caddy-ratelimit
+
+FROM docker.m.daocloud.io/library/caddy:2.8-alpine
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

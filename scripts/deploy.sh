@@ -22,6 +22,7 @@ usage() {
   backup          打包数据卷到 backups/
   restore <文件>  用备份覆盖数据卷（需确认）
   upgrade         拉取代码后重新构建启动
+  auth <用户> <密码>  生成基础认证配置（追加到 .env）
 EOF
 }
 
@@ -83,6 +84,15 @@ cmd_upgrade() {
     docker image prune -f
 }
 
+cmd_auth() {
+    local user="${1:-admin}" password="${2:-}" hash
+    [ -n "$password" ] || die "用法: deploy.sh auth <用户名> <密码>"
+    docker compose build caddy >/dev/null
+    hash=$(docker compose run --rm --no-deps --entrypoint caddy caddy \
+        hash-password --plaintext "$password" | tr -d '\r')
+    printf 'WALLE_AUTH_USER=%s\nWALLE_AUTH_HASH=%s\n' "$user" "$hash"
+}
+
 case "${1:-}" in
     up) cmd_up ;;
     down) shift; docker compose down "$@" ;;
@@ -92,6 +102,7 @@ case "${1:-}" in
     backup) cmd_backup ;;
     restore) shift; cmd_restore "$@" ;;
     upgrade) cmd_upgrade ;;
+    auth) shift; cmd_auth "$@" ;;
     help | -h | --help) usage ;;
     *) usage; exit 1 ;;
 esac

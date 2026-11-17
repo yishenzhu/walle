@@ -248,6 +248,31 @@ WALLE_SITE=walle.example.com ./scripts/deploy.sh up
 服务都设了内存与 CPU 上限（agent 1g/1c、web 512m/0.5c、logs 256m/0.5c、caddy 128m/0.25c），
 按 2C4G 的小机器估算，可按需在 compose 里调整。
 
+### 访问控制
+
+```bash
+./scripts/deploy.sh auth admin '你的密码'   # 输出两行，追加到 .env
+docker compose up -d caddy
+```
+
+设置 `WALLE_AUTH_HASH` 后启用 HTTP Basic 认证，不设则不启用。
+密码只保存 bcrypt 摘要，`.env` 里不要提交明文。
+
+限流在 Caddy 层按客户端 IP 计数，默认 120 次/分钟，超限返回 `429` 并带
+`Retry-After`：
+
+```bash
+WALLE_RATE_EVENTS=60
+WALLE_RATE_WINDOW=1m
+```
+
+计数在唯一的 Caddy 实例内，所以 `web` 扩容不影响限额准确性；多 Caddy 场景
+可以打开插件的 `distributed` 模式共享计数。
+
+> Caddy 标准镜像不含限流模块，`deploy/Dockerfile.caddy` 用 `xcaddy` 编译
+> `github.com/mholt/caddy-ratelimit` 后替换二进制，构建时通过 `goproxy.cn`
+> 拉取 Go 模块。CI 会同时构建应用镜像和这个 Caddy 镜像，main/tag 推送到 GHCR。
+
 环境变量：
 
 | 变量 | 作用 | 默认 |
