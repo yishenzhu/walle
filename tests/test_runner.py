@@ -561,7 +561,7 @@ class TestRunnerNoProvider:
 
     async def test_raises_without_provider(self):
         agent = Agent(instruction="helpful")
-        with pytest.raises(RuntimeError, match="provider is required"):
+        with pytest.raises(RuntimeError, match="未配置模型"):
             await Runner().run(
                 agent,
                 "hi",

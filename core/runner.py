@@ -109,7 +109,7 @@ class Runner:
         provider = env.provider
         if provider is None:
             raise RuntimeError(
-                "SessionContext.provider is required - inject an LLM at assembly"
+                "未配置模型：请先在「模型」中填写 base_url / api_key / model"
             )
         history = env.history
         bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造（仅测试）
@@ -165,7 +165,8 @@ class Runner:
                 # 本轮工具执行完：拉起 background 写下的 pending 作业（后台异步跑）
                 await executor.launch_pending_jobs(tools)
 
-                usage = Usage.model_validate(completion.usage)
+                # 部分 OpenAI 兼容端点在流式模式下不返回 usage
+                usage = Usage.model_validate(completion.usage) if completion.usage else Usage()
                 message = AssistantMessage.from_response(message)
                 await history.add([message])
                 await history.add(

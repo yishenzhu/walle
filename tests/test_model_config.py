@@ -94,3 +94,10 @@ def test_hello_carries_model_config(monkeypatch):
 
     assert captured["model"] == PUBLIC
     assert web.pending_model("s2") is None
+
+
+def test_usage_defaults_to_zero():
+    from ..spec import Usage
+
+    usage = Usage()
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (0, 0, 0)
