@@ -7,6 +7,7 @@ from typing import Any
 
 from ..conf import TimeoutConfig
 from ..infra import OpenAIProvider
+from ..infra.upstream import upstream_headers
 from ..messages import build_history, list_sessions, list_workspaces
 from ..plugin import Plugin
 from ..spec import LLM, ModelConfig, SessionInit
@@ -60,7 +61,7 @@ class SessionManager:
         self.register(session)
         return session
 
-    def provider_for(self, cfg: ModelConfig | None) -> LLM | None:
+    def provider_for(self, cfg: ModelConfig | None, session_id: str = "") -> LLM | None:
         """按客户端模型配置构造 provider；None 表示沿用进程默认。"""
         if cfg is None:
             return self._provider
@@ -68,7 +69,7 @@ class SessionManager:
             api_key=cfg.api_key,
             base_url=cfg.base_url,
             model=cfg.model,
-            headers=cfg.headers,
+            headers=upstream_headers(cfg, session_id),
         )
 
     def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:

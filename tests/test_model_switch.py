@@ -11,7 +11,7 @@ CFG = {"api_key": "k", "base_url": "https://8.8.8.8/v1", "model": "m2"}
 
 
 class FakeSessions:
-    def provider_for(self, cfg):
+    def provider_for(self, cfg, session_id=""):
         return ("provider", cfg.model if cfg is not None else None)
 
 
@@ -90,3 +90,33 @@ class TestUpstreamValidation:
         monkeypatch.delenv("WALLE_ALLOW_PRIVATE_UPSTREAM", raising=False)
         with pytest.raises(ValueError, match="解析失败"):
             await validate_upstream("https://no-such-host.invalid/v1")
+
+
+class TestUpstreamHeaders:
+    def make(self, base_url, headers=None):
+        from ..spec import ModelConfig
+
+        return ModelConfig(
+            api_key="k", base_url=base_url, model="m", headers=headers or {}
+        )
+
+    def test_session_placeholder(self):
+        from ..infra.upstream import upstream_headers
+
+        cfg = self.make("https://api.example.com/v1", {"x-session": "{{session_id}}"})
+        assert upstream_headers(cfg, "s-123")["x-session"] == "s-123"
+
+    def test_opencode_auto_session(self):
+        from ..infra.upstream import upstream_headers
+
+        cfg = self.make("https://opencode.ai/inference/go/openai/v1")
+        assert upstream_headers(cfg, "web-abc")["x-opencode-session"] == "ses_web-abc"
+
+    def test_opencode_keeps_explicit(self):
+        from ..infra.upstream import upstream_headers
+
+        cfg = self.make(
+            "https://opencode.ai/inference/go/openai/v1",
+            {"x-opencode-session": "{{session_id}}"},
+        )
+        assert upstream_headers(cfg, "s1")["x-opencode-session"] == "s1"

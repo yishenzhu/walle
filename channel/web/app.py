@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ...conf import CANVAS_ROOT
-from ...infra.upstream import validate_upstream
+from ...infra.upstream import upstream_headers, validate_upstream
 from ...plugin import PluginHost
 from ...spec import SAFE_ID, ModelConfig, WebService
 from ..frames import ErrorCode, Frame
@@ -46,7 +46,7 @@ async def test_model(payload: dict) -> dict[str, str]:
         "max_tokens": 1,
         "stream": False,
     }
-    headers = {"Authorization": f"Bearer {cfg.api_key}", **(cfg.headers or {})}
+    headers = {"Authorization": f"Bearer {cfg.api_key}", **upstream_headers(cfg, "probe")}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(url, json=body, headers=headers)

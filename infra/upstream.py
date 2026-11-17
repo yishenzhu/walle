@@ -61,3 +61,18 @@ async def validate_upstream(base_url: str) -> None:
             f"base_url 指向内网地址（{parts.hostname}），"
             "未启用 WALLE_ALLOW_PRIVATE_UPSTREAM"
         )
+
+
+def upstream_headers(cfg, session_id: str) -> dict[str, str]:
+    """构造上游请求头：替换 {{session_id}}，并为已知端点补会话路由头。"""
+    headers = {
+        name: str(value).replace("{{session_id}}", session_id)
+        for name, value in (cfg.headers or {}).items()
+    }
+    host = (urlsplit(cfg.base_url).hostname or "").lower()
+    has_session = any(name.lower() == "x-opencode-session" for name in headers)
+    if host.endswith("opencode.ai") and not has_session:
+        headers["x-opencode-session"] = (
+            session_id if session_id.startswith("ses_") else f"ses_{session_id}"
+        )
+    return headers

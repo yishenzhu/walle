@@ -368,7 +368,7 @@ class SessionServer:
                         "session.set_model requires a valid model config"
                     ) from exc
                 await validate_upstream(cfg.base_url)
-                session.set_provider(self._sessions.provider_for(cfg))
+                session.set_provider(self._sessions.provider_for(cfg, session_id))
                 logger.info(f"session model set: {session_id} -> {cfg.model}")
         elif kind == Frame.SESSION_SET_METADATA:
             values = frame.get("values")

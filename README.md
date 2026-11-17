@@ -262,9 +262,11 @@ HTTP 侧没有额外接口：模型配置只有 `session.set_model` 这一条路
 
 所以 `base_url` 可以填 OpenAI、DeepSeek、Kimi、Ollama、vLLM 等任意兼容端点。
 
-需要额外请求头的端点（例如 `x-opencode-session`、OpenRouter 的 `HTTP-Referer`），
-在「模型」面板的「额外请求头」里按 `Name: Value` 每行一条填写。
+需要额外请求头的端点（例如 OpenRouter 的 `HTTP-Referer`），
+在「模型」面板的「额外请求头」里按 `Name: Value` 每行一条填写，
+值里可以用 `{{session_id}}` 占位，Walle 会在每次连接时替换成当前会话 id。
 `Authorization`、`Content-Type`、`Host`、`Content-Length` 不允许覆盖。
+`opencode.ai` 的 `x-opencode-session` 会自动补齐，不需要手填。
 保存前可以先点「测试连接」看上游返回。
 
 安全约束：

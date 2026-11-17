@@ -782,7 +782,7 @@
         <input id="model-name" type="text" placeholder="gpt-4o-mini"
           autocomplete="off" spellcheck="false">
         <textarea id="model-headers" rows="1"
-          placeholder="额外请求头，每行一个 Name: Value（可选，如 x-opencode-session: 任意字符串）"
+          placeholder="额外请求头，每行一个 Name: Value（可选；opencode.ai 自动补会话头，其它端点可用 {{session_id}}）"
           spellcheck="false"></textarea>
         <div id="model-error" class="model-error" hidden></div>
         <div style="display: flex; gap: 8px;">
