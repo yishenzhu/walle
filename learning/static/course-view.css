@@ -260,16 +260,10 @@ body.course-resizing iframe { pointer-events: none; }
 }
 .lesson-menu[hidden] { display: none; }
 .lesson-menu {
-  scrollbar-width: thin;
-  scrollbar-color: #2b3650 transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.lesson-menu::-webkit-scrollbar { width: 8px; }
-.lesson-menu::-webkit-scrollbar-track { background: transparent; }
-.lesson-menu::-webkit-scrollbar-thumb {
-  background: #2b3650;
-  border-radius: 999px;
-}
-.lesson-menu::-webkit-scrollbar-thumb:hover { background: #3a4a68; }
+.lesson-menu::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .lesson-option {
   display: flex;
   align-items: center;
