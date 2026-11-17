@@ -781,6 +781,7 @@
         <div id="model-error" class="model-error" hidden></div>
         <div style="display: flex; gap: 8px;">
           <button class="primary" type="submit">保存</button>
+          <button id="model-test" class="ghost" type="button">测试连接</button>
           <button id="model-clear" class="ghost" type="button">清除</button>
         </div>
       </form>
@@ -834,6 +835,7 @@
     const modelName = document.getElementById("model-name");
     const modelClear = document.getElementById("model-clear");
     const modelError = document.getElementById("model-error");
+    const modelTest = document.getElementById("model-test");
     const agentModeButton = document.getElementById("agent-mode");
     const workspaceModal = document.getElementById("workspace-modal");
     const workspaceClose = document.getElementById("workspace-close");
@@ -1929,6 +1931,44 @@
       setModelLabel();
       closeModelModal();
     });
+    modelTest.addEventListener("click", async () => {
+      const cfg = {
+        base_url: modelBaseUrl.value.trim(),
+        api_key: modelApiKey.value.trim(),
+        model: modelName.value.trim(),
+      };
+      if (!cfg.base_url || !cfg.api_key || !cfg.model) {
+        modelError.style.color = "#f87171";
+        modelError.textContent = "base_url、api_key、model 三项都要填";
+        modelError.hidden = false;
+        return;
+      }
+      modelTest.disabled = true;
+      modelError.style.color = "var(--muted)";
+      modelError.textContent = "测试中…";
+      modelError.hidden = false;
+      try {
+        const res = await fetch("/api/model/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          modelError.style.color = "#4ade80";
+          modelError.textContent = "连接成功";
+        } else {
+          modelError.style.color = "#f87171";
+          modelError.textContent = data.detail || `失败（HTTP ${res.status}）`;
+        }
+      } catch (err) {
+        modelError.style.color = "#f87171";
+        modelError.textContent = "请求失败：" + err.message;
+      } finally {
+        modelTest.disabled = false;
+      }
+    });
+
     modelForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const cfg = {

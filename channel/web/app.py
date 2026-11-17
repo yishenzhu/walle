@@ -8,13 +8,15 @@ import re
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ...conf import CANVAS_ROOT
+from ...infra.upstream import validate_upstream
 from ...plugin import PluginHost
-from ...spec import SAFE_ID, WebService
+from ...spec import SAFE_ID, ModelConfig, WebService
 from ..frames import ErrorCode, Frame
 from ..transport import CONNECT_HOST, MAX_FRAME, PORT, FrameTooLargeError, JSONLineConn
 from .plugins import discover_web_plugins
@@ -24,6 +26,38 @@ app = FastAPI(title="Walle Web")
 INDEX = Path(__file__).with_name("index.html")
 STATIC = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+@app.post("/api/model/test")
+async def test_model(payload: dict) -> dict[str, str]:
+    """用最小请求验证 base_url / api_key / model 是否可用。"""
+    try:
+        cfg = ModelConfig.model_validate(payload)
+    except Exception:
+        raise HTTPException(400, "base_url / api_key / model 都需要填写") from None
+    try:
+        await validate_upstream(cfg.base_url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+    url = cfg.base_url.rstrip("/") + "/chat/completions"
+    body = {
+        "model": cfg.model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {cfg.api_key}"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(url, json=body, headers=headers)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"连接失败：{exc.__class__.__name__}") from None
+
+    if response.status_code >= 400:
+        detail = response.text.strip().replace("\n", " ")[:200]
+        raise HTTPException(502, f"上游 {response.status_code}：{detail}")
+    return {"status": "ok"}
+
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:

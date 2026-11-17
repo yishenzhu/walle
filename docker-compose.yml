@@ -62,12 +62,15 @@ services:
       WALLE_LOG_STDOUT: "1"
       WALLE_LOG_FILE: "0"
       WALLE_AGENT_HOST: agent
+      WALLE_ALLOW_PRIVATE_UPSTREAM: "${WALLE_ALLOW_PRIVATE_UPSTREAM:-0}"
       HOME: /tmp
     volumes:
       - walle-home:/var/lib/walle
     read_only: true
     tmpfs:
       - /tmp:size=256m
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8080:8080"
     mem_limit: 512m
