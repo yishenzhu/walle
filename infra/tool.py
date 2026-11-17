@@ -15,6 +15,33 @@ from ..spec import SessionView
 tool_context: ContextVar[SessionView | None] = ContextVar("tool_context", default=None)
 
 
+def strict_compatible(node: Any) -> bool:
+    """JSON Schema 是否满足 OpenAI strict 模式：对象必须闭合且字段全必填。"""
+    if not isinstance(node, dict):
+        return True
+    if node.get("type") == "object" or "properties" in node:
+        properties = node.get("properties") or {}
+        if node.get("additionalProperties") is not False:
+            return False
+        if set(properties) - set(node.get("required") or []):
+            return False
+    for key in ("$defs", "definitions"):
+        for sub in (node.get(key) or {}).values():
+            if not strict_compatible(sub):
+                return False
+    for sub in (node.get("properties") or {}).values():
+        if not strict_compatible(sub):
+            return False
+    items = node.get("items")
+    if isinstance(items, dict) and not strict_compatible(items):
+        return False
+    for key in ("anyOf", "oneOf", "allOf"):
+        for sub in node.get(key) or []:
+            if not strict_compatible(sub):
+                return False
+    return True
+
+
 @dataclass
 class Tool:
     """一个可被模型调用的工具：名称/描述/参数 schema/执行函数。"""
@@ -28,15 +55,19 @@ class Tool:
         return await self.fn(args)
 
     def to_schema(self, strict: bool = True) -> dict[str, Any]:
+        # 带默认值的参数不满足 strict 的「所有字段必填」，此时显式降级，
+        # 否则 OpenAI 官方端点会直接拒绝整次请求。
         args = self.parameters.copy()
         if strict:
             args["additionalProperties"] = False
+        # 顶层闭合由上面补上，嵌套对象仍需自行满足
+        strict_ok = strict and strict_compatible(args)
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "strict": strict,
+                "strict": strict_ok,
                 "parameters": args,
             },
         }

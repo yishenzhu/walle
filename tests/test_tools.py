@@ -22,7 +22,11 @@ class TestTool:
         tool = Tool(
             name="bash",
             description="run bash",
-            parameters={"type": "object", "properties": {"cmd": {"type": "string"}}},
+            parameters={
+                "type": "object",
+                "properties": {"cmd": {"type": "string"}},
+                "required": ["cmd"],
+            },
             fn=dummy,
         )
         schema = tool.to_schema()
@@ -31,6 +35,18 @@ class TestTool:
         assert schema["function"]["description"] == "run bash"
         assert schema["function"]["strict"] is True
         assert schema["function"]["parameters"]["additionalProperties"] is False
+
+    def test_to_schema_downgrades_optional(self):
+        async def dummy(args):
+            return ""
+
+        tool = Tool(
+            name="bash",
+            description="run bash",
+            parameters={"type": "object", "properties": {"cmd": {"type": "string"}}},
+            fn=dummy,
+        )
+        assert tool.to_schema()["function"]["strict"] is False
 
     def test_to_schema_non_strict(self):
         async def dummy(args):
