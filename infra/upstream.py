@@ -45,4 +45,7 @@ async def validate_upstream(base_url: str) -> None:
     if allow_private():
         return
     if await asyncio.to_thread(private_host, parts.hostname):
-        raise ValueError("base_url 指向内网地址，未启用 WALLE_ALLOW_PRIVATE_UPSTREAM")
+        raise ValueError(
+            f"base_url 指向内网地址（{parts.hostname}），"
+            "未启用 WALLE_ALLOW_PRIVATE_UPSTREAM"
+        )

@@ -367,6 +367,7 @@ class SessionServer:
                     ) from exc
                 await validate_upstream(cfg.base_url)
                 session.set_provider(self._sessions.provider_for(cfg))
+                logger.info(f"session model set: {session_id} -> {cfg.model}")
         elif kind == Frame.SESSION_SET_METADATA:
             values = frame.get("values")
             if not isinstance(values, dict):

@@ -109,7 +109,8 @@ class Runner:
         provider = env.provider
         if provider is None:
             raise RuntimeError(
-                "未配置模型：请先在「模型」中填写 base_url / api_key / model"
+                "未配置模型：请在「模型」中保存配置；"
+                "若使用本机/内网端点，需开启 WALLE_ALLOW_PRIVATE_UPSTREAM"
             )
         history = env.history
         bus = env.bus or EventBus()  # 会话总线；env 未提供则本次 run 内现造（仅测试）
