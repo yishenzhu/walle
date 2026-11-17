@@ -19,6 +19,61 @@ LESSONS_DIR = "lessons"
 CANVAS_DIR = "canvas"
 PROGRESS_FILE = "progress.json"
 CANVAS_MARKER = re.compile(r"\{\{canvas:([A-Za-z0-9_-]{1,64})\}\}")
+MAX_OUTCOMES = 5
+MAX_PRACTICES = 5
+
+
+def validate_outcomes(can_do: list[str] | None) -> list[str]:
+    if can_do is None:
+        return []
+    items = [str(item).strip() for item in can_do if str(item).strip()]
+    if not items:
+        raise ValueError("can_do 至少需要一条可验证的能力目标")
+    if len(items) > MAX_OUTCOMES:
+        raise ValueError(f"can_do 最多 {MAX_OUTCOMES} 条")
+    return items
+
+
+def validate_practices(practice: list[dict] | None) -> list[dict]:
+    if not practice:
+        raise ValueError("practice 至少需要一个练习")
+    if len(practice) > MAX_PRACTICES:
+        raise ValueError(f"practice 最多 {MAX_PRACTICES} 个")
+    cleaned = []
+    for index, item in enumerate(practice, 1):
+        prompt = str((item or {}).get("prompt") or "").strip()
+        answer = str((item or {}).get("answer") or "").strip()
+        if not prompt or not answer:
+            raise ValueError(f"第 {index} 个练习缺少 prompt 或 answer")
+        cleaned.append(
+            {
+                "type": str((item or {}).get("type") or "task").strip(),
+                "prompt": prompt,
+                "answer": answer,
+                "check": str((item or {}).get("check") or "").strip(),
+            }
+        )
+    return cleaned
+
+
+def render_lesson_tail(objective: str, practice: list[dict], assessment: str) -> str:
+    """把目标、练习、自检渲染成 Markdown，附在正文之后。"""
+    lines = ["", "---", "", "## 本节目标", "", objective.strip(), "", "## 练习", ""]
+    for index, item in enumerate(practice, 1):
+        lines += [f"### 练习 {index}", "", item["prompt"], ""]
+        if item.get("check"):
+            lines += [f"> 判定标准：{item['check']}", ""]
+        lines += [
+            "<details><summary>参考答案（先自己做）</summary>",
+            "",
+            item["answer"],
+            "",
+            "</details>",
+            "",
+        ]
+    if assessment.strip():
+        lines += ["## 自检", "", assessment.strip(), ""]
+    return "\n".join(lines).rstrip() + "\n"
 H1_TITLE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
 HTML_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 HTML_TAG = re.compile(r"<[^>]+>")
@@ -245,6 +300,9 @@ def create_course(
     goal: str = "",
     lessons: list[str] | None = None,
     course_id: str | None = None,
+    can_do: list[str] | None = None,
+    learner_level: str = "",
+    time_budget: str = "",
     root: str | Path | None = None,
 ) -> dict[str, Any]:
     title = (title or "").strip()
@@ -270,6 +328,15 @@ def create_course(
         if goal.strip():
             course["goal"] = goal.strip()
         course["updated_at"] = now
+
+    outcomes = validate_outcomes(can_do)
+    if outcomes:
+        course["outcome"] = {"can_do": outcomes}
+    if learner_level.strip() or time_budget.strip():
+        course["learner"] = {
+            "level": learner_level.strip(),
+            "time_budget": time_budget.strip(),
+        }
 
     if lessons is not None:
         existing = {item.get("id"): item for item in course.get("lessons") or []}
@@ -303,6 +370,10 @@ def write_lesson(
     course_id: str,
     title: str,
     markdown: str,
+    objective: str = "",
+    practice: list[dict] | None = None,
+    assessment: str = "",
+    minutes: int | None = None,
     order: int | None = None,
     lesson_id: str | None = None,
     root: str | Path | None = None,
@@ -313,6 +384,10 @@ def write_lesson(
     title = (title or "").strip()
     if not title:
         raise ValueError("lesson title is required")
+    objective = (objective or "").strip()
+    if not objective:
+        raise ValueError("objective 不能为空：写清这节课学完能做什么")
+    practices = validate_practices(practice)
     identifier = lesson_id or lesson_id_for(title)
     if not SAFE_ID.fullmatch(identifier):
         raise ValueError(f"invalid lesson id: {identifier}")
@@ -334,10 +409,17 @@ def write_lesson(
         if order is not None:
             entry["order"] = order
 
-    markdown = markdown or ""
+    body = (markdown or "").rstrip()
+    body += "\n" + render_lesson_tail(objective, practices, assessment)
     entry["file"] = f"{LESSONS_DIR}/{identifier}.md"
     entry["updated_at"] = time.time()
-    entry["canvas_ids"] = CANVAS_MARKER.findall(markdown)
+    entry["objective"] = objective
+    entry["practice"] = practices
+    entry["assessment"] = (assessment or "").strip()
+    if minutes is not None:
+        entry["minutes"] = minutes
+    entry["canvas_ids"] = CANVAS_MARKER.findall(body)
+    markdown = body
     write_text_atomic(lesson_file(course_id, identifier, root), markdown)
 
     lessons.sort(key=lambda item: item.get("order") or 0)

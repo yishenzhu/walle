@@ -27,6 +27,9 @@ def course_instructions(metadata: dict[str, Any]) -> str | None:
     lines = [f"Course: {course.get('title') or course_id}"]
     if course.get("goal"):
         lines.append(f"Goal: {course['goal']}")
+    outcome = course.get("outcome") or {}
+    for item in outcome.get("can_do") or []:
+        lines.append(f"Outcome: {item}")
     lines.extend(outline_lines(course, lesson_id))
     if lesson_id:
         lesson = read_lesson(course_id, lesson_id)

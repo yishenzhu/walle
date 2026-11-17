@@ -11,6 +11,15 @@ from .store import load_course, outline_lines, read_lesson, save_course
 from .store import write_lesson as write_lesson_entry
 
 
+class Practice(BaseModel):
+    """一个可判定的练习：题目 + 参考答案（+ 可选的判定标准）。"""
+
+    prompt: str
+    answer: str
+    check: str = ""
+    type: Literal["task", "code", "quiz"] = "task"
+
+
 class CourseResult(BaseModel):
     type: Literal["course"] = "course"
     course_id: str
@@ -33,16 +42,26 @@ async def create_course(
     goal: str = "",
     lessons: list[str] | None = None,
     course_id: str | None = None,
+    can_do: list[str] | None = None,
+    learner_level: str = "",
+    time_budget: str = "",
 ) -> CourseResult | str:
-    """Create or update a course package with an ordered lesson outline.
-    Use when the user wants a structured learning plan; `lessons` is an ordered
-    list of titles. Pass `course_id` to update an existing course."""
+    """Create or update a course package: outcome + ordered lesson outline.
+
+    Design backwards. `can_do` are 1-5 observable abilities the learner must be
+    able to demonstrate after the course ("能用 X 完成 Y，满足 Z"); each one must
+    be verified by at least one lesson practice. `goal` is a one-line summary.
+    `learner_level` / `time_budget` calibrate difficulty and scope.
+    Pass `course_id` to update an existing course."""
     try:
         course = create_course_entry(
             title=title,
             goal=goal,
             lessons=lessons,
             course_id=course_id,
+            can_do=can_do,
+            learner_level=learner_level,
+            time_budget=time_budget,
         )
     except ValueError as exc:
         return f"Error: {exc}"
@@ -66,17 +85,35 @@ async def write_lesson(
     course_id: str,
     title: str,
     markdown: str,
+    objective: str,
+    practice: list[Practice],
+    assessment: str = "",
+    minutes: int | None = None,
     order: int | None = None,
     lesson_id: str | None = None,
 ) -> LessonResult | str:
-    """Write one lesson's Markdown into a course package.
-    Supports Markdown, LaTeX and `{{canvas:<id>}}`; call `canvas` first,
-    then put its id on its own line."""
+    """Write one lesson: body + a verifiable objective + at least one practice.
+
+    Lesson body must contain: a concrete scenario, a runnable worked example,
+    1-3 core concepts, and at least one common mistake. `objective` states what
+    the learner can do afterwards. `practice` is 1-5 exercises, each with a
+    reference `answer` (and optional `check`). `assessment` is the self-check
+    the learner uses to judge mastery. Supports Markdown, LaTeX and
+    `{{canvas:<id>}}` on its own line."""
     try:
         entry = write_lesson_entry(
             course_id=course_id,
             title=title,
             markdown=markdown,
+            objective=objective,
+            practice=[
+                item.model_dump()
+                if isinstance(item, Practice)
+                else Practice.model_validate(item).model_dump()
+                for item in practice
+            ],
+            assessment=assessment,
+            minutes=minutes,
             order=order,
             lesson_id=lesson_id,
         )

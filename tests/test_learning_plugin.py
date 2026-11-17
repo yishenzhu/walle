@@ -15,7 +15,8 @@ async def test_course_context_follows_meta(tmp_path, monkeypatch):
         "测试课程", goal="目标", lessons=["第一课"], root=root
     )
     lesson = course_store.write_lesson(
-        course["id"], "第一课", "# 正文", root=root
+        course["id"], "第一课", "# 正文",
+        objective="能复述", practice=[{"prompt": "复述", "answer": "正文"}], root=root,
     )
 
     text = course_instructions(

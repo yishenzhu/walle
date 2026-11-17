@@ -38,6 +38,8 @@ async def test_create_course_and_write_lesson(courses, context):
         result.course_id,
         "时域与频域",
         "# 时域与频域\n\n{{canvas:wave}}",
+        objective="能画出时域与频域的对应关系",
+        practice=[{"prompt": "把方波分解", "answer": "基频 + 奇次谐波"}],
     )
     assert not isinstance(lesson, str)
     assert lesson.type == "lesson"
@@ -53,14 +55,20 @@ async def test_create_course_requires_title(courses, context):
 
 
 async def test_write_lesson_unknown_course(courses, context):
-    result = await write_lesson("missing", "课", "content")
+    result = await write_lesson(
+        "missing", "课", "content",
+        objective="能完成", practice=[{"prompt": "做", "answer": "答"}],
+    )
     assert isinstance(result, str)
     assert "not found" in result
 
 
 async def test_read_course_uses_session_context(courses, tmp_path):
     created = await create_course("课程", goal="目标", lessons=["第一课"])
-    lesson = await write_lesson(created.course_id, "第一课", "# 正文\n细节")
+    lesson = await write_lesson(
+        created.course_id, "第一课", "# 正文\n细节",
+        objective="能复述正文", practice=[{"prompt": "复述", "answer": "细节"}],
+    )
     assert not isinstance(lesson, str)
 
     token = tool_context.set(
@@ -84,3 +92,15 @@ async def test_read_course_without_context(courses, context):
     result = await read_course()
     assert isinstance(result, str)
     assert "没有课程上下文" in result
+
+
+def test_tool_schema_requires_pedagogy_fields():
+    from ..infra import Tool
+
+    schema = Tool.from_function(write_lesson).parameters
+    required = set(schema.get("required") or [])
+    assert {"course_id", "title", "markdown", "objective", "practice"} <= required
+    practice = schema["properties"]["practice"]
+    assert practice.get("type") == "array"
+    assert practice["items"].get("$ref") == "#/$defs/Practice"
+    assert set(schema["$defs"]["Practice"]["required"]) == {"prompt", "answer"}

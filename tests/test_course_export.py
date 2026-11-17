@@ -30,6 +30,8 @@ def bundle(tmp_path):
         course["id"],
         "第一课",
         "# 第一课\n\n正文\n\n{{canvas:demo}}\n",
+        objective="能完成导出测试",
+        practice=[{"prompt": "做一遍", "answer": "参考答案"}],
         root=root,
     )
     canvas = root / course["id"] / "canvas" / "demo.html"

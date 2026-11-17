@@ -354,6 +354,8 @@ def make_course_bundle(tmp_path):
         course["id"],
         "第一课",
         "# 第一课\n\n{{canvas:demo}}\n",
+        objective="能完成本课",
+        practice=[{"prompt": "做一遍", "answer": "参考答案"}],
         root=root,
     )
     canvas = root / course["id"] / "canvas" / "demo.html"
@@ -477,7 +479,10 @@ def test_course_api_marks_unwritten_lessons(monkeypatch, tmp_path):
         lessons=["已写", "未写"],
         root=root,
     )
-    write_lesson(course["id"], "已写", "# 有内容", root=root)
+    write_lesson(
+        course["id"], "已写", "# 有内容",
+        objective="能复述", practice=[{"prompt": "复述", "answer": "内容"}], root=root,
+    )
     monkeypatch.setattr(learning_web, "courses_root", lambda: root)
 
     data = TestClient(web.app).get(f"/api/courses/{course['id']}").json()
