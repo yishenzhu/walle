@@ -32,4 +32,8 @@ async def channel_plugin(ctx, config) -> None:
 @plugin(name="executor")
 async def executor_plugin(ctx, config) -> None:
     """工具执行器插件：preflight / 超时 / 通知 / 后台作业。"""
-    await ctx.register(ExecutorService, ToolExecutor(TimeoutConfig.model_validate(config)))
+    # 插件配置形如 {"timeout": {...}}，直接校验整个 config 会把 extra 丢掉、退回默认值
+    timeout_config = config.get("timeout") if isinstance(config, dict) else None
+    await ctx.register(
+        ExecutorService, ToolExecutor(TimeoutConfig.model_validate(timeout_config or {}))
+    )

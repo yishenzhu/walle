@@ -464,3 +464,26 @@ class TestToolHooks:
         assert seen["result"] == "hello"
         assert seen["error"] is None
         assert seen["elapsed_ms"] is not None
+
+
+async def test_session_timeout_overrides_reach_executor(tmp_path):
+    """ask_user: null 必须传到 executor，否则问答会被 30s 默认值打断。"""
+    from ..conf import TimeoutConfig
+    from ..core.manager import SessionManager
+
+    manager = SessionManager(
+        timeout=TimeoutConfig(default=30, overrides={"ask_user": None}),
+        storage="memory",
+        path=str(tmp_path / "s.db"),
+    )
+    from types import SimpleNamespace
+
+    session = manager.create(
+        SimpleNamespace(session_id="t-override", cwd=None, agent=None)
+    )
+    await session.start()
+    try:
+        assert session._executor.timeout.resolve("ask_user") is None
+        assert session._executor.timeout.resolve("bash") == 30
+    finally:
+        await session.close()
