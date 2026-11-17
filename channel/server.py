@@ -309,6 +309,10 @@ class SessionServer:
                     )
                 )
                 return None
+            # attach 时客户端带了模型配置：补上/替换会话 provider，
+            # 否则先建会话后配 BYOK 的场景会一直沿用默认（可能为 None）。
+            if conn.model is not None:
+                session.set_provider(self._sessions.provider_for(conn.model))
             # 先回 welcome（带最近对话）：客户端收到后才开始读 notify 帧
             await conn._send(await self._welcome_frame(session))
             old = session.transport

@@ -559,3 +559,41 @@ class TestSessionStreamForward:
         assert "mcp_remote_search" in names
 
         await manager.close()
+
+
+class TestProviderFor:
+    def test_builds_provider_from_config(self):
+        from ..core.manager import SessionManager
+
+        manager = SessionManager()
+        provider = manager.provider_for(
+            ModelConfig(api_key="k", base_url="https://api.example.com/v1", model="m1")
+        )
+        assert provider is not None
+        assert provider.model == "m1"
+
+    def test_falls_back_to_default(self):
+        from ..core.manager import SessionManager
+
+        manager = SessionManager()
+        assert manager.provider_for(None) is None
+
+
+class TestAttachProvider:
+    def test_set_provider_replaces(self):
+        from ..core.manager import SessionManager
+
+        manager = SessionManager()
+        from types import SimpleNamespace
+
+        session = manager.create(
+            SimpleNamespace(session_id="s-provider", cwd=None, model=None, agent=None)
+        )
+        assert session.context.provider is None
+
+        session.set_provider(
+            manager.provider_for(
+                ModelConfig(api_key="k", base_url="https://api.example.com/v1", model="m2")
+            )
+        )
+        assert session.context.provider.model == "m2"

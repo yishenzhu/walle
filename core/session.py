@@ -159,6 +159,10 @@ class Session:
         self._executor = host.root.get(ExecutorService)
         self._prompt = host.root.get(PromptService)
 
+    def set_provider(self, provider) -> None:
+        """替换会话级模型 provider（BYOK 在 attach 时补配置）。"""
+        self._provider = provider
+
     @property
     def context(self) -> SessionContext:
         """会话环境视图（每次现造）：对外访问会话能力的统一入口。"""

@@ -9,7 +9,7 @@ from ..conf import TimeoutConfig
 from ..infra import OpenAIProvider
 from ..messages import build_history, list_sessions, list_workspaces
 from ..plugin import Plugin
-from ..spec import LLM, SessionInit
+from ..spec import LLM, ModelConfig, SessionInit
 from .session import Session, SessionRuntime
 
 
@@ -60,9 +60,8 @@ class SessionManager:
         self.register(session)
         return session
 
-    def _provider_for(self, conn: SessionInit) -> LLM | None:
-        """客户端带模型配置时新建会话级 provider，否则沿用进程默认。"""
-        cfg = conn.model
+    def provider_for(self, cfg: ModelConfig | None) -> LLM | None:
+        """按客户端模型配置构造 provider；None 表示沿用进程默认。"""
         if cfg is None:
             return self._provider
         return OpenAIProvider(
@@ -70,6 +69,10 @@ class SessionManager:
             base_url=cfg.base_url,
             model=cfg.model,
         )
+
+    def _provider_for(self, conn: SessionInit) -> LLM | None:
+        """客户端带模型配置时新建会话级 provider，否则沿用进程默认。"""
+        return self.provider_for(conn.model)
 
     def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:
         """从插件声明池按名单挑选（默认全部）。"""
