@@ -257,6 +257,11 @@
       return this.send({ type: "run.cancel" });
     }
 
+    setModel(model) {
+      // 会话中途切换模型：下一轮生效，不需要重连
+      return this.send({ type: "session.set_model", model: model || null });
+    }
+
     setAgent(agent) {
       this.courseAgent = agent || null;
       const target = agent || DEFAULT_AGENT;

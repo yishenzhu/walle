@@ -25,6 +25,7 @@ class Frame(StrEnum):
     INPUT_CREATE = "input.create"
     RUN_CANCEL = "run.cancel"
     SESSION_SET_AGENT = "session.set_agent"
+    SESSION_SET_MODEL = "session.set_model"
     SESSION_SET_METADATA = "session.set_metadata"
 
 

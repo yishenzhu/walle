@@ -378,6 +378,10 @@ async def chat(
                     await link.send(
                         {"type": kind, "agent": data.get("agent") or ""}
                     )
+                elif kind == Frame.SESSION_SET_MODEL:
+                    await link.send(
+                        {"type": kind, "model": data.get("model")}
+                    )
                 elif kind == Frame.SESSION_SET_METADATA:
                     # 校验交给 server（与直连语义一致），web 只做转发
                     await link.send({"type": kind, "values": data.get("values")})

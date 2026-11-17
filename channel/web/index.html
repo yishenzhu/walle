@@ -1935,6 +1935,7 @@
     });
     modelClear.addEventListener("click", () => {
       localStorage.removeItem(MODEL_STORAGE_KEY);
+      if (conversation.isOpen) conversation.setModel(null);
       setModelLabel();
       closeModelModal();
     });
@@ -1950,6 +1951,7 @@
         return;
       }
       localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(cfg));
+      if (conversation.isOpen) conversation.setModel(cfg);
       setModelLabel();
       closeModelModal();
     });

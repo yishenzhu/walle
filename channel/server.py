@@ -359,6 +359,13 @@ class SessionServer:
             await session.cancel(reason="user_cancelled")
         elif kind == Frame.SESSION_SET_AGENT:
             session.set_agent(str(frame.get("agent") or "default"))
+        elif kind == Frame.SESSION_SET_MODEL:
+            # 会话中途切换模型：下一轮生效；model 为 null 时回落到进程默认
+            raw = frame.get("model")
+            cfg = None if raw is None else self._model_config(frame)
+            if raw is not None and cfg is None:
+                raise ValueError("session.set_model requires a valid model config")
+            session.set_provider(self._sessions.provider_for(cfg))
         elif kind == Frame.SESSION_SET_METADATA:
             values = frame.get("values")
             if not isinstance(values, dict):

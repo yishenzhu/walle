@@ -265,7 +265,8 @@ WALLE_SITE=walle.example.com ./scripts/deploy.sh up
 - 默认禁止 `base_url` 指向内网/回环地址（防 SSRF）；本机 Ollama 需设
   `WALLE_ALLOW_PRIVATE_UPSTREAM=1`
 - 密钥只在 HTTPS 下传输（Caddy 终结 TLS）
-- 配置只对新会话生效；已有会话沿用内存里的 provider
+- 会话中途在「模型」里改配置，会立即下发 `session.set_model`，**下一轮生效**，不需要重连
+- 清空配置会回落服务端默认模型；没有默认模型时下一轮会提示先配置
 
 ### 日志流
 
