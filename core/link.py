@@ -6,6 +6,9 @@ import asyncio
 
 from ..spec import Channel, NotificationUnion, RequestUnion
 
+# 断连期间的补发缓冲上限：无人连接时会累积大量 delta，只保留最近一批
+PENDING_LIMIT = 200
+
 
 class SessionClosedError(RuntimeError):
     code = "session_closed"
@@ -35,6 +38,8 @@ class SessionLink:
     async def notify(self, notification: NotificationUnion) -> None:
         """缓冲当前 turn 的通知并推给当前 transport。"""
         self._pending.append(notification)
+        if len(self._pending) > PENDING_LIMIT:
+            del self._pending[: PENDING_LIMIT // 2]
         if self._replaying:
             return
         if self._transport is not None:

@@ -5,6 +5,7 @@ from .channel import SessionServer
 from .conf import Config
 from .core import SessionManager
 from .infra import OpenAIProvider, setup_logger, setup_telemetry
+from .learning.store import pause_stale_courses
 from .plugin import Plugin, discover, discover_packages
 from .tools import MCPManager, Sandbox
 from .tools.approval import native_approval
@@ -20,6 +21,10 @@ async def main() -> None:
     conf = Config.load()
     setup_logger(conf.log)
     setup_telemetry(conf.telemetry)
+    # 上次进程没跑完的课程：标为暂停，等客户端重新下发模型后由驱动续跑
+    paused = pause_stale_courses()
+    if paused:
+        logger.info(f"courses paused after restart: {paused}")
     OpenAIProvider.load_env()
     # 进程默认模型：装配根构造一次并注入管理器（会话无自带 model 配置时沿用）
     provider = OpenAIProvider.get_default()

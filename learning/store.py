@@ -23,6 +23,58 @@ MAX_OUTCOMES = 5
 MAX_PRACTICES = 5
 
 
+def next_pending_lesson(course: dict[str, Any], root: str | Path | None = None) -> dict | None:
+    """第一门还没有正文文件的课；全部写完返回 None。"""
+    lessons = sorted(course.get("lessons") or [], key=lambda item: item.get("order") or 0)
+    for item in lessons:
+        lesson_id = item.get("id")
+        if lesson_id and not lesson_file(course["id"], lesson_id, root).exists():
+            return item
+    return None
+
+
+def written_progress(course: dict[str, Any], root: str | Path | None = None) -> tuple[int, int]:
+    lessons = course.get("lessons") or []
+    written = sum(
+        1
+        for item in lessons
+        if item.get("id") and lesson_file(course["id"], item["id"], root).exists()
+    )
+    return written, len(lessons)
+
+
+def mark_course(
+    course_id: str,
+    status: str,
+    root: str | Path | None = None,
+    **driver: Any,
+) -> dict[str, Any] | None:
+    """更新课程状态与驱动信息（attempts / current / last_error）。"""
+    course = load_course(course_id, root)
+    if course is None:
+        return None
+    now = time.time()
+    course["status"] = status
+    if driver:
+        info = course.setdefault("driver", {})
+        info.update(driver)
+        info["updated_at"] = now
+    course["updated_at"] = now
+    save_course(course, root)
+    return course
+
+
+def pause_stale_courses(root: str | Path | None = None) -> int:
+    """进程启动时：把上次没跑完的课程标记为暂停，等待客户端一键继续。"""
+    count = 0
+    for item in list_courses(root):
+        if item.get("status") != "generating":
+            continue
+        mark_course(item["id"], "paused", root=root, last_error="agent restarted")
+        count += 1
+    return count
+
+
 def validate_outcomes(can_do: list[str] | None) -> list[str]:
     if can_do is None:
         return []
@@ -283,6 +335,7 @@ def list_courses(root: str | Path | None = None) -> list[dict[str, Any]]:
                 "id": identifier,
                 "title": course.get("title") or entry.name,
                 "goal": course.get("goal") or "",
+                "status": course.get("status") or "draft",
                 "lesson_count": len(lessons),
                 "completed_count": len(completed),
                 "last_lesson": last_lesson,
@@ -319,6 +372,7 @@ def create_course(
             "id": identifier,
             "title": title,
             "goal": goal.strip(),
+            "status": "draft",
             "created_at": now,
             "updated_at": now,
             "lessons": [],
@@ -353,11 +407,14 @@ def create_course(
                     "title": lesson_title,
                     "order": index,
                     "file": f"{LESSONS_DIR}/{lesson_id}.md",
+                    "status": previous.get("status") or "pending",
                     "updated_at": previous.get("updated_at"),
                     "canvas_ids": previous.get("canvas_ids") or [],
                 }
             )
         course["lessons"] = entries
+        pending = next_pending_lesson(course, root)
+        course["status"] = "done" if pending is None else "generating"
 
     directory = course_dir(identifier, root)
     (directory / LESSONS_DIR).mkdir(parents=True, exist_ok=True)
@@ -400,6 +457,7 @@ def write_lesson(
             "title": title,
             "order": order if order is not None else len(lessons) + 1,
             "file": f"{LESSONS_DIR}/{identifier}.md",
+            "status": "pending",
             "updated_at": None,
             "canvas_ids": [],
         }
@@ -422,8 +480,13 @@ def write_lesson(
     markdown = body
     write_text_atomic(lesson_file(course_id, identifier, root), markdown)
 
+    entry["status"] = "done"
     lessons.sort(key=lambda item: item.get("order") or 0)
     course["updated_at"] = entry["updated_at"]
+    if next_pending_lesson(course, root) is None:
+        course["status"] = "done"
+    elif course.get("status") in (None, "draft"):
+        course["status"] = "generating"
     save_course(course, root)
     return entry
 

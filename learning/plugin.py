@@ -9,8 +9,11 @@ from ..spec import (
     PromptOrder,
     PromptSection,
     PromptService,
+    Scheduler,
+    SessionView,
     ToolService,
 )
+from .driver import CourseDriver
 from .store import load_course, outline_lines, read_lesson
 from .tools import create_course, read_course, write_lesson
 
@@ -47,9 +50,17 @@ def _course_section(context: AssembleContext) -> str:
     return course_instructions(context.metadata) or ""
 
 
-@plugin(name="learning", inject=(ToolService, PromptService))
+@plugin(name="learning", inject=(ToolService, PromptService, SessionView, Scheduler))
 async def learning_plugin(ctx, config) -> None:
-    """注册课程工具与课程动态提示段。"""
+    """注册课程工具、课程动态提示段与生成驱动器。"""
+    view = ctx.get(SessionView)
+    driver = CourseDriver(
+        scheduler=ctx.get(Scheduler),
+        session_id=view.session_id or "",
+    )
+    driver.start()
+    ctx.effect(driver.stop)
+
     tools = ctx.get(ToolService)
     for fn in (create_course, write_lesson, read_course):
         tools.add(Tool.from_function(fn))

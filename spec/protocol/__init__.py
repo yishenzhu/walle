@@ -13,6 +13,7 @@ from .prompt import (
     PromptSection,
     PromptService,
 )
+from .scheduler import Scheduler
 from .skill import SkillService
 from .tool import ExecutorService, ToolService
 from .view import SessionView
@@ -27,6 +28,7 @@ __all__ = [
     "CommandService",
     "SessionInit",
     "Sessions",
+    "Scheduler",
     "ToolService",
     "ExecutorService",
     "SkillService",

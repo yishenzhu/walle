@@ -35,6 +35,7 @@ from ..spec import (
     NotificationUnion,
     PromptService,
     RequestUnion,
+    Scheduler,
     SessionView,
     SkillService,
     ToolService,
@@ -147,6 +148,7 @@ class Session:
         self._commands = Commands()
         await host.root.register(CommandService, self._commands)
         await host.root.register(Channel, self)
+        await host.root.register(Scheduler, self)
         await host.root.register(AgentService, Agents(self))
         await host.root.register(SessionView, self.context)
         await host.root.register(ToolService, self._tools)
@@ -165,6 +167,11 @@ class Session:
     def set_provider(self, provider) -> None:
         """替换会话级模型 provider（BYOK 在 attach 时补配置）。"""
         self._provider = provider
+
+    @property
+    def has_model(self) -> bool:
+        """会话是否已有可用模型（供调度器判断能否续跑）。"""
+        return self._provider is not None
 
     @property
     def context(self) -> SessionContext:
@@ -270,8 +277,19 @@ class Session:
             raise SessionClosedError(f"session '{self.id}' is detached, attach first")
         if self._state in (SessionState.RUNNING, SessionState.CANCELLING):
             raise SessionBusyError(f"session '{self.id}' is busy ({self._state})")
+        return self._start_run(user_input.content or "")
 
-        content = user_input.content or ""
+    def submit_background(self, content: str) -> asyncio.Task | None:
+        """调度器专用：不要求已连接，空闲时直接开一轮。"""
+        if self._state in (
+            SessionState.RUNNING,
+            SessionState.CANCELLING,
+            SessionState.CLOSED,
+        ):
+            return None
+        return self._start_run(content)
+
+    def _start_run(self, content: str) -> asyncio.Task:
         self._link.clear_pending()
         self._state = SessionState.RUNNING
         self._cancel_reason = None
