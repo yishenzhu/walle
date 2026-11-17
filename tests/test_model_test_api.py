@@ -67,3 +67,19 @@ def test_missing_field():
 def test_private_upstream_rejected():
     payload = {**CFG, "base_url": "http://127.0.0.1:11434/v1"}
     assert client.post("/api/model/test", json=payload).status_code == 400
+
+
+def test_custom_headers_forwarded():
+    payload = {**CFG, "headers": {"x-opencode-session": "abc-123"}}
+    assert client.post("/api/model/test", json=payload).status_code == 200
+    assert FakeClient.seen["headers"]["x-opencode-session"] == "abc-123"
+
+
+def test_blocked_header_rejected():
+    payload = {**CFG, "headers": {"Authorization": "Bearer other"}}
+    assert client.post("/api/model/test", json=payload).status_code == 400
+
+
+def test_header_with_newline_rejected():
+    payload = {**CFG, "headers": {"x-test": "a\nb"}}
+    assert client.post("/api/model/test", json=payload).status_code == 400

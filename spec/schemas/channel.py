@@ -1,18 +1,33 @@
 """通道载荷：notify（广播无返回）与 call（点对点有返回）。"""
 
+import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ── 连接与交互载荷（会话建立 / 用户输入 / 审批回复）──────────────
 
 
 class ModelConfig(BaseModel):
-    """模型接入配置：OpenAI 兼容端点 + 模型名。"""
+    """模型接入配置：OpenAI 兼容端点 + 模型名 + 可选自定义请求头。"""
 
     api_key: str
     base_url: str
     model: str
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("headers")
+    @classmethod
+    def check_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        blocked = {"authorization", "content-type", "host", "content-length"}
+        for name, item in value.items():
+            if not re.fullmatch(r"[A-Za-z0-9-]+", name or ""):
+                raise ValueError(f"非法请求头名: {name}")
+            if name.lower() in blocked:
+                raise ValueError(f"不允许自定义请求头: {name}")
+            if "\n" in item or "\r" in item:
+                raise ValueError(f"请求头 {name} 不能含换行")
+        return value
 
 
 class SessionSpec(BaseModel):

@@ -68,6 +68,7 @@ class SessionManager:
             api_key=cfg.api_key,
             base_url=cfg.base_url,
             model=cfg.model,
+            headers=cfg.headers,
         )
 
     def _select_plugins(self, plugin_names: list[str] | None) -> list[Plugin]:

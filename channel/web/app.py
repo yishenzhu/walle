@@ -46,7 +46,7 @@ async def test_model(payload: dict) -> dict[str, str]:
         "max_tokens": 1,
         "stream": False,
     }
-    headers = {"Authorization": f"Bearer {cfg.api_key}"}
+    headers = {"Authorization": f"Bearer {cfg.api_key}", **(cfg.headers or {})}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.post(url, json=body, headers=headers)

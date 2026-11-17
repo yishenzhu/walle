@@ -262,6 +262,11 @@ HTTP 侧没有额外接口：模型配置只有 `session.set_model` 这一条路
 
 所以 `base_url` 可以填 OpenAI、DeepSeek、Kimi、Ollama、vLLM 等任意兼容端点。
 
+需要额外请求头的端点（例如 `x-opencode-session`、OpenRouter 的 `HTTP-Referer`），
+在「模型」面板的「额外请求头」里按 `Name: Value` 每行一条填写。
+`Authorization`、`Content-Type`、`Host`、`Content-Length` 不允许覆盖。
+保存前可以先点「测试连接」看上游返回。
+
 安全约束：
 
 - 默认禁止 `base_url` 指向内网/回环地址（防 SSRF）；本机 Ollama 需设

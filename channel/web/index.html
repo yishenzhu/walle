@@ -145,7 +145,7 @@
       color: #9cc7ff; word-break: break-all;
     }
     .workspace-form { display: flex; gap: 8px; margin: 12px 0; }
-    .workspace-form input {
+    .workspace-form input, .workspace-form textarea {
       flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px;
       border: 1px solid var(--border); background: #0b0f14;
       color: var(--text); font-family: var(--mono); font-size: 12px;
@@ -778,6 +778,9 @@
           autocomplete="off" spellcheck="false">
         <input id="model-name" type="text" placeholder="gpt-4o-mini"
           autocomplete="off" spellcheck="false">
+        <textarea id="model-headers" rows="2"
+          placeholder="额外请求头，每行一个 Name: Value（可选，如 x-opencode-session: 任意字符串）"
+          spellcheck="false"></textarea>
         <div id="model-error" class="model-error" hidden></div>
         <div style="display: flex; gap: 8px;">
           <button class="primary" type="submit">保存</button>
@@ -833,6 +836,7 @@
     const modelBaseUrl = document.getElementById("model-base-url");
     const modelApiKey = document.getElementById("model-api-key");
     const modelName = document.getElementById("model-name");
+    const modelHeaders = document.getElementById("model-headers");
     const modelClear = document.getElementById("model-clear");
     const modelError = document.getElementById("model-error");
     const modelTest = document.getElementById("model-test");
@@ -1873,6 +1877,26 @@
       }
     }
 
+    function parseHeaderLines(text) {
+      const headers = {};
+      for (const raw of String(text || "").split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const index = line.indexOf(":");
+        if (index <= 0) continue;
+        const name = line.slice(0, index).trim();
+        const value = line.slice(index + 1).trim();
+        if (name) headers[name] = value;
+      }
+      return headers;
+    }
+
+    function headerLines(headers) {
+      return Object.entries(headers || {})
+        .map(([name, value]) => `${name}: ${value}`)
+        .join("\n");
+    }
+
     function setModelLabel() {
       const cfg = readModelConfig();
       modelButton.textContent = cfg ? `模型 · ${cfg.model}` : "模型";
@@ -1885,6 +1909,7 @@
       modelBaseUrl.value = cfg ? cfg.base_url : "";
       modelApiKey.value = cfg ? cfg.api_key : "";
       modelName.value = cfg ? cfg.model : "";
+      modelHeaders.value = cfg ? headerLines(cfg.headers) : "";
       modelError.hidden = true;
       modelModal.hidden = false;
     }
@@ -1936,6 +1961,7 @@
         base_url: modelBaseUrl.value.trim(),
         api_key: modelApiKey.value.trim(),
         model: modelName.value.trim(),
+        headers: parseHeaderLines(modelHeaders.value),
       };
       if (!cfg.base_url || !cfg.api_key || !cfg.model) {
         modelError.style.color = "#f87171";
@@ -1975,6 +2001,7 @@
         base_url: modelBaseUrl.value.trim(),
         api_key: modelApiKey.value.trim(),
         model: modelName.value.trim(),
+        headers: parseHeaderLines(modelHeaders.value),
       };
       const missing = [
         [cfg.base_url, modelBaseUrl],

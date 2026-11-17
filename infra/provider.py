@@ -10,8 +10,18 @@ class OpenAIProvider:
 
     _default: Self | None = None
 
-    def __init__(self, api_key: str, base_url: str, model: str):
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        headers: dict[str, str] | None = None,
+    ):
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers=headers or None,
+        )
         self.model = model
 
     def set_model(self, model: str) -> str:
