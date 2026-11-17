@@ -682,6 +682,7 @@
       <div class="brand">
         <h1>Walle</h1><small>web channel</small>
         <button id="workspace-button" class="ghost" title="选择工作目录与会话">工作区</button>
+        <button id="model-button" class="ghost" title="配置模型（BYOK）">模型</button>
         <button id="canvas-latest" class="ghost">画布</button>
         <button id="agent-mode" class="ghost" title="切换通用 / 课程模式">课程模式</button>
         <nav id="plugin-nav" class="plugin-nav"></nav>
@@ -760,6 +761,29 @@
       <div id="session-list" class="session-list"></div>
     </div>
   </div>
+  <div id="model-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="模型配置">
+      <div class="modal-head">
+        <div>
+          <div class="modal-kicker">模型接入（BYOK）</div>
+          <div class="modal-path">密钥只存浏览器；连接时经 HTTPS 传给服务端内存，握手后即丢弃</div>
+        </div>
+        <button id="model-close" class="ghost">关闭</button>
+      </div>
+      <form id="model-form" class="workspace-form" style="flex-direction: column; align-items: stretch; gap: 8px;">
+        <input id="model-base-url" type="text" placeholder="https://api.openai.com/v1"
+          autocomplete="off" spellcheck="false">
+        <input id="model-api-key" type="password" placeholder="sk-..."
+          autocomplete="off" spellcheck="false">
+        <input id="model-name" type="text" placeholder="gpt-4o-mini"
+          autocomplete="off" spellcheck="false">
+        <div style="display: flex; gap: 8px;">
+          <button class="primary" type="submit">保存</button>
+          <button id="model-clear" class="ghost" type="button">清除</button>
+        </div>
+      </form>
+    </div>
+  </div>
   <script src="/static/marked.min.js"></script>
   <script src="/static/katex/katex.min.js"></script>
   <script src="/static/katex/marked-katex.min.js"></script>
@@ -799,6 +823,14 @@
     const canvasClose = document.getElementById("canvas-close");
     const canvasLatest = document.getElementById("canvas-latest");
     const workspaceButton = document.getElementById("workspace-button");
+    const modelButton = document.getElementById("model-button");
+    const modelModal = document.getElementById("model-modal");
+    const modelClose = document.getElementById("model-close");
+    const modelForm = document.getElementById("model-form");
+    const modelBaseUrl = document.getElementById("model-base-url");
+    const modelApiKey = document.getElementById("model-api-key");
+    const modelName = document.getElementById("model-name");
+    const modelClear = document.getElementById("model-clear");
     const agentModeButton = document.getElementById("agent-mode");
     const workspaceModal = document.getElementById("workspace-modal");
     const workspaceClose = document.getElementById("workspace-close");
@@ -1817,8 +1849,60 @@
       }
     }
 
-    function connect(cwd, sessionId, attach) {
+    const MODEL_STORAGE_KEY = "walle.model";
+
+    function readModelConfig() {
+      try {
+        const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+        if (!raw) return null;
+        const cfg = JSON.parse(raw);
+        if (!cfg || !cfg.api_key || !cfg.base_url || !cfg.model) return null;
+        return cfg;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function setModelLabel() {
+      const cfg = readModelConfig();
+      modelButton.textContent = cfg ? `模型 · ${cfg.model}` : "模型";
+      modelButton.title = cfg ? cfg.base_url : "配置模型（BYOK）";
+    }
+
+    async function pushModelConfig(sessionId) {
+      const cfg = readModelConfig();
+      if (!cfg) return true;
+      try {
+        const res = await fetch(`/api/session/${encodeURIComponent(sessionId)}/model`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        });
+        if (res.ok) return true;
+        const detail = await res.json().catch(() => ({}));
+        note("模型配置未生效：" + (detail.detail || res.status), true);
+        return false;
+      } catch (err) {
+        note("模型配置发送失败：" + err.message, true);
+        return false;
+      }
+    }
+
+    function openModelModal() {
+      const cfg = readModelConfig();
+      modelBaseUrl.value = cfg ? cfg.base_url : "";
+      modelApiKey.value = cfg ? cfg.api_key : "";
+      modelName.value = cfg ? cfg.model : "";
+      modelModal.hidden = false;
+    }
+
+    function closeModelModal() {
+      modelModal.hidden = true;
+    }
+
+    async function connect(cwd, sessionId, attach) {
       const targetSession = sessionId || newSessionId();
+      if (!(await pushModelConfig(targetSession))) return;
       conversation.connect(cwd, targetSession, attach);
     }
 
@@ -1844,6 +1928,31 @@
     send.addEventListener("click", submit);
     stop.addEventListener("click", cancel);
     workspaceButton.addEventListener("click", openWorkspaceModal);
+    modelButton.addEventListener("click", openModelModal);
+    modelClose.addEventListener("click", closeModelModal);
+    modelModal.addEventListener("click", (event) => {
+      if (event.target === modelModal) closeModelModal();
+    });
+    modelClear.addEventListener("click", () => {
+      localStorage.removeItem(MODEL_STORAGE_KEY);
+      setModelLabel();
+      closeModelModal();
+    });
+    modelForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const cfg = {
+        base_url: modelBaseUrl.value.trim(),
+        api_key: modelApiKey.value.trim(),
+        model: modelName.value.trim(),
+      };
+      if (!cfg.base_url || !cfg.api_key || !cfg.model) {
+        note("模型配置需要 base_url、api_key、model 三项", true);
+        return;
+      }
+      localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(cfg));
+      setModelLabel();
+      closeModelModal();
+    });
     agentModeButton.addEventListener("click", () => {
       applyAgentMode(agentMode ? "" : "learning", true);
     });
@@ -1877,6 +1986,10 @@
       if (event.key !== "Escape") return;
       if (!workspaceModal.hidden) {
         closeWorkspaceModal();
+        return;
+      }
+      if (!modelModal.hidden) {
+        closeModelModal();
         return;
       }
       if (canvasPanel.hidden) return;
@@ -1992,6 +2105,7 @@
       }
     }
 
+    setModelLabel();
     init();
     updateComposer();
     refreshPending();

@@ -386,5 +386,5 @@ class SessionServer:
         try:
             return ModelConfig.model_validate(raw)
         except Exception:
-            logger.warning(f"ignoring invalid model config: {raw}")
+            logger.warning("ignoring invalid model config (fields invalid or missing)")
             return None

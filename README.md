@@ -249,6 +249,24 @@ WALLE_SITE=walle.example.com ./scripts/deploy.sh up
 服务都设了内存与 CPU 上限（agent 1g/1c、web 512m/0.5c、logs 256m/0.5c、caddy 128m/0.25c），
 按 2C4G 的小机器估算，可按需在 compose 里调整。
 
+### 模型接入（BYOK）
+
+用户可以用自己的 OpenAI 兼容端点，不需要服务端持有密钥：
+
+1. 顶栏「模型」→ 填 `base_url` / `api_key` / `model`，只存在浏览器 `localStorage`
+2. 建立连接前，前端把配置 `POST /api/session/{id}/model`（JSON body，不走 URL）
+3. web 在内存暂存 5 分钟，握手时放进 hello，agent 用**会话级 provider**
+4. 握手完成即从内存删除，不落盘、不写日志
+
+所以 `base_url` 可以填 OpenAI、DeepSeek、Kimi、Ollama、vLLM 等任意兼容端点。
+
+安全约束：
+
+- 默认禁止 `base_url` 指向内网/回环地址（防 SSRF）；本机 Ollama 需设
+  `WALLE_ALLOW_PRIVATE_UPSTREAM=1`
+- 密钥只在 HTTPS 下传输（Caddy 终结 TLS）
+- 配置只对新会话生效；已有会话沿用内存里的 provider
+
 ### 访问控制
 
 ```bash
