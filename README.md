@@ -229,14 +229,15 @@ cp .env.example .env          # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MO
 ./scripts/deploy.sh up        # 访问 http://<host>/
 ```
 
-四个服务，agent 与 web 共用一个镜像：
+五个服务，agent 与 web 共用一个镜像：
 
 | 服务 | 职责 | 端口 |
 |---|---|---|
 | `agent` | 会话服务（JSON-line TCP） | 8899（仅集群内） |
 | `web` | FastAPI + WebSocket 前端 | 127.0.0.1:8080（仅本机） |
 | `logs` | Fluent Bit 边车 | 无 |
-| `caddy` | 反向代理 / TLS / 压缩 | 80 / 443（对外） |
+| `caddy` | 反向代理 / TLS / 压缩 / 认证 / 限流 | 80 / 443（对外） |
+| `backup` | 定时打包数据卷 | 无 |
 
 对外只暴露 Caddy，web 只监听本机回环，避免绕过代理直接访问。
 配好域名后把 `WALLE_SITE` 设成域名（如 `walle.example.com`），Caddy 会自动申请证书：
@@ -351,6 +352,21 @@ agent 以 `WALLE_LOG_FILE=1` + `WALLE_LOG_STDOUT=0` 运行，日志只落盘、�
 
 `backup` 用与镜像相同的 uid 打包，`restore` 以 root 解包后把属主改回 10001，
 备份文件在 `backups/`（已加入 `.gitignore`）。
+
+### 自动备份
+
+`backup` 容器启动后立即打一份，之后按间隔循环，并只保留最近 N 份：
+
+```bash
+WALLE_BACKUP_INTERVAL=86400   # 间隔秒数，默认每天
+WALLE_BACKUP_KEEP=7           # 保留份数
+```
+
+归档写到宿主机的 `backups/`（root 属主、644 权限，可读可拷走）。
+先写 `.part` 再改名，避免打包中断留下半个文件。
+
+注意：备份和数据在**同一台机器**，只能防误删和升级事故，防不了磁盘或机器整体损坏。
+重要数据要定期同步到对象存储或其他机器。
 
 ### 📊 可观测性面板
 
