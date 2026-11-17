@@ -83,3 +83,10 @@ class TestUpstreamValidation:
 
         monkeypatch.setenv("WALLE_ALLOW_PRIVATE_UPSTREAM", "1")
         await validate_upstream("http://127.0.0.1:11434/v1")
+
+    async def test_unresolved_is_not_reported_as_private(self, monkeypatch):
+        from ..infra.upstream import validate_upstream
+
+        monkeypatch.delenv("WALLE_ALLOW_PRIVATE_UPSTREAM", raising=False)
+        with pytest.raises(ValueError, match="解析失败"):
+            await validate_upstream("https://no-such-host.invalid/v1")

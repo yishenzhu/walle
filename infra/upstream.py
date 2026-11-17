@@ -15,17 +15,17 @@ def allow_private() -> bool:
     return os.getenv("WALLE_ALLOW_PRIVATE_UPSTREAM", "0").lower() in PRIVATE_OK
 
 
-def private_host(host: str) -> bool:
-    """解析主机名并判断是否指向内网/回环/链路本地地址。"""
+def resolve_host(host: str) -> str:
+    """解析主机名：private / public / unresolved（解析失败不等于内网）。"""
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
-        return True
+        return "unresolved"
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
-            return True
+            return "unresolved"
         if (
             ip.is_private
             or ip.is_loopback
@@ -33,8 +33,8 @@ def private_host(host: str) -> bool:
             or ip.is_reserved
             or ip.is_multicast
         ):
-            return True
-    return False
+            return "private"
+    return "public"
 
 
 async def validate_upstream(base_url: str) -> None:
@@ -44,7 +44,19 @@ async def validate_upstream(base_url: str) -> None:
         raise ValueError("base_url 必须是 http(s) 地址")
     if allow_private():
         return
-    if await asyncio.to_thread(private_host, parts.hostname):
+
+    state = "unresolved"
+    for _ in range(2):  # 容器 DNS 偶发抖动，重试一次
+        state = await asyncio.to_thread(resolve_host, parts.hostname)
+        if state != "unresolved":
+            break
+        await asyncio.sleep(0.3)
+
+    if state == "unresolved":
+        raise ValueError(
+            f"base_url 域名解析失败（{parts.hostname}），请检查容器网络或稍后重试"
+        )
+    if state == "private":
         raise ValueError(
             f"base_url 指向内网地址（{parts.hostname}），"
             "未启用 WALLE_ALLOW_PRIVATE_UPSTREAM"
