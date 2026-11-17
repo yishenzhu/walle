@@ -1857,6 +1857,7 @@
         closePending(data.reason);
         updateComposer();
         if (data.reason) note("结束：" + data.reason, data.reason !== "max_turns");
+        else maybeAutoContinue();
       } else if (data.type === "tool_prepare") {
         showPreparing(data.tool_name);
       } else if (data.type === "tool_start") {
@@ -1931,9 +1932,56 @@
       conversation.connect(cwd, targetSession, attach);
     }
 
+    const autoContinue = { attempts: 0, lastWritten: -1 };
+
+    function resetAutoContinue() {
+      autoContinue.attempts = 0;
+      autoContinue.lastWritten = -1;
+    }
+
+    function sendText(text) {
+      add("user", text);
+      current = null;
+      busy = true;
+      updateComposer();
+      conversation.sendInput(text);
+    }
+
+    async function maybeAutoContinue() {
+      // 课程生成：模型正常收尾但课还没写完时，自动续一轮（有进展才继续）
+      if (agentMode !== "learning" || !conversation.isOpen) return;
+      if (autoContinue.attempts >= 3) return;
+      try {
+        const list = await api("/api/courses");
+        const courses = list.courses || [];
+        if (!courses.length) return;
+        const detail = await api(`/api/courses/${courses[0].id}`);
+        const total = (detail.lessons || []).length;
+        const written = detail.written_count || 0;
+        if (!total || written >= total) {
+          resetAutoContinue();
+          return;
+        }
+        if (written <= autoContinue.lastWritten) {
+          note("自动继续已停止：没有新的章节产出", true);
+          return;
+        }
+        autoContinue.lastWritten = written;
+        autoContinue.attempts += 1;
+        setTimeout(() => {
+          if (!busy && conversation.isOpen) {
+            sendText("继续完成剩余章节，从第一个还没写正文的章节开始。");
+          }
+        }, 800);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     function submit() {
       const text = input.value.trim();
       if (!text || busy || !conversation.isOpen) return;
+      resetAutoContinue();
       add("user", text);
       input.value = "";
       input.style.height = "auto";

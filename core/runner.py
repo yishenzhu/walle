@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -46,6 +48,9 @@ from .agent import Agent, Handoff
 from .executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
+
+# 单轮模型调用上限：流式挂死或上游不响应时尽快失败，而不是一直转圈
+LLM_TIMEOUT = float(os.getenv("WALLE_LLM_TIMEOUT", "300"))
 
 DEFAULT_MAX_TURNS = 64
 
@@ -254,20 +259,21 @@ class Runner:
     ):
         # 流式增量只发事件——推给 channel 由监听者负责
         prepared: set[int] = set()
-        async with provider.stream(
-            **self._request_params(agent, messages, tools)
-        ) as stream:
-            async for event in stream:
-                if event.type == "content.delta":
-                    await bus.emit(MessageDeltaEvent(delta=event.delta))
-                elif event.type == "tool_calls.function.arguments.delta":
-                    # 工具参数由模型逐块生成，此时工具尚未执行；先通知客户端，
-                    # 避免大参数工具调用生成期间界面完全静默。
-                    if event.index not in prepared:
-                        prepared.add(event.index)
-                        await bus.emit(ToolCallPrepareEvent(tool_name=event.name))
+        async with asyncio.timeout(LLM_TIMEOUT):
+            async with provider.stream(
+                **self._request_params(agent, messages, tools)
+            ) as stream:
+                async for event in stream:
+                    if event.type == "content.delta":
+                        await bus.emit(MessageDeltaEvent(delta=event.delta))
+                    elif event.type == "tool_calls.function.arguments.delta":
+                        # 工具参数由模型逐块生成，此时工具尚未执行；先通知客户端，
+                        # 避免大参数工具调用生成期间界面完全静默。
+                        if event.index not in prepared:
+                            prepared.add(event.index)
+                            await bus.emit(ToolCallPrepareEvent(tool_name=event.name))
 
-            completion = await stream.get_final_completion()
+                completion = await stream.get_final_completion()
         message, tool_results = await self._collect_tool_results(completion, tools, executor)
         return completion, message, tool_results
 
@@ -279,8 +285,9 @@ class Runner:
         provider,
         executor: ExecutorService,
     ):
-        completion = await provider.create(
-            **self._request_params(agent, messages, tools)
+        completion = await asyncio.wait_for(
+            provider.create(**self._request_params(agent, messages, tools)),
+            LLM_TIMEOUT,
         )
         message, tool_results = await self._collect_tool_results(completion, tools, executor)
         return completion, message, tool_results

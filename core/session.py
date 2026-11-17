@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -46,6 +47,8 @@ from .command import Commands
 from .link import SessionClosedError, SessionLink
 from .prompt import Prompts
 from .runner import Runner, RunOptions, SessionContext
+
+logger = logging.getLogger(__name__)
 
 
 class SessionState(StrEnum):
@@ -278,13 +281,20 @@ class Session:
 
     async def _run(self, content: str) -> None:
         """执行一次 run；异常回报当前 transport，结束后恢复 idle。"""
+        started = time.monotonic()
+        logger.info(f"run start: {self.id} agent={self._agent.name}")
         try:
             await self._dispatch(content)
         except asyncio.CancelledError:
+            logger.info(f"run cancelled: {self.id} after {time.monotonic() - started:.1f}s")
             raise
         except Exception as exc:
+            logger.warning(
+                f"run failed: {self.id} after {time.monotonic() - started:.1f}s: {exc!r}"
+            )
             await self._report_error(exc)
         finally:
+            logger.info(f"run end: {self.id} after {time.monotonic() - started:.1f}s")
             self._link.clear_pending()
             if self._run_task is asyncio.current_task():
                 self._run_task = None
